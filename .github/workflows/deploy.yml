@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Copy files via SCP
+      - name: Copy code via SCP
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -40,7 +40,7 @@ jobs:
             pip install --upgrade pip
             pip install -r requirements.txt
 
-      - name: Restart app via pm2
+      - name: Restart app via PM2
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -49,9 +49,12 @@ jobs:
           port: 22
           script: |
             cd /var/www/Synchatica
-            source venv/bin/activate
-            pm2 restart synchatica || pm2 start main.py \
+            # удаляем старый процесс
+            pm2 delete synchatica --silent
+            # запускаем новый из venv-питона и сохраняем env
+            pm2 start main.py \
               --name synchatica \
-              --interpreter python3 \
-              --cwd /var/www/Synchatica
+              --interpreter /var/www/Synchatica/venv/bin/python3 \
+              --cwd /var/www/Synchatica \
+              --update-env
             pm2 save
