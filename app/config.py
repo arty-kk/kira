@@ -1,6 +1,3 @@
-cat >app/config.py<< EOF
-# app/config.py
-
 from __future__ import annotations
 
 import logging
