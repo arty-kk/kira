@@ -23,9 +23,8 @@ jobs:
           source: "./"
           target: "/var/www/Synchatica"
           rm: true
-          exclude: ".git*,.github/*"
 
-      - name: (опционально) Restart service via SSH
+      - name: Restart app via SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -35,4 +34,5 @@ jobs:
           script: |
             cd /var/www/Synchatica
             npm ci
-            pm2 restart synchatica
+            pm2 restart synchatica || pm2 start npm --name synchatica -- start --cwd /var/www/Synchatica
+            pm2 save
