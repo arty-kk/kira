@@ -1,0 +1,116 @@
+
+# docker-compose.yml
+
+version: "3.8"
+
+services:
+
+  db:
+    image: postgres:15
+    container_name: galaxybee-db
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: a3ddev
+      POSTGRES_PASSWORD: Qwerty456!
+      POSTGRES_DB: galaxybee
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U a3ddev -d galaxybee"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: galaxybee-redis
+    command: 
+      [
+        "redis-server",
+        "--appendonly", "yes",
+        "--appendfsync", "no",
+        "--maxmemory", "2gb",
+        "--maxmemory-policy", "allkeys-lru"
+      ]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: galaxybee-pgadmin
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-team@a3d.dev}
+      PGADMIN_DEFAULT_PASSWORD: '${PGADMIN_DEFAULT_PASSWORD:-Qwerty456!}'
+      PGADMIN_LISTEN_ADDRESS: "0.0.0.0"
+    ports:
+      - "5050:80"
+      
+  bot:
+    build: .
+    container_name: galaxybee-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ENABLE_SCHEDULER: "true"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./certs:/certs:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -kfsS https://localhost:8443/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: ["main.py"]
+
+  worker:
+    build: .
+    container_name: galaxybee-worker
+    restart: always
+    env_file: .env
+    environment:
+      ENABLE_SCHEDULER: "false"
+      CELERY_BROKER_URL: "redis://redis:6379/0"
+      CELERY_CONCURRENCY: "${CELERY_CONCURRENCY:-16}"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command:
+      - celery
+      - "-A"
+      - app.tasks.celery_app.celery
+      - worker
+      - --loglevel=info
+      - --pool=gevent
+      - --concurrency=${CELERY_CONCURRENCY:-16}
+      - --prefetch-multiplier=1
+    healthcheck:
+      test: ["CMD-SHELL", "echo OK"]
+      interval: 30s
+      timeout: 5s
+      retries: 1
+
+volumes:
+  db_data:
+  redis_data:
