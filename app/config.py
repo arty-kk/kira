@@ -308,4 +308,3 @@ class _SettingsProxy:
 
 
 settings = _SettingsProxy()
-EOF
