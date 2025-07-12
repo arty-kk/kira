@@ -8,24 +8,25 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PROJECT_DIR: Synchatica
+      PROJECT_DIR: Synchatica          # ← папка, куда вы заходите `cd Synchatica`
 
     steps:
+    # 1️⃣ берём код репозитория
     - uses: actions/checkout@v4
 
-    # 1) Поднимаем ssh-agent с приватным ключом
+    # 2️⃣ подключаем приватный SSH-ключ раннеру
     - name: Add SSH key
       uses: webfactory/ssh-agent@v0.8.0
       with:
         ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-    # 2) Кэшируем ключ хоста
-    - name: Add server host key to known_hosts
+    # 3️⃣ один раз заносим public-key сервера в known_hosts
+    - name: Cache server host key
       run: |
         mkdir -p ~/.ssh
         ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-    # 3) Rsync
+    # 4️⃣ отправляем изменения rsync-ом (быстро и с --delete)
     - name: Rsync code to server
       run: |
         rsync -az --delete \
@@ -33,10 +34,9 @@ jobs:
           ./ \
           "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:~/${PROJECT_DIR}/"
 
-    # 4) Команды на сервере (appleboy/ssh-action делает StrictHostKeyChecking=no по умолчанию,
-    #    но оставляем параметр явно для ясности)
-    - name: Build venv & reload via PM2
-      uses: appleboy/ssh-action@v1.0.0
+    # 5️⃣ пересобираем venv и перезапускаем PM2
+    - name: Build venv & reload app
+      uses: appleboy/ssh-action@v1
       with:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
@@ -45,10 +45,13 @@ jobs:
         script: |
           set -e
           cd ~/${PROJECT_DIR}
+
+          # venv и зависимости
           rm -rf venv
           python3 -m venv venv
           ./venv/bin/pip install --upgrade pip
           ./venv/bin/pip install -r requirements.txt
+
+          # перезапуск
           pm2 startOrReload ecosystem.config.js --update-env
           pm2 save
-        ssh-options: "-o StrictHostKeyChecking=no"   # ← чтобы вторая сессия не упала, если ключ вдруг не сохранился
