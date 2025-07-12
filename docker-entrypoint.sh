@@ -1,13 +1,15 @@
+#docker-entrypoint.sh
 #!/usr/bin/env bash
 set -euo pipefail
 
 echo "⏳ Waiting for Postgres to be ready…"
-until pg_isready -h db -U a3ddev -d galaxybee >/dev/null 2>&1; do
+until pg_isready -h db -U "${POSTGRES_USER:-a3ddev}" -d "${POSTGRES_DB:-galaxybee}" >/dev/null 2>&1; do
   sleep 1
 done
 echo "✅ Postgres is up!"
 
 echo "🔄 Applying Alembic migrations…"
+
 python -m alembic upgrade head
 
 if [ $# -eq 0 ]; then

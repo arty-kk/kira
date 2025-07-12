@@ -1,3 +1,4 @@
+#Dockerfile
 FROM python:3.10-slim AS runtime
 
 # ─── System deps ──────────────────────────────────────────────────────
@@ -29,6 +30,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # ─── Copy code + entrypoint ──────────────────────────────────────────
 WORKDIR /app
 COPY . .
+
+ENV ALEMBIC_CONFIG=/app/alembic.ini
 
 # Сценарий точка входа, который сперва прогоняет миграции, потом стартует
 COPY docker-entrypoint.sh /usr/local/bin/

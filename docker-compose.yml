@@ -1,4 +1,4 @@
-
+#docker-compose.yml
 version: "3.8"
 
 services:
@@ -62,6 +62,8 @@ services:
     environment:
       ENABLE_SCHEDULER: "true"
       CELERY_BROKER_URL: "redis://redis:6379/0"
+      DATABASE_URL: "postgresql+asyncpg://a3ddev:Qwerty456!@db:5432/galaxybee"
+      ALEMBIC_CONFIG: "/app/alembic.ini"
     depends_on:
       db:
         condition: service_healthy
@@ -88,6 +90,8 @@ services:
       ENABLE_SCHEDULER: "false"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_CONCURRENCY: "${CELERY_CONCURRENCY:-16}"
+      DATABASE_URL: "postgresql+asyncpg://a3ddev:Qwerty456!@db:5432/galaxybee"
+      ALEMBIC_CONFIG: "/app/alembic.ini"
     depends_on:
       db:
         condition: service_healthy
