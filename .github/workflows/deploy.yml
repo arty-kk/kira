@@ -49,6 +49,7 @@ jobs:
           port: 22
           script: |
             cd /Synchatica
+            export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
             pm2 delete synchatica --silent
             pm2 start main.py \
               --name synchatica \
