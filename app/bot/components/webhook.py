@@ -52,7 +52,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
 
     try:
         cert_arg = (
-            {"certificate": FSInputFile("/certs/cert.pem")}
+            {"certificate": FSInputFile(settings.WEBHOOK_CERT)}
             if settings.USE_SELF_SIGNED_CERT
             else {}
         )
@@ -78,7 +78,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         logger.exception("Error setting webhook")
 
     ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-    ssl_context.load_cert_chain("/certs/cert.pem", "/certs/key.pem")
+    ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
 
     async def handle_webhook(request: web.Request) -> web.Response:
         try:

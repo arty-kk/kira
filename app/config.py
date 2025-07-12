@@ -1,3 +1,4 @@
+#app/config.py
 from __future__ import annotations
 
 import logging
@@ -62,6 +63,9 @@ class Settings:
     WEBHOOK_PATH: str = field(default_factory=lambda: _get_env("WEBHOOK_PATH", "/webhook"))
     WEBHOOK_HOST: str = field(default_factory=lambda: _get_env("WEBHOOK_HOST", "0.0.0.0"))
     WEBHOOK_PORT: int = field(default_factory=lambda: _get_env("WEBHOOK_PORT", "8443", conv=int))
+    CERTS_DIR: str = field(default_factory=lambda: _get_env("CERTS_DIR", os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "certs")))
+    WEBHOOK_CERT: str = field(default_factory=lambda: os.path.join(get_settings().CERTS_DIR, "cert.pem"))
+    WEBHOOK_KEY: str = field(default_factory=lambda: os.path.join(get_settings().CERTS_DIR, "key.pem"))
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
     PAYMENT_PROVIDER_TOKEN: str = field(default_factory=lambda: _get_env("PAYMENT_PROVIDER_TOKEN", ""))
     LOG_LEVEL: str = field(default_factory=lambda: _get_env("LOG_LEVEL", "INFO"))
