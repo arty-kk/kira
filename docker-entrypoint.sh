@@ -10,7 +10,7 @@ echo "✅ Postgres is up!"
 
 echo "🔄 Applying Alembic migrations…"
 
-python -m alembic upgrade head
+alembic -c /app/alembic.ini upgrade head
 
 if [ $# -eq 0 ]; then
   echo "❌ No command specified!"
