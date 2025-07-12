@@ -2,59 +2,46 @@ name: 🚀 Deploy to Server
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      PROJECT_DIR: Synchatica
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-      - name: Copy code via SCP
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          source: "./"
-          target: "/var/www/Synchatica"
-          rm: true
-          overwrite: true
+    - name: Add SSH key
+      uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-      - name: Rebuild virtualenv & install deps
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            cd /var/www/Synchatica
-            rm -rf venv
-            python3 -m venv venv
-            source venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
+    - name: Rsync code to server
+      run: |
+        rsync -az --delete \
+          --exclude='.git/' \
+          ./ \
+          "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:~/${PROJECT_DIR}/"
 
-      - name: Restart app via PM2
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            cd /var/www/Synchatica
-            # удаляем старый процесс
-            pm2 delete synchatica --silent
-            # запускаем новый из venv-питона и сохраняем env
-            pm2 start main.py \
-              --name synchatica \
-              --interpreter /var/www/Synchatica/venv/bin/python3 \
-              --cwd /var/www/Synchatica \
-              --update-env
-            pm2 save
+    - name: Build venv & reload via PM2
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        port: 22
+        script: |
+          set -e
+          cd ~/${PROJECT_DIR}
+
+          echo "🧹 Re-create venv"
+          rm -rf venv
+          python3 -m venv venv
+          ./venv/bin/pip install --upgrade pip
+          ./venv/bin/pip install -r requirements.txt
+
+          echo "🔄 PM2 reload"
+          pm2 startOrReload ecosystem.config.js --update-env
+          pm2 save
