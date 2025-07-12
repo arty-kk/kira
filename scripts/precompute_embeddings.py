@@ -1,5 +1,4 @@
 # scripts/precompute_embeddings.py
-
 import os
 import json
 import re
