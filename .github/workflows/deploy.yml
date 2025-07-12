@@ -8,25 +8,21 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      PROJECT_DIR: Synchatica          # ← папка, куда вы заходите `cd Synchatica`
+      PROJECT_DIR: Synchatica
 
     steps:
-    # 1️⃣ берём код репозитория
     - uses: actions/checkout@v4
 
-    # 2️⃣ подключаем приватный SSH-ключ раннеру
     - name: Add SSH key
       uses: webfactory/ssh-agent@v0.8.0
       with:
         ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
 
-    # 3️⃣ один раз заносим public-key сервера в known_hosts
     - name: Cache server host key
       run: |
         mkdir -p ~/.ssh
         ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-    # 4️⃣ отправляем изменения rsync-ом (быстро и с --delete)
     - name: Rsync code to server
       run: |
         rsync -az --delete \
@@ -34,7 +30,6 @@ jobs:
           ./ \
           "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:~/${PROJECT_DIR}/"
 
-    # 5️⃣ пересобираем venv и перезапускаем PM2
     - name: Build venv & reload app
       uses: appleboy/ssh-action@v1
       with:
@@ -46,12 +41,10 @@ jobs:
           set -e
           cd ~/${PROJECT_DIR}
 
-          # venv и зависимости
           rm -rf venv
           python3 -m venv venv
           ./venv/bin/pip install --upgrade pip
           ./venv/bin/pip install -r requirements.txt
 
-          # перезапуск
           pm2 startOrReload ecosystem.config.js --update-env
           pm2 save
