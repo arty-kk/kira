@@ -1,5 +1,5 @@
-# app/services/http_client.py
-
+cat >app/clients/http_client.py<< EOF
+#app/clients/http_client.py
 import aiohttp, logging
 
 from aiohttp import ClientTimeout
@@ -33,3 +33,4 @@ class HTTPClient:
             await self._session.close()
 
 http_client = HTTPClient()
+EOF

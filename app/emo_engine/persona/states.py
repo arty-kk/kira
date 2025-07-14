@@ -1,5 +1,5 @@
-# app/emo_engine/persona/states.py
-
+cat >app/emo_engine/persona/states.py<< EOF
+#app/emo_engine/persona/states.py
 from __future__ import annotations
 
 import asyncio, time, math, uuid, logging
@@ -123,9 +123,9 @@ def _update_mood_label(self) -> None:
     base  = prims[idx]
     r    = sqrt(x*x + y*y)
     
-    if r > 0.66:
+    if r > 0.75:
         strength = "strong"
-    elif r > 0.33:
+    elif r > 0.5:
         strength = "moderate"
     else:
         strength = "weak"
@@ -310,3 +310,4 @@ async def process_interaction(self, uid: int, text: str) -> None:
 
         await self._persist()
         self._cached_style_modifiers = self.style_modifiers()
+EOF

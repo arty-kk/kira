@@ -1,4 +1,5 @@
-#app/services/moderation.py
+cat >app/services/addons/passive_moderation.py<< EOF
+#app/services/addons/passive_moderation.py
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from typing import Literal, List
 
 from redis.exceptions import RedisError
 
-from app.core import load_context, get_redis
+from app.core.memory import load_context, get_redis
 from app.config import settings
 from app.clients.openai_client import get_openai
 
@@ -239,3 +240,4 @@ async def check_deep(
         return False
 
     return ans.startswith("BLOCK")
+EOF

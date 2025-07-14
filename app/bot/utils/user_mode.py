@@ -1,6 +1,7 @@
-# app/bot/utils/user_mode.py
-
+cat >app/bot/utils/user_mode.py<< EOF
+#app/bot/utils/user_mode.py
 from enum import Enum
+
 from app.bot.components.constants import redis_client
 
 class UserMode(str, Enum):
@@ -29,3 +30,4 @@ async def set_user_mode(uid: int, mode: UserMode) -> None:
     if not redis_client:
         return
     await redis_client.set(f"user_mode:{uid}", mode.value)
+EOF

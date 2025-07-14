@@ -1,5 +1,5 @@
-# app/services/battle.py
-
+cat >app/services/addons/group_battle.py<< EOF
+#app/services/addons/group_battle.py
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +14,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQu
 
 from app.clients.telegram_client import get_bot
 from app.config import settings
-from app.core import get_redis
+from app.core.memory import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -336,3 +336,4 @@ async def _cleanup_data_only(gid: str) -> None:
             await pipe.execute()
     except Exception:
         logger.exception("Error in cleanup_data_only")
+EOF

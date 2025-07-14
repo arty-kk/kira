@@ -1,5 +1,5 @@
-# services/responder/prompt_builder.py
-
+cat >app/services/responder/prompt_builder.py<< EOF
+#app/services/responder/prompt_builder.py
 from __future__ import annotations
 
 import logging
@@ -105,3 +105,4 @@ def build_system_prompt(persona: Persona, guidelines: List[str]) -> dict:
     full = "\n".join(parts)
     _SYS_CACHE[persona.chat_id] = (persona.state_version, guide_key, full)
     return {"role": "system", "content": full}
+EOF

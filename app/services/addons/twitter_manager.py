@@ -1,12 +1,12 @@
+cat >app/services/addons/twitter_manager.py<< EOF
 #app/services/addons/twitter_manager.py
-
 import random
 import asyncio
 import logging
 
 from app.clients.openai_client import _call_openai_with_retry
 from app.clients.twitter_client import post_tweet
-from app.emo_engine.registry import get_persona
+from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message
 from app.config import settings
 
@@ -146,3 +146,4 @@ async def generate_and_post_tweet() -> None:
         asyncio.create_task(push_message(settings.TWITTER_PERSONA_CHAT_ID, "assistant", tweet))
     except Exception:
         logger.exception("twitter_manager: saving to memory failed")
+EOF

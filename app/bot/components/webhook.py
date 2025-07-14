@@ -1,5 +1,5 @@
+cat > app/bot/components/webhook.py << EOF
 # app/bot/components/webhook.py
-
 import ssl
 import asyncio
 import logging
@@ -10,29 +10,29 @@ import aiofiles
 from aiohttp import web
 from aiogram import types
 from aiogram.types import FSInputFile
+from aiogram.exceptions import TelegramBadRequest
 
 from app.config import settings
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
+import app.bot.components.constants as consts
 from app.bot.components.constants import (
-    LANG_FILE, WELCOME_MESSAGES,
-    redis_client, BOT_ID, BOT_USERNAME,
+    LANG_FILE,
+    WELCOME_MESSAGES,
+    redis_client,
 )
-from app.core import get_redis
 
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
 async def start_bot(stop_event: asyncio.Event | None = None) -> None:
-    global redis_client, BOT_ID, BOT_USERNAME, WELCOME_MESSAGES
+    global redis_client, WELCOME_MESSAGES
 
     me = await bot.get_me()
-    BOT_ID = me.id
-    BOT_USERNAME = me.username.lower()
-    logger.info("Bot @%s starting…", BOT_USERNAME)
-
-    redis_client = get_redis()
+    consts.BOT_ID = me.id
+    consts.BOT_USERNAME = me.username.lower()
+    logger.info("Bot @%s starting…", consts.BOT_USERNAME)
 
     chat_id = settings.ALLOWED_GROUP_ID
     key = f"last_message_ts:{chat_id}"
@@ -138,3 +138,4 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         await runner.cleanup()
         await bot.session.close()
         logger.info("👋 Bot stopped gracefully")
+EOF

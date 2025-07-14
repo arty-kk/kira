@@ -1,58 +1,71 @@
-#Dockerfile
+cat > Dockerfile << EOF
+# Dockerfile
 FROM python:3.10-slim AS runtime
 
-# ─── System deps ──────────────────────────────────────────────────────
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        build-essential \
-        libpq-dev \
-        libffi-dev \
-        libssl-dev \
-        curl \
-        postgresql-client \
-        redis-tools && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+#############################
+# 1) Preliminaries as root  #
+#############################
+USER root
 
-# ─── Python env ──────────────────────────────────────────────────────
+# Prevent Python from writing .pyc files and enable unbuffered logging
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN python -m venv /opt/venv
+# Copy requirements first for layer caching
+COPY requirements.txt .
+
+# Install build and runtime dependencies, create venv, install Python packages, then remove build deps and clean cache
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc build-essential libpq-dev libffi-dev libssl-dev \
+        curl postgresql-client redis-tools && \
+    python -m venv /opt/venv && \
+    /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
+    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt && \
+    apt-get purge -y --auto-remove gcc build-essential libpq-dev libffi-dev libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Ensure venv is on PATH
 ENV PATH="/opt/venv/bin:$PATH"
 
-# ─── Install requirements ────────────────────────────────────────────
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# ─── Copy code + entrypoint ──────────────────────────────────────────
+#############################
+# 2) Copy application code  #
+#############################
 WORKDIR /app
+
+# Copy all source (including alembic/ directory)
 COPY . .
 
-ENV ALEMBIC_CONFIG=/app/alembic.ini
+# Copy standalone alembic.ini to /app so alembic -c alembic.ini works
+COPY alembic/alembic.ini /app/alembic.ini
 
-# Сценарий точка входа, который сперва прогоняет миграции, потом стартует
-COPY docker-entrypoint.sh /usr/local/bin/
+# Copy and make entrypoint executable
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# ─── Precompute embeddings ───────────────────────────────────────────
-RUN EMBEDDING_MODEL=text-embedding-3-large \
-    python scripts/precompute_embeddings.py \
+################################
+# 3) Precompute embeddings     #
+################################
+RUN mkdir -p /app/data/embeddings && \
+    chmod 700 /app/data/embeddings && \
+    EMBEDDING_MODEL=text-embedding-3-large python scripts/precompute_embeddings.py \
       --kb-file app/services/responder/rag/knowledge_on.json \
-      --out-file data/embeddings/knowledge_embedded_text-embedding-3-large.json
-
-# 2) off-topic
-RUN EMBEDDING_MODEL=text-embedding-3-large \
-    python scripts/precompute_embeddings.py \
+      --out-file data/embeddings/knowledge_embedded_text-embedding-3-large.json && \
+    EMBEDDING_MODEL=text-embedding-3-large python scripts/precompute_embeddings.py \
       --kb-file app/services/responder/rag/knowledge_off.json \
       --out-file data/embeddings/knowledge_embedded_text-embedding-3-large-offtopic.json
 
-# ─── Drop privileges ─────────────────────────────────────────────────
-RUN adduser --disabled-password --gecos '' appuser
+#############################
+# 4) Drop to non-root user  #
+#############################
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app /opt/venv
 USER appuser
 
-# ─── Ports & cmd ────────────────────────────────────────────────────
+################################
+# 5) Expose port & Entrypoint  #
+################################
 EXPOSE 8443
-CMD ["main.py"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["python", "-u", "main.py"]
+EOF

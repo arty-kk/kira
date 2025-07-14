@@ -1,5 +1,5 @@
+cat >app/clients/telegram_client.py<< EOF
 #app/clients/telegram_client.py
-
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties
 from app.config import settings
@@ -15,3 +15,4 @@ def get_bot() -> Bot:
             default=DefaultBotProperties(parse_mode="HTML"),
         )
     return _bot_singleton
+EOF

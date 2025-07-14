@@ -1,14 +1,14 @@
+cat >alembic/env.py<< EOF
 #alembic/env.py
 import asyncio
-
+import os
 from logging.config import fileConfig
 
 from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from app.config import settings
-from app.core import Base
-
+from app.core.db import Base
 import app.core.models
 
 config = context.config
@@ -17,7 +17,7 @@ fileConfig(config.config_file_name)
 target_metadata = Base.metadata
 
 def run_migrations_offline():
-    url = settings.DATABASE_URL
+    url = os.getenv("DATABASE_URL", settings.DATABASE_URL)
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -31,21 +31,27 @@ def run_migrations_online():
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
-        url=settings.DATABASE_URL,
+        url=os.getenv("DATABASE_URL", settings.DATABASE_URL),
         future=True,
     )
 
-    async def do_run_migrations(connection):
+    def do_sync_migrations(sync_connection):
         context.configure(
-            connection=connection,
+            connection=sync_connection,
             target_metadata=target_metadata,
             compare_type=True,
         )
-        async with connection.begin():
-            await context.run_migrations()
+        with context.begin_transaction():
+            context.run_migrations()
 
     async def run():
-        async with connectable.connect() as connection:
-            await do_run_migrations(connection)
+        async with connectable.connect() as async_connection:
+            await async_connection.run_sync(do_sync_migrations)
 
     asyncio.run(run())
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+EOF

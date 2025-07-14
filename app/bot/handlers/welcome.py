@@ -1,8 +1,9 @@
-# app/bot/handlers/welcome.py
-
+cat > app/bot/handlers/welcome.py << EOF
+#app/bot/handlers/welcome.py
 import asyncio
 import logging
 import re
+import html
 import time as time_module
 
 from aiogram import F
@@ -10,7 +11,6 @@ from aiogram.enums import ChatType, ContentType
 from aiogram.types import Message, ChatMemberUpdated, User
 from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_MEMBER
 from aiogram.utils.markdown import hlink
-from aiogram.utils.text import quote_html
 
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
@@ -82,13 +82,16 @@ async def _handle_welcome(chat_id: int, user: User) -> None:
     
     text = await generate_welcome(chat_id, user, "")
     if not text:
-        safe_name = quote_html(user.full_name or user.username or str(user.id))
-        mention = hlink(safe_name, f"tg://user?id={user.id}")
+        mention = hlink(
+            user.full_name or user.username or str(user.id), 
+            f"tg://user?id={user.id}"
+        )
         text = f"Welcome {mention}! 🎉"
     try:
         await bot.send_message(chat_id, text, parse_mode="HTML")
-    except Exception:
-        logger.exception("Failed to send HTML welcome, sending plain text")
-        safe = re.sub(r"</?[\w\d]+[^>]*>", "", text)
+    except Exception as e:
+        logger.error("Welcome send failed (HTML parse?). Retrying plain text: %s", exc_info=e)
+        safe = re.sub(r"<[^>]+>", "", text)
         if safe:
             await bot.send_message(chat_id, safe)
+EOF

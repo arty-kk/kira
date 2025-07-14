@@ -1,10 +1,11 @@
-# services/responder/rag/keyword_filter.py
-
+cat >app/services/responder/rag/keyword_filter.py<< EOF
+#app/services/responder/rag/keyword_filter.py
 import json, logging, re
 
 from pathlib import Path
 from typing import Optional
 from flashtext import KeywordProcessor
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -44,3 +45,4 @@ def get_keyword_processor() -> KeywordProcessor:
         _keyword_processor = proc
 
     return _keyword_processor
+EOF

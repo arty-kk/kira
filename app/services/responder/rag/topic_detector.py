@@ -1,4 +1,5 @@
-# services/responder/rag/topic_detector.py
+cat >app/services/responder/rag/topic_detector.py<< EOF
+#app/services/responder/rag/topic_detector.py
 
 import logging
 import hashlib
@@ -7,9 +8,9 @@ import re
 
 from app.config import settings
 from app.core.memory import get_redis
-from app.services.responder.rag.knowledge_proc import get_relevant
-from app.services.responder.rag.keyword_filter import get_keyword_processor
 from app.clients.openai_client import _call_openai_with_retry
+from .knowledge_proc import get_relevant
+from .keyword_filter import get_keyword_processor
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +80,4 @@ async def is_on_topic(text: str) -> bool:
         "is_on_topic: text=%r → on_topic=%s (score=%.4f)", text, result, top_score
     )
     return result
+EOF

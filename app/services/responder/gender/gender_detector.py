@@ -1,5 +1,5 @@
-# services/responder/gender/gender_detector.py
-
+cat >app/services/responder/gender/gender_detector.py<< EOF
+#app/services/responder/gender/gender_detector.py
 import asyncio, logging, httpx
 
 from functools import lru_cache
@@ -129,4 +129,4 @@ Answer:
         return ans
 
     return "unknown"
-
+EOF

@@ -1,11 +1,10 @@
-import asyncio
-import time
-import json
-import hashlib
-import logging
-import regex
+cat >app/emo_engine/persona/utils/text_analyzer.py<< EOF
+#app/emo_engine/persona/utils/text_analyzer.py
+import asyncio, time, json, hashlib, logging, regex
+
 from collections import OrderedDict
 from typing import Dict
+
 from app.config import settings
 from app.clients.openai_client import _call_openai_with_retry
 from ..constants.emotions import ALL_METRICS, ANALYSIS_METRICS
@@ -135,3 +134,4 @@ class TextAnalyzer:
                 self._analysis_cache.popitem(last=False)
 
         return full
+EOF

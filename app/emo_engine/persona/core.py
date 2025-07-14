@@ -1,5 +1,5 @@
-# app/emo_engine/persona/core.py
-
+cat >app/emo_engine/persona/core.py<< EOF
+#app/emo_engine/persona/core.py
 from __future__ import annotations
 
 import asyncio, json, random, time, threading
@@ -16,10 +16,8 @@ from .memory import (
     MemoryEntry, _restore, _persist
 )
 from .states import (
-    _recompute_rates, process_interaction,
-    _blend_metric, _update_mood_label,
-    _decayed_weight, _compute_salience,
-    _update_weight,
+    _recompute_rates, process_interaction, _blend_metric, _update_mood_label,
+    _decayed_weight, _compute_salience, _update_weight,
 )
 from .utils.emotion_math import (
     _compute_secondary, 
@@ -349,3 +347,4 @@ class Persona:
             .decode("utf-8", "ignore")
             .replace("\n", " ")
         )
+EOF

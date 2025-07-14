@@ -1,4 +1,5 @@
-#app/services/welcome_manager.py
+cat >app/services/addons/welcome_manager.py<< EOF
+#app/services/addons/welcome_manager.py
 
 from __future__ import annotations
 import logging
@@ -9,12 +10,11 @@ from aiogram.utils.markdown import hlink
 from redis.exceptions import RedisError
 
 from app.clients.openai_client import _call_openai_with_retry
-from app.emo_engine.registry import get_persona 
+from app.emo_engine import get_persona 
 from app.config import settings
-from app.core import get_redis
+from app.core.memory import get_redis
 
 logger = logging.getLogger(__name__)
-
 
 MAX_TEMPERATURE = 0.85
 MIN_TEMPERATURE = 0.5
@@ -146,9 +146,7 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
 
     except Exception:
         logger.exception(
-            "welcome_manager: OpenAI call failed for chat %s user %s",
-            chat_id,
-            user.id,
-        )
+            "welcome_manager: OpenAI call failed for chat %s user %s", chat_id, user.id,)
 
     return raw
+EOF

@@ -1,4 +1,5 @@
-#app/services/group_ping.py
+cat >app/services/addons/group_ping.py<< EOF
+#app/services/addons/group_ping.py
 
 from __future__ import annotations
 
@@ -14,8 +15,8 @@ from redis.exceptions import RedisError, ResponseError
 from app.clients.telegram_client import get_bot
 from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
-from app.core import get_redis, load_context
-from app.emo_engine.registry import get_persona 
+from app.core.memory import get_redis, load_context
+from app.emo_engine import get_persona 
 from app.services.responder.prompt_builder import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -248,3 +249,4 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
             await redis.expire(_METRIC_SEND_FAIL, 86_400)
         except RedisError:
             pass
+EOF

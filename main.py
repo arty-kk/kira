@@ -1,15 +1,14 @@
+cat > main.py << EOF
+#main.py
 from __future__ import annotations
 
-import asyncio
-import logging
-import signal
-import sys
+import asyncio, logging, signal, sys, os
 
-from app.core import setup_logging, engine, Base
-from app.tasks import start_scheduler, sched
-from app.bot.components.webhook import start_bot
-from app.config import _get_env
-
+from app import (
+    engine, Base, setup_logging,
+    start_scheduler, sched, start_bot,
+    close_redis_pools, _get_env
+)
 
 async def init_db() -> None:
     async with engine.begin() as conn:
@@ -22,14 +21,14 @@ async def main() -> None:
     logging.getLogger("app").setLevel(logging.INFO)
     logging.info("🚀 Starting application")
 
-    logging.info("⏳ Initialising database")
+    logging.info("⏳ Initializing database")
     try:
         await init_db()
     except Exception:
-        logging.exception("Database initialisation failed")
+        logging.exception("Database initialization failed")
         return
 
-    scheduler_enabled = str(_get_env("ENABLE_SCHEDULER", "false")).lower() == "true"
+    scheduler_enabled = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
     if scheduler_enabled:
         logging.info("⏱️  Starting scheduler")
         start_scheduler()
@@ -40,6 +39,7 @@ async def main() -> None:
     bot_task = asyncio.create_task(start_bot())
 
     loop = asyncio.get_running_loop()
+
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, bot_task.cancel)
@@ -61,7 +61,6 @@ async def main() -> None:
         await engine.dispose()
 
         logging.info("🔌 Closing Redis pools")
-        from app.core.memory import close_redis_pools
         await close_redis_pools()
 
     logging.info("✅ Graceful shutdown complete")
@@ -70,3 +69,4 @@ async def main() -> None:
 if __name__ == "__main__":
     asyncio.run(main())
     sys.exit(0)
+EOF

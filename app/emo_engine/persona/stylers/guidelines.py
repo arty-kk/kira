@@ -1,10 +1,9 @@
+cat >app/emo_engine/persona/stylers/guidelines.py<< EOF
 #app/emo_engine/persona/stylers/guidelines.py
-
 from __future__ import annotations
 
-import logging
-import random
-import secrets
+import logging, random, secrets
+
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Dict, List, Set, Tuple, Optional
@@ -411,3 +410,4 @@ async def style_guidelines(
 
     logging.debug("Guidelines (human_mode=%s): %s", human_mode, ordered)
     return ordered
+EOF

@@ -1,5 +1,5 @@
+cat >app/core/logging_config.py<< EOF
 #app/core/logging_config.py
-
 import logging
 
 from logging.config import dictConfig
@@ -43,3 +43,4 @@ def setup_logging() -> None:
         }
     }
 )
+EOF

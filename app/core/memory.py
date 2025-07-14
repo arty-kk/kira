@@ -1,6 +1,7 @@
+cat > app/core/memory.py << EOF
 #app/core/memory.py
-
 from __future__ import annotations
+
 import contextvars
 import json
 import logging
@@ -92,7 +93,12 @@ def _create_single() -> Redis:
 
 def get_redis() -> Redis:
 
-    loop_id = id(asyncio.get_running_loop())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+
+    loop_id = id(loop)
 
     try:
         mapping = _redis_ctx.get()
@@ -142,9 +148,9 @@ async def is_spam(chat_id: int, user_id: int) -> bool:
     key = f"spam:{chat_id}"
     member = str(user_id)
 
-    r = get_redis()
+    redis = get_redis()
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.zincrby(key, 1, member)
             pipe.zscore(key, member)
             pipe.expire(key, window)
@@ -167,9 +173,9 @@ async def push_message(
         entry["user_id"] = user_id
     data = json.dumps(entry)
 
-    r = get_redis()
+    redis = get_redis()
     try:
-        pipe = r.pipeline()
+        pipe = redis.pipeline()
         pipe.rpush(key, data)
         pipe.ltrim(key, -SHORT_LIMIT, -1)
         pipe.expire(key, MEMORY_TTL)
@@ -194,10 +200,10 @@ async def push_message(
 async def load_context(chat_id: int) -> List[Dict[str, Any]]:
     key_msgs = _key_msgs(chat_id)
     key_sum = _key_summary(chat_id)
-    r = get_redis()
+    redis = get_redis()
 
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.get(key_sum)
             pipe.lrange(key_msgs, -SHORT_LIMIT, -1)
             res = await pipe.execute()
@@ -223,9 +229,9 @@ async def load_context(chat_id: int) -> List[Dict[str, Any]]:
 
 async def inc_msg_count(chat_id: int) -> None:
     key = f"msg_count:{chat_id}"
-    r = get_redis()
+    redis = get_redis()
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.incr(key)
             pipe.expire(key, 86_400)
             if await pipe.execute() is None:
@@ -235,9 +241,9 @@ async def inc_msg_count(chat_id: int) -> None:
 
 async def record_activity(chat_id: int, user_id: int) -> None:
     now = time_module.time()
-    r = get_redis()
+    redis = get_redis()
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.sadd(f"all_users:{chat_id}", user_id)
             pipe.expire(f"all_users:{chat_id}", MEMORY_TTL)
             pipe.zadd(_key_user_last_ts(chat_id), {user_id: now})
@@ -259,9 +265,10 @@ async def get_cached_gender(user_id: int) -> str | None:
 
 async def cache_gender(user_id: int, value: str) -> None:
 
-    r = get_redis()
+    redis = get_redis()
 
     if value in ("male", "female"):
-        await r.set(_GENDER_KEY(user_id), value)
+        await redis.set(_GENDER_KEY(user_id), value)
     else:
-        await r.set(_GENDER_KEY(user_id), "unknown", ex=86_400)
+        await redis.set(_GENDER_KEY(user_id), "unknown", ex=86_400)
+EOF

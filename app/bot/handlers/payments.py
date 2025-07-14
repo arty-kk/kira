@@ -1,5 +1,5 @@
+cat >app/bot/handlers/payments.py<< EOF
 # app/bot/handlers/payments.py
-
 import logging
 
 from aiogram import F
@@ -17,8 +17,8 @@ from aiogram.types import (
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.config import settings
-from app.core import AsyncSessionLocal
-from app.services.user import (
+from app.core.db import AsyncSessionLocal
+from app.services.user.user_service import (
     get_or_create_user, 
     add_paid_requests,
     compute_remaining,
@@ -89,3 +89,4 @@ async def on_payment_success(message: Message) -> None:
         f"✅ You purchased {req} requests.\n"
         f"📊 You have <b>{remaining}</b> requests left."
     )
+EOF

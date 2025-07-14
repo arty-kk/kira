@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/constants/labels.py<< EOF
 #app/emo_engine/persona/constants/labels.py
-
 from typing import Dict
 
 EMO_LABEL_MAP: Dict[str, str] = {
@@ -132,3 +132,4 @@ EMO_LABEL_MAP: Dict[str, str] = {
     "euphoria":          "Euphoric",
     "collapse":          "Collapsed",
 }
+EOF

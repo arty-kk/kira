@@ -1,9 +1,10 @@
+cat >app/core/models.py<< EOF
 #app/core/models.py
 
 from sqlalchemy import Column, BigInteger, Integer, String, DateTime
 from sqlalchemy.sql import func
 
-from app.core import Base
+from app.core.db import Base
 
 class User(Base):
 
@@ -17,3 +18,4 @@ class User(Base):
     free_requests_left  = Column(Integer, default=100, nullable=False)
     paid_requests       = Column(Integer, default=0,  nullable=False)
     used_requests       = Column(Integer, default=0,  nullable=False)
+EOF

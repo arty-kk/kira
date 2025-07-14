@@ -1,5 +1,5 @@
+cat >app/emo_engine/registry.py<< EOF
 #app/emo_engine/registry.py
-
 from __future__ import annotations
 
 import time
@@ -36,3 +36,4 @@ def get_persona(chat_id: int) -> Persona:
         _cache[chat_id] = (persona, time.time())
         _purge()
         return persona
+EOF

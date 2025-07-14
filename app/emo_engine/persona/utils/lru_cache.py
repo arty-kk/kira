@@ -1,5 +1,5 @@
-# app/emo_engine/persona/utils/lru_cache.py
-
+cat >app/emo_engine/persona/utils/lru_cache.py<< EOF
+#app/emo_engine/persona/utils/lru_cache.py
 from collections import OrderedDict
 
 class LRUCache(OrderedDict):
@@ -20,3 +20,4 @@ class LRUCache(OrderedDict):
         elif len(self) >= self._maxsize:
             self.popitem(last=False)
         super().__setitem__(key, value)
+EOF

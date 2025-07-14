@@ -1,5 +1,5 @@
+cat > app/tasks/scheduler.py << EOF
 #app/tasks/scheduler.py
-
 from __future__ import annotations
 
 import logging
@@ -13,11 +13,10 @@ from apscheduler.triggers.date import DateTrigger
 
 from app.config import settings
 from app.clients.telegram_client import get_bot   
-from app.services.addons.group_battle import start_battle_job
-from app.services.addons.price_fetcher import price_fetcher
-from app.services.addons.group_ping import group_ping
-from app.services.addons.personal_ping import personal_ping
-from app.services.addons.twitter_manager import generate_and_post_tweet
+from app.services.addons import (
+    start_battle_job, price_fetcher, group_ping, 
+    personal_ping, generate_and_post_tweet
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +36,10 @@ async def tweet_scheduler_job():
         if job.id.startswith("dynamic_tweet_"):
             sched.remove_job(job.id)
 
-    count = random.randint(2, 5)
+    count = random.randint(1, 3)
     now = datetime.now(timezone.utc)
     window_start = datetime(now.year, now.month, now.day, 11, 0, tzinfo=timezone.utc)
-    window_end   = datetime(now.year, now.month, now.day, 23, 0, tzinfo=timezone.utc)
+    window_end = datetime(now.year, now.month, now.day, 23, 0, tzinfo=timezone.utc)
     total_sec = (window_end - window_start).total_seconds()
     segment = total_sec / count
 
@@ -132,3 +131,4 @@ async def personal_ping_job():
 def start_scheduler() -> None:
     logger.info("Starting scheduler with jobs: %s", sched.get_jobs())
     sched.start()
+EOF

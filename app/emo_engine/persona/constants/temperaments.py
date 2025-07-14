@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/constants/temperaments.py<< EOF
 #app/emo_engine/persona/constants/temperaments.py
-
 from typing import Dict
 
 TEMPERAMENT_PROFILE: Dict[str, Dict[str, float]] = {
@@ -44,3 +44,4 @@ TEMPERAMENT_PROFILE: Dict[str, Dict[str, float]] = {
         "fatigue": 0.95, "charisma": 0.95, "persuasion": 0.85,
     },
 }
+EOF

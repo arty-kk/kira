@@ -1,5 +1,5 @@
-# services/responder/coref/resolve_coref.py
-
+cat >app/services/responder/coref/resolve_coref.py<< EOF
+#app/services/responder/coref/resolve_coref.py
 import logging
 import asyncio
 import hashlib
@@ -110,3 +110,4 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         logger.exception("resolve_coref final step failed", exc_info=True)
 
     return text
+EOF

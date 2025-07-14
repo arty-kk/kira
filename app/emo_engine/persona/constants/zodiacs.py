@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/constants/zodiacs.py<< EOF
 #app/emo_engine/persona/constants/zodiacs.py
-
 from typing import Dict
 
 ZODIAC_MODIFIERS: Dict[str, Dict[str, float]] = {
@@ -76,3 +76,4 @@ ZODIAC_MODIFIERS: Dict[str, Dict[str, float]] = {
         "charisma": 0.90, "persuasion": 0.95
     },
 }
+EOF

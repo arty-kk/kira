@@ -1,5 +1,5 @@
+cat >app/clients/openai_client.py<< EOF
 #app/clients/openai_client.py
-
 from openai import AsyncOpenAI
 from app.config import settings
 from typing import Any
@@ -28,3 +28,4 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
         ):
             with attempt:
                 return await client.chat.completions.create(**kwargs)
+EOF

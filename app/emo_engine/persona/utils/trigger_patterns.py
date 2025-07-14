@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/utils/trigger_patterns.py<< EOF
 #app/emo_engine/persona/utils/trigger_patterns.py
-
 import re
 
 TRIGGER_PATTERNS = [
@@ -53,3 +53,4 @@ def apply_triggers(text: str) -> dict:
             for metric, delta in trigger["deltas"].items():
                 deltas[metric] = deltas.get(metric, 0.0) + delta
     return deltas
+EOF

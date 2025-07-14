@@ -1,5 +1,5 @@
-# services/responder/coref/needs_coref.py
-
+cat >app/services/responder/coref/needs_coref.py<< EOF
+#app/services/responder/coref/needs_coref.py
 import logging
 import asyncio
 
@@ -48,3 +48,4 @@ async def needs_coref(text: str) -> bool:
     except Exception as e:
         logger.warning("needs_coref error: %s", e)
         return False
+EOF

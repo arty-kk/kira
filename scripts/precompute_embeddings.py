@@ -1,4 +1,5 @@
-# scripts/precompute_embeddings.py
+cat >scripts/precompute_embeddings.py<< EOF
+#scripts/precompute_embeddings.py
 import os
 import json
 import re
@@ -105,3 +106,4 @@ with open(OUT_PATH, "w", encoding="utf-8") as f:
     json.dump(embedded, f, ensure_ascii=False, indent=2)
 
 print(f"Saved {len(embedded)} embedded chunks to {OUT_PATH}")
+EOF

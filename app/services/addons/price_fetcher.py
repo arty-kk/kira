@@ -1,4 +1,5 @@
-#app/services/news_fetcher.py
+cat >app/services/addons/price_fetcher.py<< EOF
+#app/services/addons/price_fetcher.py
 
 import asyncio
 import logging
@@ -62,3 +63,4 @@ async def price_fetcher() -> List[str]:
     message = "\n".join(lines)
     logger.debug("Formatted crypto message:\n%s", message)
     return [message]
+EOF

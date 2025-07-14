@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/memory.py<< EOF
 #app/emo_engine/persona/memory.py
-
 from __future__ import annotations
 
 import asyncio, json, time, logging
@@ -10,7 +10,7 @@ from math import exp
 from typing import Dict, List
 
 from app.config import settings
-from app.core import get_redis
+from app.core.memory import get_redis
 
 
 @dataclass
@@ -24,15 +24,15 @@ class MemoryEntry:
 
 async def _restore(self) -> None:
 
-    r = get_redis()
+    redis = get_redis()
 
-    if r is None:
+    if redis is None:
         logging.warning("Redis unavailable during persona restore")
         self._restored_evt.set()
         return
 
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.get(self._k_state())
             pipe.get(self._k_weights())
             raw, raw_w = await asyncio.wait_for(pipe.execute(), timeout=1.0)
@@ -44,14 +44,14 @@ async def _restore(self) -> None:
                 self.state.update(loaded["data"])
             else:
                 self.state.update(loaded)
-                await r.set(self._k_state(), json.dumps({"v": 0, "data": self.state}), ex=settings.PERSONA_REDIS_TTL)
+                await redis.set(self._k_state(), json.dumps({"v": 0, "data": self.state}), ex=settings.PERSONA_REDIS_TTL)
         if raw_w:
             if isinstance(raw_w, bytes):
                 raw_w = raw_w.decode()
             self.user_weights = {int(k): v for k, v in json.loads(raw_w).items()}
 
         raw_mem = await asyncio.wait_for(
-            r.zrevrange(self._k_memory(), 0, -1), timeout=1.0
+            redis.zrevrange(self._k_memory(), 0, -1), timeout=1.0
         )
         entries: list[MemoryEntry] = []
         for item in raw_mem:
@@ -70,14 +70,14 @@ async def _restore(self) -> None:
 
 async def _persist(self) -> None:
 
-    r = get_redis()
+    redis = get_redis()
 
-    if not r:
+    if not redis:
         return
 
     try:
         state_blob = json.dumps({"v": self.state_version, "data": self.state})
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.set(self._k_state(), state_blob, ex=settings.PERSONA_REDIS_TTL)
             pipe.set(self._k_weights(), json.dumps(self.user_weights), ex=settings.PERSONA_REDIS_TTL)
             await pipe.execute()
@@ -89,14 +89,15 @@ async def _persist(self) -> None:
         key = self._k_memory()
         tmp = f"{key}:tmp"
         now = time.time()
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.delete(tmp)
             for entry in self.memory_entries:
                 age = now - entry.timestamp
                 score = entry.salience * exp(-settings.MEMORY_SALIENCE_DECAY_RATE * age)
                 pipe.zadd(tmp, {json.dumps(entry.__dict__): score})
             pipe.expire(tmp, settings.PERSONA_REDIS_TTL)
-            pipe.rename(tmp, key, nx=False)
+            pipe.renamenx(tmp, key)
             await pipe.execute()
     except Exception as e:
         logging.warning("Persona persist(memory) failed: %s", e, exc_info=True)
+EOF

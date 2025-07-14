@@ -1,5 +1,5 @@
-# app/bot/utils/keep_typing.py
-
+cat >app/bot/utils/keep_typing.py<< EOF
+#app/bot/utils/keep_typing.py
 import asyncio
 import logging
 
@@ -32,3 +32,4 @@ async def typing_indicator(chat_id: int):
     finally:
         stop.set()
         await task
+EOF

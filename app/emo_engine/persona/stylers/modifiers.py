@@ -1,5 +1,5 @@
+cat >app/emo_engine/persona/stylers/modifiers.py<< EOF
 #app/emo_engine/persona/stylers/modifiers.py
-
 import threading
 
 from typing import Dict, Optional
@@ -181,3 +181,4 @@ def style_modifiers(self) -> Dict[str, float]:
         self._mods_cache = {k: round(v, 2) for k, v in modified.items()}
 
         return self._mods_cache.copy()
+EOF

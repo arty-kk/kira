@@ -1,10 +1,12 @@
-# services/responder/rag/knowledge_proc.py
-
+cat >app/services/responder/rag/knowledge_proc.py<< EOF
+#app/services/responder/rag/knowledge_proc.py
 from __future__ import annotations
+
 import json
 import logging
 import numpy as np
 import asyncio
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -112,3 +114,4 @@ async def get_relevant(
         chosen_vecs.append(best[3])
 
     return picked
+EOF

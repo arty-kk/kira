@@ -1,8 +1,8 @@
+cat > app/bot/handlers/battle.py << EOF
 # app/bot/handlers/battle.py
-
 import logging
-from typing import Optional
 
+from typing import Optional
 from aiogram import F
 from aiogram.enums import ChatType, MessageEntityType
 from aiogram.filters import Command, CommandObject
@@ -12,7 +12,7 @@ from aiogram.exceptions import TelegramBadRequest
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client
-from app.services import battle as battle_service
+from app.services.addons import group_battle as battle_service
 
 logger = logging.getLogger(__name__)
 
@@ -112,3 +112,4 @@ async def cmd_battle_off(message: Message) -> None:
 async def cmd_battle_on(message: Message) -> None:
     await redis_client.srem("battle:opt_out", str(message.from_user.id))
     await message.reply("✅ You’ve opted in to Battles.")
+EOF

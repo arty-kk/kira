@@ -1,8 +1,9 @@
+cat >app/emo_engine/persona/utils/emotion_math.py<< EOF
 #app/emo_engine/persona/utils/emotion_math.py
-
 from __future__ import annotations
 
 import logging
+
 from functools import lru_cache
 from math import exp, sqrt
 from typing import Dict, List
@@ -259,3 +260,4 @@ def suppress_opposite(metric: str, state: Dict[str, float]) -> None:
     if opp and opp in state:
         weight = _sigmoid(1 - state[metric], k=10, mid=0.5)
         state[opp] *= weight
+EOF

@@ -1,4 +1,5 @@
-# app/tasks/celery_app.py
+cat >app/tasks/celery_app.py<< EOF
+#app/tasks/celery_app.py
 from __future__ import annotations
 
 import os
@@ -15,7 +16,7 @@ if not broker_url.startswith("redis://"):
 
 
 celery = Celery(
-    "galaxytap",
+    "synchatica",
     broker=broker_url,
     backend=None,
     include=["app.tasks.message"],
@@ -51,5 +52,5 @@ def _warm_up(_sender, **_kwargs) -> None:
     except Exception:
         pass
 
-
 celery.autodiscover_tasks(["app"])
+EOF

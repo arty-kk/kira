@@ -1,5 +1,5 @@
-# services/responder/core.py
-
+cat >app/services/responder/core.py<< EOF
+#app/services/responder/core.py
 from __future__ import annotations
 
 import logging, asyncio, hashlib, json, re, time
@@ -9,12 +9,11 @@ from aiohttp import ClientError
 
 from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
-from app.core import (
+from app.core.memory import (
     load_context, push_message, 
     get_redis, get_cached_gender, cache_gender
 )
-from app.emo_engine.registry import get_persona
-from app.emo_engine.persona.core import Persona
+from app.emo_engine import get_persona
 
 from .prompt_builder import build_system_prompt
 from .coref import needs_coref, resolve_coref
@@ -22,8 +21,6 @@ from .gender import detect_gender
 from .rag import get_relevant, _KB_ENTRIES, _init_kb, is_on_topic
 
 logger = logging.getLogger(__name__)
-
-_kb_initialized = False
 
 ON_TOPIC_MAX_TOKENS = 800
 OFF_TOPIC_MAX_TOKENS = 600
@@ -95,7 +92,7 @@ async def respond_to_user(text: str, chat_id: int, user_id: int) -> str:
             logger.warning("resolve_coref failed: %s", e)
             resolved = query
 
-    safe_resolved = resolved.replace("\\", "\\\\").replace('"', '\\"')
+    safe_resolved = resolved
 
     try:
         await push_message(chat_id, "user", safe_resolved, user_id)
@@ -141,7 +138,8 @@ async def respond_to_user(text: str, chat_id: int, user_id: int) -> str:
             if redis:
                 await redis.set(cache_key, json.dumps(hits), ex=3600)
 
-        logger.debug("on_topic: %d hits, top_score=%0.4f", len(hits), hits[0][0] if hits else 0.0)
+        top_score = hits[0][0] if hits else 0.0
+        logger.debug("on_topic: %d hits, top_score=%0.4f", len(hits), top_score)
 
         meta_entries = _KB_ENTRIES.get(emb_model, [])
         meta_map = {e["id"]: e for e in meta_entries}
@@ -263,3 +261,4 @@ async def respond_to_user(text: str, chat_id: int, user_id: int) -> str:
         logger.warning("push_message failed, continuing without cache: %s", e)
 
     return reply
+EOF

@@ -1,3 +1,4 @@
+cat > app/bot/handlers/group.py << EOF
 # app/bot/handlers/group.py
 
 import asyncio
@@ -14,11 +15,12 @@ from aiogram.types import Message
 
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
-from app.bot.components.constants import redis_client, BOT_ID, BOT_USERNAME
+import app.bot.components.constants as consts
+from app.bot.components.constants import redis_client
 from app.bot.handlers.moderation import handle_passive_moderation
 from app.bot.utils.keep_typing import typing_indicator
-from app.core import record_activity, inc_msg_count
-from app.tasks import process_message
+from app.core.memory import record_activity, inc_msg_count
+from app.tasks.message import process_message
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,17 +29,17 @@ bot = get_bot()
 
 def _is_mention(message: types.Message) -> bool:
     raw = message.text or message.caption or ""
-    if f"@{BOT_USERNAME}" in raw.lower():
+    if consts.BOT_USERNAME and f"@{consts.BOT_USERNAME}" in raw.lower():
         return True
-    if message.reply_to_message and message.reply_to_message.from_user.id == BOT_ID:
+    if (message.reply_to_message and consts.BOT_ID and message.reply_to_message.from_user.id == consts.BOT_ID):
         return True
     entities = (message.entities or []) + (message.caption_entities or [])
     for ent in entities:
         if ent.type == MessageEntityType.MENTION:
             mention = raw[ent.offset : ent.offset + ent.length]
-            if mention.lower() == f"@{BOT_USERNAME}":
+            if consts.BOT_USERNAME and mention.lower() == f"@{consts.BOT_USERNAME}":
                 return True
-        if ent.type == MessageEntityType.TEXT_MENTION and ent.user.id == BOT_ID:
+        if (ent.type == MessageEntityType.TEXT_MENTION and consts.BOT_ID and ent.user.id == consts.BOT_ID):
             return True
     return False
 
@@ -102,3 +104,4 @@ async def on_group_message(message: Message) -> None:
 
     except Exception:
         logger.exception("Error in on_group_message handler")
+EOF

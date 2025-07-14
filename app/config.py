@@ -1,3 +1,4 @@
+cat > app/config.py << EOF
 #app/config.py
 from __future__ import annotations
 
@@ -63,9 +64,14 @@ class Settings:
     WEBHOOK_PATH: str = field(default_factory=lambda: _get_env("WEBHOOK_PATH", "/webhook"))
     WEBHOOK_HOST: str = field(default_factory=lambda: _get_env("WEBHOOK_HOST", "0.0.0.0"))
     WEBHOOK_PORT: int = field(default_factory=lambda: _get_env("WEBHOOK_PORT", "8443", conv=int))
-    CERTS_DIR: str = field(default_factory=lambda: _get_env("CERTS_DIR", os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "certs")))
-    WEBHOOK_CERT: str = field(default_factory=lambda: os.path.join(get_settings().CERTS_DIR, "cert.pem"))
-    WEBHOOK_KEY: str = field(default_factory=lambda: os.path.join(get_settings().CERTS_DIR, "key.pem"))
+    CERTS_DIR: str = field(
+        default_factory=lambda: _get_env(
+            "CERTS_DIR",
+            os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "certs")
+        )
+    )
+    WEBHOOK_CERT: str = field(init=False)
+    WEBHOOK_KEY: str = field(init=False)
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
     PAYMENT_PROVIDER_TOKEN: str = field(default_factory=lambda: _get_env("PAYMENT_PROVIDER_TOKEN", ""))
     LOG_LEVEL: str = field(default_factory=lambda: _get_env("LOG_LEVEL", "INFO"))
@@ -159,8 +165,18 @@ class Settings:
     MEMORY_MAX_ENTRIES: int = field(default_factory=lambda: _get_env("MEMORY_MAX_ENTRIES", "300", conv=int))
     MEMORY_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("MEMORY_MIN_SALIENCE", "0.03", conv=float))
 
+    # ─── post-init: вычисляем поля, зависящие от других ─────────────
+    def __post_init__(self) -> None:
+        self.WEBHOOK_CERT = os.path.join(self.CERTS_DIR, "cert.pem")
+        self.WEBHOOK_KEY  = os.path.join(self.CERTS_DIR, "key.pem")
+        self.OFFTOPIC_EMBEDDING_MODEL = _get_env(
+            "OFFTOPIC_EMBEDDING_MODEL",
+            f"{self.EMBEDDING_MODEL}-offtopic",
+            conv=str
+        )
+
     # ─── Purchase Tiers for Requests ─────────────────────────────
-    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {10: 10, 25: 25, 50: 50, 100: 100})
+    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {100: 100, 250: 250, 500: 00, 1000: 3000})
 
     # ─── Group Limits ───────────────────────────────────────────
     ALLOWED_GROUP: str = field(default_factory=lambda: _get_env("ALLOWED_GROUP", "@galaxytapchat"))
@@ -194,13 +210,7 @@ class Settings:
     # ─── On/Off-topic knowledge files ────────────────────────────────
     KNOWLEDGE_ON_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_ON_FILE", "knowledge_on.json", conv=str))
     KNOWLEDGE_OFF_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_OFF_FILE", "knowledge_off.json", conv=str))
-    OFFTOPIC_EMBEDDING_MODEL: str = field(
-        default_factory=lambda: _get_env(
-            "OFFTOPIC_EMBEDDING_MODEL",
-            get_settings().EMBEDDING_MODEL + "-offtopic",
-            conv=str
-        )
-    )
+    OFFTOPIC_EMBEDDING_MODEL: str = field(init=False)
 
     # ─── Hybrid Fallback Parameters ──────────────────────────────
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
@@ -312,3 +322,4 @@ class _SettingsProxy:
 
 
 settings = _SettingsProxy()
+EOF

@@ -1,5 +1,5 @@
+cat >app/services/addons/personal_ping.py<< EOF
 #app/services/addons/personal_ping.py
-
 import logging
 import random
 import statistics
@@ -13,9 +13,10 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.clients.openai_client import _call_openai_with_retry
+from app.clients.telegram_client import get_bot
 from app.config import settings
-from app.core import get_redis, load_context
-from app.emo_engine.registry import get_persona 
+from app.core.memory import get_redis, load_context
+from app.emo_engine import get_persona 
 from app.services.responder.prompt_builder import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -35,35 +36,35 @@ TOP_P_MAX = 1.0
 
 async def register_private_activity(user_id: int) -> None:
 
-    r: Redis = get_redis()
+    redis = get_redis()
     now = time_module.time()
     try:
-        await r.sadd(PRIVATE_USERS_KEY, str(user_id))
-        await r.expire(PRIVATE_USERS_KEY, settings.PERSONAL_PING_RETENTION_SECONDS)
-        await r.zrem(PING_SCHEDULE_KEY, str(user_id))
+        await redis.sadd(PRIVATE_USERS_KEY, str(user_id))
+        await redis.expire(PRIVATE_USERS_KEY, settings.PERSONAL_PING_RETENTION_SECONDS)
+        await redis.zrem(PING_SCHEDULE_KEY, str(user_id))
 
-        prev = await r.get(LAST_PRIVATE_TS_KEY.format(user_id))
+        prev = await redis.get(LAST_PRIVATE_TS_KEY.format(user_id))
         if prev:
             last_ts = float(prev)
             idle = now - last_ts
             hist_key = IDLE_LIST_KEY.format(user_id)
-            async with r.pipeline() as pipe:
+            async with redis.pipeline() as pipe:
                 pipe.lpush(hist_key, idle)
                 pipe.ltrim(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
                 pipe.expire(hist_key, settings.PERSONAL_PING_RETENTION_SECONDS)
                 await pipe.execute()
-        await r.set(LAST_PRIVATE_TS_KEY.format(user_id), now, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
-        await r.set(PING_STREAK_KEY.format(user_id), 0, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
+        await redis.set(LAST_PRIVATE_TS_KEY.format(user_id), now, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
+        await redis.set(PING_STREAK_KEY.format(user_id), 0, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
     except RedisError:
         logger.exception("register_private_activity: Redis error for %s", user_id)
     await _schedule_next_ping(user_id, now)
 
 async def _schedule_next_ping(user_id: int, reference_ts: float) -> None:
 
-    r: Redis = get_redis()
+    redis = get_redis()
     hist_key = IDLE_LIST_KEY.format(user_id)
     try:
-        raw = await r.lrange(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
+        raw = await redis.lrange(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
         history = [float(x) for x in raw]
     except RedisError:
         history = []
@@ -90,7 +91,7 @@ async def _schedule_next_ping(user_id: int, reference_ts: float) -> None:
         next_ts += delta_h * 3600
 
     try:
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.zadd(PING_SCHEDULE_KEY, {str(user_id): next_ts})
             pipe.expire(PING_SCHEDULE_KEY, settings.PERSONAL_PING_RETENTION_SECONDS)
             await pipe.execute()
@@ -99,10 +100,10 @@ async def _schedule_next_ping(user_id: int, reference_ts: float) -> None:
 
 async def personal_ping() -> None:
 
-    r: Redis = get_redis()
+    redis = get_redis()
     now = time_module.time()
     try:
-        due = await r.zrangebyscore(
+        due = await redis.zrangebyscore(
             PING_SCHEDULE_KEY, 0, now,
             start=0, num=settings.PERSONAL_PING_BATCH_SIZE
         )
@@ -113,7 +114,7 @@ async def personal_ping() -> None:
         return
     logger.debug("personal_ping: %d users due", len(due))
 
-    active = set(await r.smembers(PRIVATE_USERS_KEY))
+    active = set(await redis.smembers(PRIVATE_USERS_KEY))
     due = [uid for uid in due if uid in active]
 
     tasks = []
@@ -127,9 +128,9 @@ async def personal_ping() -> None:
 
 async def _handle_user_ping(chat_id: int, user_id: int, now: float) -> None:
     
-    r: Redis = get_redis()
+    redis = get_redis()
     try:
-        await r.zrem(PING_SCHEDULE_KEY, str(user_id))
+        await redis.zrem(PING_SCHEDULE_KEY, str(user_id))
     except RedisError:
         logger.exception("_handle_user_ping: zrem failed for %s", user_id)
     try:
@@ -141,12 +142,10 @@ async def _handle_user_ping(chat_id: int, user_id: int, now: float) -> None:
 
 async def _send_contextual_ping(chat_id: int, user_id: int) -> None:
 
-    from app.clients.telegram_client import get_bot
     bot = get_bot()
-
-    r = get_redis()
+    redis = get_redis()
     try:
-        streak = int(await r.get(PING_STREAK_KEY.format(user_id)) or 0)
+        streak = int(await redis.get(PING_STREAK_KEY.format(user_id)) or 0)
     except RedisError:
         streak = 0
     if streak >= MAX_CONSECUTIVE_PINGS:
@@ -221,13 +220,14 @@ async def _send_contextual_ping(chat_id: int, user_id: int) -> None:
 
     try:
         await bot.send_message(user_id, text, parse_mode="HTML")
-        await r.incr(PING_STREAK_KEY.format(user_id))
-        await r.expire(PING_STREAK_KEY.format(user_id), settings.PERSONAL_PING_RETENTION_SECONDS)
+        await redis.incr(PING_STREAK_KEY.format(user_id))
+        await redis.expire(PING_STREAK_KEY.format(user_id), settings.PERSONAL_PING_RETENTION_SECONDS)
     except TelegramBadRequest:
         await bot.send_message(user_id, re.sub(r"<[^>]+>", "", text))
     except TelegramForbiddenError:
-        await r.zrem(PING_SCHEDULE_KEY, str(user_id))
-        await r.srem(PRIVATE_USERS_KEY, str(user_id))
+        await redis.zrem(PING_SCHEDULE_KEY, str(user_id))
+        await redis.srem(PRIVATE_USERS_KEY, str(user_id))
         logger.info("Removed %s from personal ping (bot forbidden)", user_id)
     except Exception:
         logger.exception("_send_contextual_ping: send error for %s", user_id)
+EOF

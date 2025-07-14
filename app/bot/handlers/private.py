@@ -1,3 +1,4 @@
+cat > app/bot/handlers/private.py << EOF
 # app/bot/handlers/private.py
 
 import logging
@@ -6,6 +7,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, time
 
 from aiogram import F, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.enums import ChatType, ContentType
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
@@ -26,11 +28,12 @@ from app.bot.handlers.payments import cmd_buy
 from app.bot.utils.keep_typing import typing_indicator
 from app.bot.utils.user_mode import get_user_mode, set_user_mode, UserMode
 from app.config import settings
-from app.tasks import process_message
-from app.core import AsyncSessionLocal, inc_msg_count, is_spam
+from app.tasks.message import process_message
+from app.core.db import AsyncSessionLocal
+from app.core.memory import inc_msg_count, is_spam
 from app.services.addons.personal_ping import register_private_activity
 from app.services.responder.rag.topic_detector import is_on_topic
-from app.services.user import (
+from app.services.user.user_service import (
     get_or_create_user,
     compute_remaining,
     increment_usage,
@@ -71,7 +74,10 @@ async def cmd_start(message: Message) -> None:
 @dp.callback_query(F.data.startswith("lang:"), F.message.chat.type == ChatType.PRIVATE)
 async def set_language(cb: CallbackQuery) -> None:
 
-    await cb.answer()
+    try:
+        await cb.answer(cache_time=1)
+    except TelegramBadRequest:
+        pass
     lang = cb.data.split(":", 1)[1]
     await redis_client.set(f"lang:{cb.from_user.id}", lang)
 
@@ -209,10 +215,14 @@ async def cmd_mode(message: Message, command: CommandObject | None = None) -> No
 
 @dp.callback_query(F.data.startswith("set_mode:"))
 async def cb_set_mode(cb: CallbackQuery) -> None:
-    await cb.answer()
+    try:
+        await cb.answer(cache_time=1)
+    except TelegramBadRequest:
+        pass
     mode = cb.data.split(":", 1)[1]
     try:
         await set_user_mode(cb.from_user.id, UserMode(mode))
         await cb.message.edit_text(f"✅ Mode set to <b>{mode}</b>.")
     except ValueError:
         await cb.message.edit_text("❌ Unknown mode.")
+EOF

@@ -1,14 +1,13 @@
+cat > app/tasks/message.py << EOF
 #app/tasks/message.py
-
 import asyncio 
 import threading
-
 import logging
-from celery.utils.log import get_task_logger
 
+from celery.utils.log import get_task_logger
 from aiogram.exceptions import TelegramBadRequest
 
-from app.tasks.celery_app import celery
+from .celery_app import celery
 from app.services.responder import respond_to_user
 from app.clients.telegram_client import get_bot
 from app.config import settings
@@ -129,13 +128,13 @@ def summarize_old(chat_id: int, length: int) -> None:
     logger = logging.getLogger(__name__)
 
     async def _summarize():
-        r = get_redis()
+        redis = get_redis()
         key_msgs = _key_msgs(chat_id)
         key_sum = _key_summary(chat_id)
 
-        old_summary = await r.get(key_sum) or ""
+        old_summary = await redis.get(key_sum) or ""
         half = length // 2
-        msgs = await r.lrange(key_msgs, 0, half - 1)
+        msgs = await redis.lrange(key_msgs, 0, half - 1)
 
         texts: list[str] = []
 
@@ -169,7 +168,7 @@ def summarize_old(chat_id: int, length: int) -> None:
             )
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
-                    model=settings.CLASS_MODEL,
+                    model=settings.REASONING_MODEL,
                     messages=[
                         {"role": "system", "content": sys_prompt},
                         {"role": "user", "content": prompt},
@@ -184,7 +183,7 @@ def summarize_old(chat_id: int, length: int) -> None:
             logger.exception("summarize_old: OpenAI summarization failed for chat %s", chat_id, exc_info=e)
             return
 
-        async with r.pipeline() as pipe:
+        async with redis.pipeline() as pipe:
             pipe.set(key_sum, new_summary, ex=MEMORY_TTL)
             pipe.ltrim(key_msgs, half, -1)
             await pipe.execute()
@@ -197,3 +196,4 @@ def summarize_old(chat_id: int, length: int) -> None:
     except Exception as exc:
         logger.exception("summarize_old task failed for chat %s", chat_id, exc_info=exc)
         raise
+EOF
