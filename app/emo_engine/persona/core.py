@@ -273,8 +273,6 @@ class Persona:
             f"Your Name: {self.name} — {self.age}-year-old.",
             f"Your Gender: {self.gender}.",
             f"Your Origin & Background: {self.origin}.",
-            f"Your Zodiac: {self.zodiac}.",
-            f"Your Temperament: {self.temperament}.",
             f"Your Mood State: {self.mood}",
             f"Internal Metrics: {metrics_str}",
             f"ChangeRates: {cr_str}",
