@@ -219,12 +219,10 @@ class Persona:
         guide_str = ", ".join(guidelines)
 
         sections: List[str] = [
-            f"Your Name: {self.name} — {self.age}-year-old.",
-            f"Your Gender: {self.gender}.",
-            f"Your Origin & Background: {self.origin}.",
-            f"Your Zodiac: {self.zodiac}.",
-            f"Your Temperament: {self.temperament}.",
-            f"Your Mood State: {self.mood}",
+            f"Name: {self.name} — {self.age}-year-old person.",
+            f"Gender: {self.gender}.",
+            #f"Origin & Background: {self.origin}.",
+            f"Mood State: {self.mood}",
             f"Internal Metrics: {metrics_str}",
             f"ChangeRates: {cr_str}",
             f"Style Modifiers: {mods_str}",
