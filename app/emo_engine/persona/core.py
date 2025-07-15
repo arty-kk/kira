@@ -178,24 +178,6 @@ class Persona:
         return f"persona:{self.chat_id}:memory_entries"
 
 
-    async def generate_transition(self, context: str) -> str:
-
-        prompt = (
-            "You are a conversational assistant. "
-            "Provide ONE short transition phrase (1–4 words) that smoothly leads into your reply, given this user message:\n"
-            f"\"{context}\""
-        )
-        mods = getattr(self, "_mods_cache", None) or self.style_modifiers()
-        temp = 0.5 + 0.5 * mods.get("creativity_mod", 0.5)
-        resp = await _call_openai_with_retry(
-            model=settings.BASE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=temp,
-            max_tokens=8,
-        )
-        return resp.choices[0].message.content.strip()
-
-
     def tweak(self, knob: str, delta: float) -> None:
         if knob not in COGNITIVE_METRICS:
             raise ValueError(f"Unknown knob: {knob}")
@@ -216,50 +198,17 @@ class Persona:
             return self._prompt_cache
 
         metrics_keys = [
-            "valence_mod",
-            "arousal_mod",
-            "energy_mod",
-            "fatigue_mod",
-            "engagement_mod",
-            "empathy_mod",
-            "sexual_arousal_mod",
-            "flirtation_mod",
-            "sarcasm_mod",
-            "aggressiveness_mod",
-            "enthusiasm_mod",
-            "creativity_mod",
-            "profanity_mod",
-            "joy_mod",
-            "sadness_mod",
-            "confidence_mod",
-            "precision_mod",
-            "anger_mod",
-            "fear_mod",
-            "disgust_mod",
-            "surprise_mod",
-            "anticipation_mod",
-            "trust_mod",
-            "stress_mod",
-            "anxiety_mod",
-            "civility_mod",
-            "optimism_mod",
-            "gloom_mod",
-            "ecstasy_mod",
-            "cheerfulness_mod",
-            "loneliness_mod",
-            "despair_mod",
-            "friendliness_mod",
-            "annoyance_mod",
-            "irritation_mod",
-            "astonishment_mod",
-            "admiration_mod",
-            "affection_mod",
-            "embarrassment_mod",
-            "guilt_mod",
-            "charisma_mod",
-            "authority_mod",
-            "lustful_excitement_mod",
-            "creative_collaboration_mod",
+            "valence_mod", "arousal_mod", "energy_mod", "fatigue_mod",
+            "engagement_mod", "empathy_mod", "flirtation_mod", "sarcasm_mod",
+            "aggressiveness_mod", "enthusiasm_mod", "creativity_mod", "profanity_mod",
+            "joy_mod", "sadness_mod", "confidence_mod", "precision_mod",
+            "anger_mod", "fear_mod", "disgust_mod", "surprise_mod", "anticipation_mod",
+            "trust_mod", "stress_mod", "anxiety_mod", "civility_mod",
+            "optimism_mod", "gloom_mod", "ecstasy_mod", "cheerfulness_mod",
+            "loneliness_mod", "despair_mod", "friendliness_mod", "annoyance_mod",
+            "irritation_mod", "astonishment_mod", "admiration_mod",
+            "affection_mod", "embarrassment_mod", "guilt_mod", "charisma_mod",
+            "authority_mod", "lustful_excitement_mod", "creative_collaboration_mod",
             *[f"{m}_mod" for m in COGNITIVE_METRICS]
         ]
         uniq_keys = dict.fromkeys(metrics_keys)
@@ -270,10 +219,10 @@ class Persona:
         guide_str = ", ".join(guidelines)
 
         sections: List[str] = [
-            f"Your Name: {self.name} — {self.age}-year-old.",
-            f"Your Gender: {self.gender}.",
-            f"Your Origin & Background: {self.origin}.",
-            f"Your Mood State: {self.mood}",
+            f"Name: {self.name} — {self.age}-year-old person.",
+            f"Gender: {self.gender}.",
+            #f"Origin & Background: {self.origin}.",
+            f"Mood State: {self.mood}",
             f"Internal Metrics: {metrics_str}",
             f"ChangeRates: {cr_str}",
             f"Style Modifiers: {mods_str}",
