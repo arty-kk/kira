@@ -54,7 +54,7 @@ async def on_group_message(message: Message) -> None:
         cid = message.chat.id
         username = message.from_user.username or str(message.from_user.id)
 
-        await redis_client.hset(f"user_map:{cid}", username, message.from_user.id)
+        await redis_client.hset(f"user_map:{cid}", mapping={username: message.from_user.id})
         await redis_client.set(f"last_message_ts:{cid}", time_module.time())
         await redis_client.sadd(f"chat:{cid}:active_users", username)
         await redis_client.expire(f"chat:{cid}:active_users", settings.MEMORY_TTL_DAYS * 86_400)
@@ -94,8 +94,8 @@ async def on_group_message(message: Message) -> None:
             await inc_msg_count(cid)
             payload_text = (message.text or message.caption or "").strip()
             process_message.delay(
-                chat_id=cid,
                 text=payload_text,
+                chat_id=cid,
                 placeholder_id=None,
                 reply_to_message_id=message.message_id,
                 user_id=message.from_user.id,

@@ -20,7 +20,7 @@ from aiogram.types import (
     FSInputFile,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+from typing import Tuple, Optional
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client, WELCOME_MESSAGES
@@ -135,7 +135,7 @@ async def on_private_message(message: Message) -> None:
         topic = False
     else:
         try:
-            topic = await is_on_topic(text)
+            topic, _ = await is_on_topic(text)
         except Exception:
             logger.exception("is_on_topic error")
             topic = False

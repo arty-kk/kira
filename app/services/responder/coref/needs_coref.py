@@ -8,19 +8,35 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_COREF_TIMEOUT = 10.0
+
+_COREF_TIMEOUT = getattr(settings, "COREF_TIMEOUT", 10.0)
+
+_COREF_PROMPT = """You are a classifier that decides whether a user message contains any third-person or demonstrative pronouns referring to entities other than the assistant, thus requiring coreference resolution.
+
+Rules:
+- Return exactly one uppercase word: YES or NO (no punctuation, quotes, extra text, or newlines).
+- Consider only pronouns for third-person entities (he, she, it, they, this, that, these, those, etc.) in any language.
+- Ignore all second-person pronouns referring to the assistant (you, your, твой, 您, etc.).
+- Ignore all first-person pronouns (I, we, us, мне, 我们, etc.).
+- If any sentence in the text contains a pronoun that refers to a non-assistant entity, return YES.
+- Otherwise, return NO.
+
+Examples:
+Text: "John went to the park, and then he sat on a bench."
+Reply: YES
+
+Text: "I am tired."
+Reply: NO
+
+Text: "Could you pass me that book?"
+Reply: NO
+
+Your Reply:
+\"\"\"{text}\"\"\""""
 
 async def needs_coref(text: str) -> bool:
 
-    prompt = (
-        "You are a classifier tasked with identifying whether the following user message contains any personal or demonstrative pronouns that refer to entities other than the assistant and thus require coreference resolution.\n\n"
-        "Rules:\n"
-        "- Return YES if there are pronouns requiring resolution for non-assistant entities.\n"
-        "- Ignore all second-person pronouns addressing the assistant in any language.\n"
-        "- Do not consider first-person pronouns for coreference.\n\n"
-        "If need coreference resolution — reply with exactly one uppercase word: YES or NO, with no additional text.\n\n"
-        f"Your Reply:\n\"\"\"{text}\"\"\""
-    )
+    prompt = _COREF_PROMPT.format(text=text)
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(

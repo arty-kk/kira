@@ -60,6 +60,7 @@ async def _process_message_async(
             if reply_to_message_id:
                 await bot.send_message(
                     chat_id,
+                    text=full_text,
                     reply_to_message_id=reply_to_message_id,
                     parse_mode="HTML",
                     disable_web_page_preview=True,

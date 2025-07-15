@@ -16,9 +16,10 @@ from app.core.memory import get_redis
 
 logger = logging.getLogger(__name__)
 
-MAX_TEMPERATURE = 0.85
-MIN_TEMPERATURE = 0.5
-TOP_P_MIN = 0.7
+
+MAX_TEMPERATURE = 0.8
+MIN_TEMPERATURE = 0.6
+TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
 
 
@@ -26,12 +27,11 @@ async def can_greet(chat_id: int) -> bool:
     redis = get_redis()
     key = f"greet_times:{chat_id}"
     try:
-        pipe = redis.pipeline()
-        pipe.incr(key)
-        pipe.ttl(key)
-        count, ttl = await pipe.execute()
-        if ttl < 0:
-            await redis.expire(key, settings.GREETING_RATE_WINDOW_SECONDS)
+        if await redis.set(key, 1, ex=settings.GREETING_RATE_WINDOW_SECONDS, nx=True):
+            count = 1
+        else:
+            count = await redis.incr(key)
+        ttl = await redis.ttl(key)
     except RedisError:
         logger.warning("can_greet: Redis error, allowing greeting for chat %s", chat_id)
         return True
@@ -48,15 +48,22 @@ async def can_greet(chat_id: int) -> bool:
 
 async def generate_welcome(chat_id: int, user, text: str) -> str:
 
-    display_name = user.username or (user.full_name or str(user.id))
-    mention_link = hlink(display_name, f"tg://user?id={user.id}")
-    PLACEHOLDER = "{{MENTION}}"
+    if user.username:
+        display_name = f"@{user.username}"
+    else:
+        display_name = user.full_name or str(user.id)
+    mention = hlink(
+        display_name,
+        f"tg://user?id={user.id}"
+    )
     
     persona = get_persona(chat_id)
     try:
-        await persona._restored_evt.wait()
+        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        logger.warning("welcome_manager: persona restore timeout for chat %s", chat_id)
     except Exception:
-        pass
+        logger.exception("welcome_manager: error waiting for persona restore for chat %s", chat_id)
 
     try:
         mods = persona.style_modifiers()
@@ -96,29 +103,21 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
     dynamic_temperature = min(MAX_TEMPERATURE, max(MIN_TEMPERATURE, dynamic_temperature))
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
-
+    ctx_len = random.choice(range(10, 30, 5))
     max_tokens = 50
 
     if text:
         prompt = (
-            f"A new member {PLACEHOLDER} just joined the chat and wrote: {text}. "
-            f"Write a single-line, creative welcome message on your own behalf. "
-            f"Respond with only the final text, no explanations, comments, or framing."
+            f"A new member {mention} just joined the chat and wrote: {text}. "
+            f"Write a punchy, creative welcome message on your own behalf of up to {ctx_len} tokens in length."
         )
-        async def _safe_interaction():
-            try:
-                await persona.process_interaction(user.id, text)
-            except Exception:
-                logger.exception("welcome_manager: process_interaction failed for user %s", user.id)
-        asyncio.create_task(_safe_interaction())
+        asyncio.create_task(persona.process_interaction(user.id, text))
     else:
         prompt = (
-            f"A new member {PLACEHOLDER} just joined the chat. "
-            f"Write a single-line, creative welcome message on your own behalf. "
-            f"Respond with only the final text, no explanations, comments, or framing."
+            f"A new member {mention} just joined the chat. "
+            f"Write a punchy, creative welcome message on your own behalf of up to {ctx_len} tokens in length."
         )
 
-    raw: str = f"Welcome {mention_link}!"
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
@@ -138,15 +137,14 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
         logger.warning("welcome_manager: OpenAI timeout for chat %s user %s", chat_id, user.id)
         try:
             redis = get_redis()
-            count = await redis.incr("metrics:welcome:openai_timeout")
+            metric_key = f"metrics:welcome:openai_timeout:{chat_id}"
+            count = await redis.incr(metric_key)
             if count == 1:
-                await redis.expire("metrics:welcome:openai_timeout", 86_400)
+                await redis.expire(metric_key, 86_400)
         except RedisError:
-            logger.warning("welcome_manager: failed to record timeout metric for chat %s", chat_id)
-
+            logger.warning("welcome_manager: failed to record timeout metric for chat %s user %s",chat_id, user.id)
     except Exception:
         logger.exception(
             "welcome_manager: OpenAI call failed for chat %s user %s", chat_id, user.id,)
-
-    return raw
+    return f"Welcome {mention}!"
 EOF

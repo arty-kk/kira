@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 
 _LIGHT_SEMAPHORE = asyncio.Semaphore(10)
 _DEEP_SEMAPHORE = asyncio.Semaphore(3)
-
+MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
+MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
+DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
 
 async def is_flooding(chat_id: int, user_id: int) -> bool:
 
@@ -34,18 +36,24 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
             pipe.lpush(key, now_ts)
             pipe.ltrim(key, 0, settings.MOD_MAX_MESSAGES * 2)
             pipe.expire(key, settings.MOD_PERIOD_SECONDS + 1)
-            pipe.lrange(key, 0, -1)
+            pipe.lrange(key, 0, settings.MOD_MAX_MESSAGES * 2)
             result = await pipe.execute()
-            timestamps = result[3]
+        timestamps = result[-1]
     except RedisError:
         logger.warning("is_flooding: Redis error for chat %s user %s", chat_id, user_id)
         return False
 
     threshold = now_ts - settings.MOD_PERIOD_SECONDS
-    try:
-        valid = [float(ts) for ts in timestamps if float(ts) >= threshold]
-    except (ValueError, TypeError):
-        return False
+    valid = []
+    for ts in timestamps:
+        try:
+            if isinstance(ts, (bytes, bytearray)):
+                ts = ts.decode()
+            t = float(ts)
+            if t >= threshold:
+                valid.append(t)
+        except Exception:
+            continue
 
     return len(valid) > settings.MOD_MAX_MESSAGES
 
@@ -61,7 +69,7 @@ def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
                 snippet = text[off:off + length].rstrip('.,;!?')
                 if snippet and snippet not in urls:
                     urls.append(snippet)
-    return list(dict.fromkeys(urls))
+    return list(dict.fromkeys(urls))[:MAX_URLS]
 
 
 def url_is_unwanted(url: str) -> bool:
@@ -80,7 +88,7 @@ async def moderate_with_openai(text: str) -> bool:
 
     if not text or not text.strip():
         return False
-    trimmed = text[:4000]
+    trimmed = text[:MAX_PROMPT_TEXT]
 
     async with _LIGHT_SEMAPHORE:
         client = get_openai()
@@ -121,6 +129,8 @@ async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
 
     if not urls:
         return False
+    urls = urls[:MAX_URLS]
+    text = text[:MAX_PROMPT_TEXT]
 
     prompt = (
         "The user sent the following message and URLs:\n\n"
@@ -203,7 +213,7 @@ async def check_deep(
         logger.exception("check_deep: load_context error for chat %s", chat_id)
         history = []
 
-    snippet = history[-30:]
+    snippet = history[-DEEP_HISTORY:]
     prompt_messages: List[dict[str, str]] = [
         {"role": "system", "content": (
             "You are a context-aware moderator. Given recent conversation, "

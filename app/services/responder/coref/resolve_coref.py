@@ -12,7 +12,41 @@ from app.core.memory import get_redis
 
 logger = logging.getLogger(__name__)
 
+_COT_PROMPT = """You are a coreference-resolution assistant.
+
+Instructions (CoT Phase):
+1. Identify all pronouns in the user's new query that refer to entities other than the assistant.
+2. For each such pronoun, locate its antecedent in the provided conversation snippet.
+3. Return **only** a numbered list like:
+   1. pronoun → antecedent
+   2. pronoun → antecedent
+4. If no pronouns require resolution, reply exactly: No pronouns to resolve.
+
+Example:
+Snippet:
+  Alice went home. She was tired.
+Query:
+  "Can you tell me if she locked the door?"
+Reply:
+  1. she → Alice
+"""
+
+_FINAL_PROMPT = """Now rewrite the user's query using the resolved antecedents.
+
+Rules (Rewrite Phase):
+1. Replace each pronoun (excluding those referring to the assistant) with its specific antecedent.
+2. Preserve the original meaning and conversational context.
+3. **Return exactly** the rewritten query string, with no numbering, quotes, or extra text.
+
+Example:
+Original: "Can you tell me if she locked the door?"
+Rewritten: "Can you tell me if Alice locked the door?"
+"""
+
 CACHE_TTL = getattr(settings, "COREF_CACHE_TTL", 1800)
+_CACHE_LOCK = asyncio.Lock()
+_COT_TIMEOUT = getattr(settings, "COREF_COT_TIMEOUT", 60.0)
+_FINAL_TIMEOUT = getattr(settings, "COREF_FINAL_TIMEOUT", 30.0)
 
 async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
 
@@ -23,26 +57,20 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
     cache_key = f"coref:{digest}"
     redis = get_redis()
 
-    try:
-        cached = await redis.get(cache_key) if redis else None
-        if isinstance(cached, (bytes, bytearray)):
-            return cached.decode()
-        if cached:
-            return cached
-    except Exception:
-        logger.debug("Redis GET failed for coref cache", exc_info=True)
+    if redis:
+        async with _CACHE_LOCK:
+            try:
+                cached = await redis.get(cache_key)
+                if cached:
+                    val = cached.decode() if isinstance(cached, (bytes, bytearray)) else cached
+                    return val
+            except Exception:
+                logger.debug("Redis GET failed for coref cache", exc_info=True)
 
     cot_messages = [
         {
             "role": "system",
-            "content": (
-                "You are a coreference-resolution assistant.\n\n"
-                "Instructions (CoT Phase):\n"
-                "1. Identify all pronouns in the user's new query that refer to entities other than the assistant.\n"
-                "2. For each pronoun, locate its antecedent in the provided conversation snippet.\n"
-                "3. Return a numbered list in the format: Pronoun → Antecedent.\n"
-                "4. If no pronouns require resolution, reply only: 'No pronouns to resolve.'"
-            )
+            "content": _COT_PROMPT
         },
         *snippet,
         {
@@ -51,19 +79,23 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         },
     ]
     try:
+        start = asyncio.get_event_loop().time()
         cot_resp = await asyncio.wait_for(
             _call_openai_with_retry(
-                model=settings.REASONING_MODEL,
+                model=settings.BASE_MODEL,
                 messages=cot_messages,
                 temperature=0.0,
                 top_p=1.0,
                 max_tokens=1000,
             ),
-            timeout=60.0,
+            timeout=_COT_TIMEOUT,
         )
+        if not cot_resp.choices:
+            raise ValueError("empty choices in CoT response")
         reasoning = cot_resp.choices[0].message.content.strip()
+        logger.debug("CoT completed in %.2fs", asyncio.get_event_loop().time() - start)
     except asyncio.TimeoutError:
-        logger.warning("resolve_coref CoT step timed out")
+        logger.warning("resolve_coref CoT step timed out after %.1fs", _COT_TIMEOUT)
         reasoning = None
     except Exception as e:
         logger.exception("resolve_coref CoT step failed", exc_info=True)
@@ -72,13 +104,7 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
     final_messages = [
         {
             "role": "system",
-            "content": (
-                "Now rewrite the user's query using the resolved antecedents.\n\n"
-                "Rules (Rewrite Phase):\n"
-                "1) Replace each pronoun (other than those addressing the assistant) with its specific antecedent.\n"
-                "2) Preserve the original meaning and conversational context.\n"
-                "3) Output only the fully rewritten user query, without any additional commentary."
-            )
+            "content": _FINAL_PROMPT
         },
         {"role": "assistant", "content": reasoning or "No pronouns to resolve."},
         {
@@ -87,25 +113,30 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         },
     ]
     try:
+        start = asyncio.get_event_loop().time()
         final_resp = await asyncio.wait_for(
             _call_openai_with_retry(
-                model=settings.REASONING_MODEL,
+                model=settings.BASE_MODEL,
                 messages=final_messages,
                 temperature=0.0,
                 top_p=1.0,
                 max_tokens=1000,
             ),
-            timeout=30.0,
+            timeout=_FINAL_TIMEOUT,
         )
+        if not final_resp.choices:
+            raise ValueError("empty choices in final response")
         rewritten = final_resp.choices[0].message.content.strip()
-        if rewritten:
+        logger.debug("Final rewrite completed in %.2fs", asyncio.get_event_loop().time() - start)
+
+        if rewritten and redis:
             try:
-                await redis.set(cache_key, rewritten, ex=1800)
+                await redis.set(cache_key, rewritten, ex=CACHE_TTL)
             except Exception:
                 logger.debug("Redis SET failed for coref cache %s", cache_key, exc_info=True)
-            return rewritten
+        return rewritten
     except asyncio.TimeoutError:
-        logger.warning("resolve_coref final rewrite timed out")
+        logger.warning("resolve_coref final rewrite timed out after %.1fs", _FINAL_TIMEOUT)
     except Exception as e:
         logger.exception("resolve_coref final step failed", exc_info=True)
 

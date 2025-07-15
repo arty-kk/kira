@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import uuid
+import time as _time
 
 from datetime import datetime, timedelta, timezone
 from typing import Coroutine, Any
@@ -97,7 +98,7 @@ async def start_battle_job() -> None:
     try:
         redis = get_redis()
 
-        now = asyncio.get_event_loop().time()
+        now = _time.time()
         window = settings.ACTIVE_RECENT_SECONDS
 
         opt_out = await redis.smembers("battle:opt_out")
@@ -188,10 +189,12 @@ async def on_battle_start(query: CallbackQuery) -> None:
         ready1 = await redis.get(f"ready:{gid}:{game['player1_id']}")
         ready2 = await redis.get(f"ready:{gid}:{game['player2_id']}")
         if ready1 and ready2:
-            async with redis.lock(f"lock:game_start:{gid}", timeout=5, blocking=False) as lock:
-                if not lock:
-                    logger.debug("Battle %s: already started", gid)
-                    return
+            lock = redis.lock(f"lock:game_start:{gid}", timeout=5)
+            acquired = await lock.acquire(blocking=False)
+            if not acquired:
+                logger.debug("Battle %s: already started by another task", gid)
+                return
+            try:
                 new_ts = datetime.now(timezone.utc).isoformat()
                 await redis.hset(key, mapping={"state": "STARTED", "ts": new_ts})
 
@@ -220,7 +223,9 @@ async def on_battle_start(query: CallbackQuery) -> None:
                     reply_markup=kb,
                 )
                 logger.info("Battle %s entered move phase", gid)
-            return
+                return
+            finally:
+                pass
 
         uname = query.from_user.username or query.from_user.full_name or uid
         opp_id = game['player2_id'] if uid == game['player1_id'] else game['player1_id']

@@ -213,10 +213,6 @@ async def process_interaction(self, uid: int, text: str) -> None:
             dotB = sum(B[i][j] * diff[j] for j in range(N))
             self.state[m] = self._clamp(s[i] + dt * (dotA + dotB))
 
-        idle_total = time.time() - self._last_mood_change_ts
-        if idle_total > 300:
-            self.state["valence"] *= settings.VALENCE_HOMEOSTASIS_DECAY ** (idle_total/60) * 1.2
-
         for metric in ALL_METRICS:
             suppress_opposite(metric, self.state)
 

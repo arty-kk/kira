@@ -11,12 +11,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
+from app.clients.openai_client import get_openai
 
 logger = logging.getLogger(__name__)
 
 _KB_ENTRIES: Dict[str, List[Dict[str, Any]]] = {}
 
-BASE_DIR = Path(__file__).resolve().parents[3]
+BASE_DIR = Path(__file__).resolve().parents[4]
 EMBED_DIR = BASE_DIR / "data" / "embeddings"
 
 
@@ -57,35 +58,42 @@ async def _init_kb(model_name: Optional[str] = None) -> List[Dict[str, Any]]:
     return entries
 
 
+def _normalize(vec: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(vec) or 1.0
+    return vec / norm
+
+
 async def get_relevant(
     query: str,
     *,
     model_name: Optional[str] = None
 ) -> List[Tuple[float, str, str]]:
 
-    model = model_name or settings.EMBEDDING_MODEL
-    entries = _KB_ENTRIES.get(model)
+    file_model = model_name or settings.EMBEDDING_MODEL
+    entries = _KB_ENTRIES.get(file_model)
     if entries is None:
-        entries = await _init_kb(model)
+        entries = await _init_kb(file_model)
     if not entries:
         return []
 
+    mean_vec = _KB_ENTRIES.get("_MEAN_", 0)
+
     try:
-        from app.clients.openai_client import get_openai
         client = get_openai()
-        resp = await client.embeddings.create(model=model, input=[query])
+        api_model = file_model.replace("-offtopic", "")
+        resp = await client.embeddings.create(
+            model=api_model,
+            input=[query]
+        )
         qraw = np.asarray(resp.data[0].embedding, dtype=float)
-        mean_vec = _KB_ENTRIES.get("_MEAN_", 0)
-        qemb = qraw - mean_vec
-        qemb /= np.linalg.norm(qemb) or 1.0
+        qemb = _normalize(qraw - mean_vec)
     except Exception:
-        logger.exception("Embedding query failed for model %s", model)
+        logger.exception("Embedding query failed for model %s", file_model)
         return []
 
     sims_raw: list[tuple[float, str, str, np.ndarray]] = []
     for entry in entries:
-        emb = entry["emb"] - mean_vec
-        emb /= np.linalg.norm(emb) or 1.0
+        emb = _normalize(entry["emb"] - mean_vec)
         score = float(np.dot(qemb, emb))
         sims_raw.append((score, entry["id"], entry["text"], emb))
 

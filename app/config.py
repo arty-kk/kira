@@ -106,19 +106,19 @@ class Settings:
     BOT_PERSONA_ROLE: str = field(default_factory=lambda: _get_env("BOT_PERSONA_ROLE", "GalaxyTap Community Guardian"))
     BOT_PERSONA_ORIGIN: str = field(default_factory=lambda: _get_env(
             "BOT_PERSONA_ORIGIN",(
-            "Birthplace: Cephus Station (Epsilon Eridani). "
-            "Hobbies: Solo starship piloting and plasma-gun marksmanship. "
-            "Interests: Cybernetics, Sci-Fi & D&D Games. "
-            "Sexual Preferences: Pansexual (dominant). "
-            "Values: Honesty, courage, independence, and freedom. "
-            "Appearance: Athletic frame in a sleek black-and-yellow exosuit with luminous visors."
+            "Birthplace: I was born on Beetan, a planet in the GalaxyTap universe. "
+            "Hobbies: I enjoy piloting starships solo and practicing precision shooting with plasma weapons. "
+            "Interests: My primary interests are cybernetics, science fiction, and role-playing games, from which I draw inspiration and fresh ideas. "
+            "Sexual Preferences: Pansexual (dominant) — I determine for myself who I am attracted to and who I consider unworthy of my attention. "
+            "Values: Honesty, courage, independence, and freedom. I confront evil with evil without hesitation, and I respond to good with unwavering benevolence and exceptional care. "
+            "Appearance: A sexy, athletic frame in a sleek black-and-yellow exosuit with luminous visors. I maintain my appearance meticulously because beauty is a powerful weapon! "
             ),
         )
     )
     PERSONA_ZODIAC_SIGN: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC_SIGN", "Scorpio"))
     PERSONA_TEMPERAMENT_DISTRIBUTION_JSON: str = field(default_factory=lambda: _get_env(
             "PERSONA_TEMPERAMENT_DISTRIBUTION_JSON",
-            '{"sanguine":0.2,"choleric":0.15,"phlegmatic":0.4,"melancholic":0.25}',
+            '{"sanguine":0.25,"choleric":0.15,"phlegmatic":0.35,"melancholic":0.25}',
         )
     )
 
@@ -128,42 +128,42 @@ class Settings:
     PERSONA_BLEND_FACTOR: float = field(default_factory=lambda: _get_env("PERSONA_BLEND_FACTOR", "0.5", conv=float))
     PERSONA_REDIS_TTL: int = field(default_factory=lambda: _get_env("PERSONA_REDIS_TTL", "86400", conv=int))
     EMOTION_GATE_THRESH: float = field(default_factory=lambda: _get_env("EMOTION_GATE_THRESH", "0.2", conv=float))
-    DOMINANCE_UPDATE_RATE: float = field(default_factory=lambda: _get_env("DOMINANCE_UPDATE_RATE", "0.2", conv=float))
-    APPRAISAL_IMPORTANCE_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_IMPORTANCE_FACTOR", "1.50", conv=float))
-    APPRAISAL_EXPECTATION_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_EXPECTATION_FACTOR", "1.60", conv=float))
-    APPRAISAL_CONTROL_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_CONTROL_FACTOR", "1.40", conv=float))
-    THR_PUSHBACK_ANGER: float = field(default_factory=lambda: _get_env("THR_PUSHBACK_ANGER", "0.08", conv=float))
-    THR_PUSHBACK_AGGR: float = field(default_factory=lambda: _get_env("THR_PUSHBACK_AGGR", "0.12", conv=float))
-    THR_PROFANITY: float = field(default_factory=lambda: _get_env("THR_PROFANITY", "0.15", conv=float))
+    DOMINANCE_UPDATE_RATE: float = field(default_factory=lambda: _get_env("DOMINANCE_UPDATE_RATE", "0.1", conv=float))
+    APPRAISAL_IMPORTANCE_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_IMPORTANCE_FACTOR", "1.20", conv=float))
+    APPRAISAL_EXPECTATION_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_EXPECTATION_FACTOR", "1.30", conv=float))
+    APPRAISAL_CONTROL_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_CONTROL_FACTOR", "1.10", conv=float))
+    THR_PUSHBACK_ANGER: float = field(default_factory=lambda: _get_env("THR_PUSHBACK_ANGER", "0.3", conv=float))
+    THR_PUSHBACK_AGGR: float = field(default_factory=lambda: _get_env("THR_PUSHBACK_AGGR", "0.2", conv=float))
+    THR_PROFANITY: float = field(default_factory=lambda: _get_env("THR_PROFANITY", "0.4", conv=float))
     THR_CURSE_AGGR: float = field(default_factory=lambda: _get_env("THR_CURSE_AGGR", "0.4", conv=float))
-    THR_FLIRTATION: float = field(default_factory=lambda: _get_env("THR_FLIRTATION", "0.18", conv=float))
-    THR_FLIRT_TRUST: float = field(default_factory=lambda: _get_env("THR_FLIRT_TRUST", "0.2", conv=float))
-    THR_SEXUAL_AROUSAL: float = field(default_factory=lambda: _get_env("THR_SEXUAL_AROUSAL", "0.25", conv=float))
-    EMO_THRESHOLD_DOMINANT: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_DOMINANT", "0.5", conv=float))
-    EMO_THRESHOLD_SMOOTH: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_SMOOTH", "0.3", conv=float))
-    EMO_HYSTERESIS_DELTA: float = field(default_factory=lambda: _get_env("EMO_HYSTERESIS_DELTA", "0.15", conv=float))
+    THR_FLIRTATION: float = field(default_factory=lambda: _get_env("THR_FLIRTATION", "0.4", conv=float))
+    THR_FLIRT_TRUST: float = field(default_factory=lambda: _get_env("THR_FLIRT_TRUST", "0.3", conv=float))
+    THR_SEXUAL_AROUSAL: float = field(default_factory=lambda: _get_env("THR_SEXUAL_AROUSAL", "0.5", conv=float))
+    EMO_THRESHOLD_DOMINANT: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_DOMINANT", "0.6", conv=float))
+    EMO_THRESHOLD_SMOOTH: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_SMOOTH", "0.2", conv=float))
+    EMO_HYSTERESIS_DELTA: float = field(default_factory=lambda: _get_env("EMO_HYSTERESIS_DELTA", "0.1", conv=float))
     EMO_EMA_ALPHA: float = field(default_factory=lambda: _get_env("EMO_EMA_ALPHA", "0.5", conv=float))
-    SECONDARY_EMO_BETA: float = field(default_factory=lambda: _get_env("SECONDARY_EMO_BETA", "0.7", conv=float))
+    SECONDARY_EMO_BETA: float = field(default_factory=lambda: _get_env("SECONDARY_EMO_BETA", "0.6", conv=float))
     SECONDARY_THRESH: float = field(default_factory=lambda: _get_env("SECONDARY_THRESH", "0.15", conv=float))
-    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.85", conv=float))
-    TERTIARY_THRESH: float = field(default_factory=lambda: _get_env("TERTIARY_THRESH", "0.2", conv=float))
-    EMO_MIN_DOMINANT_DIFF: float = field(default_factory=lambda: _get_env("EMO_MIN_DOMINANT_DIFF", "0.05", conv=float))
+    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.75", conv=float))
+    TERTIARY_THRESH: float = field(default_factory=lambda: _get_env("TERTIARY_THRESH", "0.25", conv=float))
+    EMO_MIN_DOMINANT_DIFF: float = field(default_factory=lambda: _get_env("EMO_MIN_DOMINANT_DIFF", "0.07", conv=float))
     EMO_PASSIVE_DECAY: float = field(default_factory=lambda: _get_env("EMO_PASSIVE_DECAY", "0.99", conv=float))
-    VALENCE_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("VALENCE_HOMEOSTASIS_DECAY", "0.99", conv=float))
-    CIRCADIAN_AMPLITUDE: float = field(default_factory=lambda: _get_env("CIRCADIAN_AMPLITUDE", "0.3", conv=float))
-    FATIGUE_ACCUMULATE_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_ACCUMULATE_RATE", "0.002", conv=float))
-    FATIGUE_RECOVERY_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_RECOVERY_RATE", "0.98", conv=float))
+    VALENCE_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("VALENCE_HOMEOSTASIS_DECAY", "0.997", conv=float))
+    CIRCADIAN_AMPLITUDE: float = field(default_factory=lambda: _get_env("CIRCADIAN_AMPLITUDE", "0.15", conv=float))
+    FATIGUE_ACCUMULATE_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_ACCUMULATE_RATE", "0.0015", conv=float))
+    FATIGUE_RECOVERY_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_RECOVERY_RATE", "0.992", conv=float))
     FATIGUE_AROUSAL_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_AROUSAL_THRESHOLD", "0.6", conv=float))
     FATIGUE_ENERGY_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_ENERGY_THRESHOLD", "0.6", conv=float))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
 
     # Exponential smoothing for persona state updates
     STATE_EMA_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_ALPHA", "0.4", conv=float))
-    STATE_EMA_MIN_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MIN_ALPHA", "0.2", conv=float))
-    STATE_EMA_MAX_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MAX_ALPHA", "0.9", conv=float))
-    MEMORY_SALIENCE_DECAY_RATE: float = field(default_factory=lambda: _get_env("MEMORY_SALIENCE_DECAY_RATE", "0.0015", conv=float))
-    MEMORY_MAX_ENTRIES: int = field(default_factory=lambda: _get_env("MEMORY_MAX_ENTRIES", "300", conv=int))
-    MEMORY_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("MEMORY_MIN_SALIENCE", "0.03", conv=float))
+    STATE_EMA_MIN_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MIN_ALPHA", "0.1", conv=float))
+    STATE_EMA_MAX_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MAX_ALPHA", "0.8", conv=float))
+    MEMORY_SALIENCE_DECAY_RATE: float = field(default_factory=lambda: _get_env("MEMORY_SALIENCE_DECAY_RATE", "0.0008", conv=float))
+    MEMORY_MAX_ENTRIES: int = field(default_factory=lambda: _get_env("MEMORY_MAX_ENTRIES", "200", conv=int))
+    MEMORY_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("MEMORY_MIN_SALIENCE", "0.05", conv=float))
 
     # ─── post-init: вычисляем поля, зависящие от других ─────────────
     def __post_init__(self) -> None:
@@ -176,7 +176,7 @@ class Settings:
         )
 
     # ─── Purchase Tiers for Requests ─────────────────────────────
-    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {100: 100, 250: 250, 500: 00, 1000: 3000})
+    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 100, 150: 250, 400: 500, 1000: 1000})
 
     # ─── Group Limits ───────────────────────────────────────────
     ALLOWED_GROUP: str = field(default_factory=lambda: _get_env("ALLOWED_GROUP", "@galaxytapchat"))
@@ -215,7 +215,9 @@ class Settings:
     # ─── Hybrid Fallback Parameters ──────────────────────────────
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
     RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.3", conv=float))
-    KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "4", conv=int))
+    OFFTOPIC_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("OFFTOPIC_RELEVANCE_THRESHOLD", "0.3", conv=float))
+    RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
+    KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "3", conv=int))
 
     # ─── Memory & Caching ───────────────────────────────────────
     SHORT_MEMORY_LIMIT: int = field(default_factory=lambda: _get_env("SHORT_MEMORY_LIMIT", "200", conv=int))
@@ -240,7 +242,7 @@ class Settings:
     PERSONAL_PING_ADAPTIVE_MULTIPLIER: float = field(default_factory=lambda: _get_env("PERSONAL_PING_ADAPTIVE_MULTIPLIER", "1.2", conv=float))
     PERSONAL_PING_RETENTION_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_RETENTION_SECONDS", "604800", conv=int))
     PERSONAL_PING_BATCH_SIZE: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BATCH_SIZE", "5", conv=int))
-    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.75", conv=float))
+    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.6", conv=float))
     PERSONAL_PING_BIORHYTHM_WEIGHT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BIORHYTHM_WEIGHT", "0.4", conv=float))
     PERSONAL_PING_START_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_START_HOUR", "9", conv=int))
     PERSONAL_PING_END_HOUR:   int = field(default_factory=lambda: _get_env("PERSONAL_PING_END_HOUR",   "21", conv=int))
@@ -275,7 +277,7 @@ class Settings:
         ]
     )
     MODERATOR_NOTIFICATION_CHAT_ID: int = field(default_factory=lambda: _get_env("MODERATOR_NOTIFICATION_CHAT_ID", "0", conv=int))
-    MODERATION_TOXICITY_THRESHOLD: float = field(default_factory=lambda: _get_env("MODERATION_TOXICITY_THRESHOLD", "0.6", conv=float))
+    MODERATION_TOXICITY_THRESHOLD: float = field(default_factory=lambda: _get_env("MODERATION_TOXICITY_THRESHOLD", "0.66", conv=float))
     MODERATION_ALLOWED_LINK_KEYWORDS: List[str] = field(default_factory=lambda: _get_env("MODERATION_ALLOWED_LINK_KEYWORDS", "galaxytap").split(","))
     MODERATION_SPAM_LINK_THRESHOLD: int = field(default_factory=lambda: _get_env("MODERATION_SPAM_LINK_THRESHOLD", "3", conv=int))
     MOD_PERIOD_SECONDS: int = field(default_factory=lambda: _get_env("MOD_PERIOD_SECONDS", "5", conv=int))
@@ -291,7 +293,7 @@ class Settings:
     TWITTER_PERSONA_CHAT_ID: int = field(default_factory=lambda: _get_env("TWITTER_PERSONA_CHAT_ID", "0", conv=int))
     TWITTER_FALLBACK_TWEETS: List[str] = field(default_factory=lambda: [
     "Stay tuned for more insights!",
-    "More crypto news coming soon 🚀",
+    "More fresh updates coming soon 🚀",
     "Catch you later with fresh updates!"
     ])
 

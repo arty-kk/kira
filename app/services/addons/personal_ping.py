@@ -29,10 +29,9 @@ PING_STREAK_KEY = "personal_ping_streak:{}"
 MAX_CONSECUTIVE_PINGS = 1
 
 MAX_TEMPERATURE = 0.8
-MIN_TEMPERATURE = 0.5
-TOP_P_MIN = 0.7
+MIN_TEMPERATURE = 0.6
+TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
-
 
 async def register_private_activity(user_id: int) -> None:
 
@@ -48,11 +47,14 @@ async def register_private_activity(user_id: int) -> None:
             last_ts = float(prev)
             idle = now - last_ts
             hist_key = IDLE_LIST_KEY.format(user_id)
-            async with redis.pipeline() as pipe:
-                pipe.lpush(hist_key, idle)
-                pipe.ltrim(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
-                pipe.expire(hist_key, settings.PERSONAL_PING_RETENTION_SECONDS)
-                await pipe.execute()
+            try:
+                async with redis.pipeline() as pipe:
+                    pipe.lpush(hist_key, idle)
+                    pipe.ltrim(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
+                    pipe.expire(hist_key, settings.PERSONAL_PING_RETENTION_SECONDS)
+                    await pipe.execute()
+            except RedisError:
+                logger.debug("Failed to update idle history for %s", user_id)
         await redis.set(LAST_PRIVATE_TS_KEY.format(user_id), now, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
         await redis.set(PING_STREAK_KEY.format(user_id), 0, ex=settings.PERSONAL_PING_RETENTION_SECONDS)
     except RedisError:
@@ -64,13 +66,14 @@ async def _schedule_next_ping(user_id: int, reference_ts: float) -> None:
     redis = get_redis()
     hist_key = IDLE_LIST_KEY.format(user_id)
     try:
-        raw = await redis.lrange(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
-        history = [float(x) for x in raw]
+        data = await redis.lrange(hist_key, 0, settings.PERSONAL_PING_HISTORY_COUNT - 1)
+        history = [float(x) for x in data if x is not None]
     except RedisError:
+        logger.debug("Cannot read personal idle history for %s", user_id)
         history = []
 
     base = settings.PERSONAL_PING_IDLE_THRESHOLD_SECONDS
-    median_idle = statistics.median(history) if len(history) >= settings.PERSONAL_PING_HISTORY_COUNT else base
+    median_idle = statistics.median(history) if history else base
     adaptive_base = max(base, median_idle * settings.PERSONAL_PING_ADAPTIVE_MULTIPLIER)
 
     tz_offset = getattr(settings, "USER_TZ_OFFSET", None)
@@ -108,7 +111,7 @@ async def personal_ping() -> None:
             start=0, num=settings.PERSONAL_PING_BATCH_SIZE
         )
     except RedisError:
-        logger.exception("personal_ping: Redis fetch error")
+        logger.debug("personal_ping: cannot fetch schedule")
         return
     if not due:
         return
@@ -132,7 +135,7 @@ async def _handle_user_ping(chat_id: int, user_id: int, now: float) -> None:
     try:
         await redis.zrem(PING_SCHEDULE_KEY, str(user_id))
     except RedisError:
-        logger.exception("_handle_user_ping: zrem failed for %s", user_id)
+        logger.debug("Failed to remove %s from schedule", user_id)
     try:
         await _send_contextual_ping(chat_id, user_id)
     except Exception:
@@ -147,18 +150,15 @@ async def _send_contextual_ping(chat_id: int, user_id: int) -> None:
     try:
         streak = int(await redis.get(PING_STREAK_KEY.format(user_id)) or 0)
     except RedisError:
+        logger.debug("Cannot read ping streak for %s", user_id)
         streak = 0
     if streak >= MAX_CONSECUTIVE_PINGS:
         logger.debug("skip %s: reached max consecutive pings (%d)", user_id, streak)
         return
 
     persona = get_persona(user_id)
-    try:
-        await persona._restored_evt.wait()
-    except Exception:
-        pass
-        
-    persona.style_modifiers()
+    await persona._restored_evt.wait()
+    mods = persona._mods_cache or persona.style_modifiers()
     guidelines = await persona.style_guidelines(user_id)
     system_msg = build_system_prompt(persona, guidelines)
 
@@ -199,8 +199,7 @@ async def _send_contextual_ping(chat_id: int, user_id: int) -> None:
 
     prompt = (
         (f"Previously you and the person had the following conversation:\n{mem_ctx}\n\n" if mem_ctx else "")
-        + "Write a natural, short message (as people do when they want to start a conversation again) on your behalf."
-        + "Respond with only the final text, no explanations, comments, or framing."
+        + "Write a message on your own behalf, like people do when they want to renew a conversation."
     )
 
     try:

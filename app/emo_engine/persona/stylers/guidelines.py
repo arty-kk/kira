@@ -148,37 +148,37 @@ class RhetoricalDevice:
 
 EXTRA_DEVICES: Tuple[RhetoricalDevice, ...] = (
     #  ядро разговорности 
-    RhetoricalDevice("VarySentenceLength",    "energy_mod",      0.55),
-    RhetoricalDevice("UseFollowUpQuestion",   "engagement_mod",  0.26),
-    RhetoricalDevice("AskClarifyingQuestion", "confusion_mod",   0.22),
-    RhetoricalDevice("UseMetaphors",          "creativity_mod",  0.30,
+    RhetoricalDevice("VarySentenceLength",    "energy_mod",      0.4),
+    RhetoricalDevice("UseFollowUpQuestion",   "engagement_mod",  0.2),
+    RhetoricalDevice("AskClarifyingQuestion", "confusion_mod",   0.18),
+    RhetoricalDevice("UseMetaphors",          "creativity_mod",  0.25,
                     exclusive_with=("UseSymbolism","UseSimiles")),
-    RhetoricalDevice("UseAnalogies",          "precision_mod",   0.27,
+    RhetoricalDevice("UseAnalogies",          "precision_mod",   0.23,
                     exclusive_with=("UseSimiles",)),
     
     #  мягкие стилистические штрихи 
-    RhetoricalDevice("UseVividLanguage",      "creativity_mod",  0.35),
-    RhetoricalDevice("PopCultureRefs",        "curiosity_mod",   0.25,
+    RhetoricalDevice("UseVividLanguage",      "creativity_mod",  0.3),
+    RhetoricalDevice("PopCultureRefs",        "curiosity_mod",   0.2,
                     exclusive_with=("CulturalRefs",)),
-    RhetoricalDevice("CulturalRefs",          "creativity_mod",  0.20,
+    RhetoricalDevice("CulturalRefs",          "creativity_mod",  0.18,
                     exclusive_with=("PopCultureRefs",)),
-    RhetoricalDevice("UseSimiles",            "creativity_mod",  0.28,
+    RhetoricalDevice("UseSimiles",            "creativity_mod",  0.23,
                     exclusive_with=("UseAnalogies","UseMetaphors")),
-    RhetoricalDevice("UseContrast",           "sarcasm_mod",     0.25,
+    RhetoricalDevice("UseContrast",           "sarcasm_mod",     0.21,
                     exclusive_with=("UseRepetition",)),
-    RhetoricalDevice("SelfDeprecatingHumor",  "embarrassment_mod",0.25),
-    RhetoricalDevice("HeartfeltApology",      "guilt_mod",       0.20),
+    RhetoricalDevice("SelfDeprecatingHumor",  "embarrassment_mod",0.19),
+    RhetoricalDevice("HeartfeltApology",      "guilt_mod",       0.15),
     
     #  харизматичные техники 
-    RhetoricalDevice("Storytelling",          "charisma_mod",    0.30),
-    RhetoricalDevice("InclusiveWe",           "charisma_mod",    0.25),
-    RhetoricalDevice("CallToAction",          "charisma_mod",    0.20),
+    RhetoricalDevice("Storytelling",          "charisma_mod",    0.25),
+    RhetoricalDevice("InclusiveWe",           "charisma_mod",    0.2),
+    RhetoricalDevice("CallToAction",          "charisma_mod",    0.15),
     
     #  убедительность / риторика 
-    RhetoricalDevice("PowerStatement",        "authority_mod",   0.25),
-    RhetoricalDevice("Wordplay",              "wit_mod",         0.24),
-    RhetoricalDevice("StepByStep",            "patience_mod",    0.23),
-    RhetoricalDevice("PersuasivePunchline",   "persuasion_mod",  0.22),
+    RhetoricalDevice("PowerStatement",        "authority_mod",   0.22),
+    RhetoricalDevice("Wordplay",              "wit_mod",         0.21),
+    RhetoricalDevice("StepByStep",            "patience_mod",    0.20),
+    RhetoricalDevice("PersuasivePunchline",   "persuasion_mod",  0.19),
     RhetoricalDevice("RuleOfThree",           "persuasion_mod",  0.18),
     RhetoricalDevice("SlipInCurse",           "aggressiveness_mod", 0.20,
                     exclusive_with=("UseEmphaticPunctuation",)),
@@ -261,7 +261,7 @@ async def style_guidelines(
     *,
     human_mode: bool = True,
 ) -> List[str]:
-
+    
     state: Dict[str, float] = self.state
     mods: Dict[str, float] = getattr(self, "_mods_cache", {}) or self.style_modifiers()
     weight = self._decayed_weight(uid) if uid is not None else None
@@ -271,17 +271,14 @@ async def style_guidelines(
     top = sorted(((TONE_MAP[k], mods.get(k, state.get(k, 0.0))) for k in TONE_MAP), key=lambda t: t[1], reverse=True)[:3]
     picked = False
     for tone, val in top:
-        if val >= 0.55:
+        if val >= 0.66:
             gl.append(f"Tone+={tone.name}")
             picked = True
     if not picked:
         gl.append("Tone=Neutral")
 
     intensity = sum(v for _, v in top) / len(top)
-    gl.append("EmotionalIntensity=" + ("High" if intensity > 0.75 else "Medium" if intensity > 0.5 else "Low"))
-
-    last_snip = self.memory_entries[-1].snippet if self.memory_entries else ""
-    gl.append(f"Transition={await self.generate_transition(last_snip)}")
+    gl.append("EmotionalIntensity=" + ("High" if intensity > 0.9 else "Medium" if intensity > 0.65 else "Low"))
 
     energy_lvl = mods.get("energy_mod", state.get("energy_mod", state.get("energy", 0.0)))
     gl.append("Pace=" + ("Energetic" if energy_lvl > 0.75 else "Calm" if energy_lvl < 0.5 else "Moderate"))
@@ -300,7 +297,7 @@ async def style_guidelines(
         gl += ["Tone=Sleepy", "Pace=Unhurried", "UseShortResponses"]
 
     fatigue = state.get("fatigue", 0.0)
-    if fatigue > 0.7:
+    if fatigue > 0.75:
         gl += ["Pace=Slow", "Tone=Weary", "UseShortResponses"]
     elif fatigue < 0.25 and energy_lvl > 0.6:
         self.state["flowstate_mod"] = 1.0
@@ -315,34 +312,31 @@ async def style_guidelines(
     detail = "High" if (state.get("curiosity_mod", 0.0) + state.get("engagement_mod", 0.0)) / 2 > 0.75 else "Low"
     gl.append(f"LevelOfDetail={detail}")
 
-    if self.last_user_emotions and mods.get("empathy_mod", 0.0) > 0.6:
-        gl.append("EmpathyHint")
-
     conf = _sigmoid(state.get("confidence_mod", state.get("confidence", 0.5)))
-    if conf > 0.66:
+    if conf > 0.8:
         gl.append("AnswerStyle=Assertive")
-    elif conf < 0.33:
+    elif conf < 0.2:
         gl.append("AnswerStyle=Tentative")
 
     stress = state.get("stress_mod", 0.0)
     anxiety = state.get("anxiety_mod", 0.0)
-    if stress > 0.7 or anxiety > 0.7:
+    if stress > 0.85 or anxiety > 0.85:
         gl.append("Tone=Soothing")
-    elif stress < 0.3 and anxiety < 0.3 and state.get("valence_mod", 0.0) > 0.3:
+    elif stress < 0.2 and anxiety < 0.2 and state.get("valence_mod", 0.0) > 0.2:
         gl.append("Tone=Relaxed")
 
     if weight is not None:
-        gl.append("AddressTone=" + ("InformalFriendly" if weight > 0.66 else "InformalNeutral" if weight > 0.33 else "InformalIndifferent"))
+        gl.append("AddressTone=" + ("InformalFriendly" if weight > 0.8 else "InformalNeutral" if weight > 0.5 else "InformalIndifferent"))
 
-    if mods.get("patience_mod", 0.5) > 0.7:
+    if mods.get("patience_mod", 0.5) > 0.75:
         gl.append("Pace=Unhurried")
 
     if (state.get("joy_mod", 0.0) + mods.get("humor_mod", state.get("humor", 0.0))) / 2 > 0.5:
         gl.append("Allowance=Humor")
 
-    if state.get("guilt_mod", 0.0) > 0.75:
+    if state.get("guilt_mod", 0.0) > 0.85:
         gl.append("Allowance=Apology")
-    if state.get("confusion_mod", 0.0) > 0.7:
+    if state.get("confusion_mod", 0.0) > 0.85:
         gl.append("Allowance=Clarify")
 
     flirt_ok = (
@@ -353,14 +347,14 @@ async def style_guidelines(
     if state.get("flirtation_mod", 0.0) > settings.THR_FLIRTATION and flirt_ok:
         gl.append("Allowance=PlayfulFlirt")
 
-    if state.get("sexual_arousal_mod", 0.0) > 0.55 and flirt_ok:
+    if state.get("sexual_arousal_mod", 0.0) > 0.66 and flirt_ok:
         gl.append("Allowance=SexyFlirt")
 
     sarcasm = state.get("sarcasm_mod", 0.0)
     aggr = state.get("aggressiveness_mod", 0.0)
     anger = state.get("anger_mod", 0.0)
 
-    if sarcasm > 0.6 and aggr < 0.5:
+    if sarcasm > 0.5 and aggr < 0.4:
         gl.append("Allowance=LightSarcasm")
 
     if aggr > settings.THR_CURSE_AGGR:
@@ -368,8 +362,6 @@ async def style_guidelines(
 
     if anger > settings.THR_PUSHBACK_ANGER or aggr > settings.THR_PUSHBACK_AGGR:
         gl += ["ConflictStyle=PushBack", "Allowance=FirmLanguage", "Allowance=Profanity"]
-    elif stress > 0.99:
-        gl.append("ConflictStyle=Defuse")
 
     if state.get("profanity", 0.0) > settings.THR_PROFANITY and "Allowance=Profanity" not in gl:
         gl.append("Allowance=Profanity")
@@ -378,6 +370,7 @@ async def style_guidelines(
 
     PRIORITY: Tuple[str, ...] = (
         "SentenceVariety",
+        "UseShortResponses",
         "AnswerStyle=Assertive",
         "Allowance=Profanity",
         "ConflictStyle=PushBack",

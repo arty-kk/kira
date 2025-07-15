@@ -74,7 +74,7 @@ services:
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: ["main.py"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -kfsS https://localhost:8443/healthz || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8443/healthz >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       retries: 3

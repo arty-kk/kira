@@ -1,11 +1,11 @@
 cat >app/services/responder/rag/topic_detector.py<< EOF
 #app/services/responder/rag/topic_detector.py
-
 import logging
 import hashlib
 import asyncio
 import re
 
+from typing import List, Optional, Tuple
 from app.config import settings
 from app.core.memory import get_redis
 from app.clients.openai_client import _call_openai_with_retry
@@ -16,22 +16,25 @@ logger = logging.getLogger(__name__)
 
 _ON_TOPIC_CACHE_EX = 3600
 
-async def is_on_topic(text: str) -> bool:
+async def is_on_topic(text: str) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     text_clean = re.sub(r"[^\w\s]", " ", text).lower()
     kw_proc = get_keyword_processor()
     kws = kw_proc.extract_keywords(text_clean)
     if kws:
         logger.debug("is_on_topic: matched keywords %r → on-topic", kws)
-        return True
+        return True, None
 
     key = "on_topic_cache:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
-    redis = get_redis()
-    cached = await redis.get(key)
+    try:
+        redis = get_redis()
+        cached = await redis.get(key)
+    except Exception:
+        cached = None
     if cached is not None:
         if isinstance(cached, (bytes, bytearray)):
             cached = cached.decode()
-        return cached.strip() == "1"
+        return (cached.strip() == "1"), None
 
     try:
         hits = await get_relevant(text, model_name=settings.EMBEDDING_MODEL)
@@ -43,13 +46,17 @@ async def is_on_topic(text: str) -> bool:
         )
     except Exception:
         logger.exception("get_relevant failed in is_on_topic")
-        await redis.set(key, "0", ex=_ON_TOPIC_CACHE_EX)
-        return False
+        try:
+            await redis.set(key, "0", ex=_ON_TOPIC_CACHE_EX)
+        except:
+            pass
+        return False, None
 
+    margin = settings.RELEVANCE_MARGIN
     thr = settings.RELEVANCE_THRESHOLD
-    if top_score >= thr + 0.05:
+    if top_score >= thr + margin:
         result = True
-    elif top_score < thr - 0.05:
+    elif top_score < thr - margin:
         result = False
     else:
         prompt = (
@@ -73,11 +80,12 @@ async def is_on_topic(text: str) -> bool:
             result = verdict.startswith("yes")
         except Exception:
             logger.exception("GPT fallback failed in is_on_topic")
-            result = top_score >= thr
+            result = top_score >= settings.RELEVANCE_THRESHOLD
 
-    await redis.set(key, "1" if result else "0", ex=_ON_TOPIC_CACHE_EX)
-    logger.info(
-        "is_on_topic: text=%r → on_topic=%s (score=%.4f)", text, result, top_score
-    )
-    return result
+    try:
+        await redis.set(key, "1" if result else "0", ex=_ON_TOPIC_CACHE_EX)
+    except:
+        pass
+    logger.info("is_on_topic: text=%r → on_topic=%s (score=%.4f)", text, result, top_score)
+    return result, hits
 EOF

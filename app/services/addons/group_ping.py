@@ -7,6 +7,7 @@ import logging
 import asyncio
 import random
 import statistics
+import time as _time
 
 from aiogram.utils.markdown import hlink
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -29,8 +30,8 @@ _METRIC_OPENAI_FAIL = "metrics:dynamic_ping:openai_failures"
 _METRIC_SEND_FAIL = "metrics:dynamic_ping:send_failures"
 
 MAX_TEMPERATURE = 0.8
-MIN_TEMPERATURE = 0.5
-TOP_P_MIN = 0.7
+MIN_TEMPERATURE = 0.6
+TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
 
 LUA_PICK_AND_UPDATE = """
@@ -45,23 +46,21 @@ async def group_ping() -> None:
     redis = get_redis()
     chat_id = settings.ALLOWED_GROUP_ID
     lock_key = f"lock:group_ping:{chat_id}"
+    lock = redis.lock(lock_key, timeout=settings.PING_INTERVAL_MINUTES * 60)
+    acquired = False
     try:
-        async with redis.lock(lock_key, timeout=settings.PING_INTERVAL_MINUTES*60):
-            await _exec_group_ping(redis, chat_id)
-    except AttributeError:
-        lock = redis.lock(lock_key, timeout=settings.PING_INTERVAL_MINUTES*60)
-        got = await lock.acquire(blocking=False)
-        if not got:
+        acquired = await lock.acquire(blocking=False)
+        if not acquired:
             return
-        try:
-            await _exec_group_ping(redis, chat_id)
-        finally:
-            lock.release()
+        await _exec_group_ping(redis, chat_id)
+    except Exception:
+        logger.exception("Error in group_ping")
+    finally:
+        if acquired:
+            await lock.release()
 
 
 async def _exec_group_ping(redis, chat_id: int) -> None:
-    
-    import time as _time
     
     now = _time.time()
 
@@ -77,7 +76,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         await redis.incr(_METRIC_INVOC)
         await redis.expire(_METRIC_INVOC, 86_400)
     except RedisError:
-        pass
+        logger.debug("Failed to incr metric %s", _METRIC_INVOC)
 
     base = settings.PING_IDLE_THRESHOLD_SECONDS
     hist_key = f"idle_list:{chat_id}"
@@ -86,9 +85,10 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         await redis.ltrim(hist_key, 0, settings.PING_HISTORY_COUNT - 1)
         await redis.expire(hist_key, 86_400)
         data = await redis.lrange(hist_key, 0, -1)
-        durations = [float(x) for x in data]
-        median_idle = statistics.median(durations) if len(durations) >= settings.PING_HISTORY_COUNT else base
+        durations = [float(x) for x in data if x is not None]
+        median_idle = statistics.median(durations) if durations else base
     except RedisError:
+        logger.debug("Failed to update/read idle history")
         median_idle = base
 
     adaptive = max(base, median_idle * settings.ADAPTIVE_IDLE_MULTIPLIER)
@@ -175,7 +175,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         return
 
     persona = get_persona(int(uid))
-    persona.style_modifiers()
+    mods = persona._mods_cache or persona.style_modifiers()
     guidelines = await persona.style_guidelines(int(uid))
 
     try:
@@ -187,7 +187,6 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
 
     append = random.random() < settings.EMOJI_APPEND_PROBABILITY
 
-    mods = persona._mods_cache
     novelty = (
         0.4 * mods["creativity_mod"]
       + 0.4 * mods["sarcasm_mod"]
@@ -214,8 +213,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     system_msg = build_system_prompt(persona, guidelines)
     prompt = (
         (f"Previously you and the person had the following conversation:\n{mem_ctx}\n\n" if mem_ctx else "")
-        + "Write a natural, short message (as people do when they want to start a conversation again) on your behalf."
-        + "Respond with only the final text, no explanations, comments, or framing."
+        + "Write a message on your own behalf, like people do when they want to renew a conversation."
     )
 
     try:
