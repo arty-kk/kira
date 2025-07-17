@@ -1,36 +1,37 @@
 cat > app/bot/handlers/private.py << EOF
 # app/bot/handlers/private.py
-
+import asyncio
+import re
 import logging
 
 from pathlib import Path
 from datetime import datetime, timedelta, time
 
-from aiogram import F, types
+from aiogram import F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.enums import ChatType, ContentType
+from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandObject
 from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup,
+    User, Message, CallbackQuery,
+    InlineKeyboardButton, InlineKeyboardMarkup,
+    KeyboardButton, ReplyKeyboardMarkup,
     FSInputFile,
 )
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from typing import Tuple, Optional
+from aiogram.utils.markdown import hlink
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client, WELCOME_MESSAGES
+from app.bot.i18n.menu_translation import GENDER_LABELS, GENDER_PROMPT
 from app.bot.handlers.payments import cmd_buy
 from app.bot.utils.keep_typing import typing_indicator
 from app.bot.utils.user_mode import get_user_mode, set_user_mode, UserMode
 from app.config import settings
 from app.tasks.message import process_message
+from sqlalchemy import update
 from app.core.db import AsyncSessionLocal
+from app.core.models import User
 from app.core.memory import inc_msg_count, is_spam
+from app.services.addons.welcome_manager import generate_welcome, can_greet
 from app.services.addons.personal_ping import register_private_activity
 from app.services.responder.rag.topic_detector import is_on_topic
 from app.services.user.user_service import (
@@ -43,31 +44,39 @@ logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
+
 @dp.message(Command("start"), F.chat.type == ChatType.PRIVATE)
 async def cmd_start(message: Message) -> None:
 
-    cid = message.chat.id
     async with AsyncSessionLocal() as db:
         await get_or_create_user(db, message.from_user)
 
-    languages = [
-        ("🇺🇸 English", "en"),
-        ("🇷🇺 Русский", "ru"),
-        ("🇪🇸 Español", "es"),
-        ("🇸🇦 العربية", "ar"),
-        ("🇵🇹 Português", "pt"),
-        ("🇮🇳 हिन्दी", "hi"),
-        ("🇮🇩 Indonesia", "id"),
-        ("🇹🇷 Türkçe", "tr"),
-    ]
-    kb = InlineKeyboardBuilder()
-    for label, code in languages:
-        kb.button(text=label, callback_data=f"lang:{code}")
-    kb.adjust(1)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇷🇺 RUS", callback_data="lang:ru"),
+            InlineKeyboardButton(text="🇺🇸 ENG", callback_data="lang:en"),
+        ],
+        [
+            InlineKeyboardButton(text="🇵🇹 PT", callback_data="lang:pt"),
+            InlineKeyboardButton(text="🇪🇸 ES", callback_data="lang:es"),
+        ],
+        [
+            InlineKeyboardButton(text="🇸🇦 AR", callback_data="lang:ar"),
+            InlineKeyboardButton(text="🇹🇷 TR", callback_data="lang:tr"),
+        ],
+        [
+            InlineKeyboardButton(text="🇩🇪 DE", callback_data="lang:de"),
+            InlineKeyboardButton(text="🇫🇷 FR", callback_data="lang:fr"),
+        ],
+        [
+            InlineKeyboardButton(text="🇮🇩 ID", callback_data="lang:id"),
+            InlineKeyboardButton(text="🇻🇳 VI", callback_data="lang:vi"),
+        ],
+    ])
 
     await message.reply(
         "<b>🔎 Choose your language</b>",
-        reply_markup=kb.as_markup(),
+        reply_markup=kb,
     )
 
 
@@ -81,14 +90,55 @@ async def set_language(cb: CallbackQuery) -> None:
     lang = cb.data.split(":", 1)[1]
     await redis_client.set(f"lang:{cb.from_user.id}", lang)
 
+    male_label, female_label = GENDER_LABELS.get(
+        lang,
+        GENDER_LABELS[settings.DEFAULT_LANG]
+    )
+    prompt_text = GENDER_PROMPT.get(
+        lang,
+        GENDER_PROMPT[settings.DEFAULT_LANG]
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=male_label,   callback_data="gender:male"),
+            InlineKeyboardButton(text=female_label, callback_data="gender:female"),
+        ]
+    ])
+    await bot.send_message(
+        chat_id=cb.from_user.id,
+        text=prompt_text,
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data.startswith("gender:"), F.message.chat.type == ChatType.PRIVATE)
+async def set_gender(cb: CallbackQuery) -> None:
+
+    await cb.answer(cache_time=1)
+    gender = cb.data.split(":", 1)[1]
+    chat_id = cb.from_user.id
+    user = cb.from_user
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            update(User)
+            .where(User.id == cb.from_user.id)
+            .values(gender=gender)
+        )
+        await db.commit()
+
+    raw_lang = await redis_client.get(f"lang:{chat_id}")
+    lang = raw_lang.decode() if isinstance(raw_lang, (bytes, bytearray)) else raw_lang or settings.DEFAULT_LANG
     template = WELCOME_MESSAGES.get(lang, WELCOME_MESSAGES[settings.DEFAULT_LANG])
     text = template.format(full_name=cb.from_user.full_name, BOT_NAME=settings.BOT_NAME)
 
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="🛒 Buy Requests"),
-                KeyboardButton(text="🚀 Play GalaxyTap"),
+                KeyboardButton(text="🛒 Requests"),
+                KeyboardButton(text="🎮 GalaxyTap"),
                 KeyboardButton(text="⚙️ Mode"),
             ]
         ],
@@ -117,10 +167,10 @@ async def on_private_message(message: Message) -> None:
     async with typing_indicator(chat_id):
 
         text = message.text.strip()
-        if text in {"🚀 Play GalaxyTap", "🛒 Buy Requests", "⚙️ Mode"}:
-            if text == "🚀 Play GalaxyTap":
+        if text in {"🎮 GalaxyTap", "🛒 Requests", "⚙️ Mode"}:
+            if text == "🎮 GalaxyTap":
                 await bot.send_message(chat_id, "🔗 Click to Play 👉 https://t.me/galaxytap_bot?startapp")
-            elif text == "🛒 Buy Requests":
+            elif text == "🛒 Requests":
                 await bot.send_message(chat_id, "⌛ Opening purchase menu…")
                 await cmd_buy(message)
             else:
@@ -147,6 +197,7 @@ async def on_private_message(message: Message) -> None:
         return
 
     async with AsyncSessionLocal() as db:
+        
         user = await get_or_create_user(db, message.from_user)
 
         if topic:
@@ -201,8 +252,8 @@ async def cmd_mode(message: Message, command: CommandObject | None = None) -> No
                 )
                 for m, label in [
                     (UserMode.AUTO, "Auto"),
-                    (UserMode.ON_TOPIC, "On-topic only"),
-                    (UserMode.OFF_TOPIC, "Off-topic only"),
+                    (UserMode.ON_TOPIC, "GalaxyTap"),
+                    (UserMode.OFF_TOPIC, "Off-topic"),
                 ]
             ]
         ]
