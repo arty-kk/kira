@@ -1,7 +1,5 @@
 cat > app/bot/handlers/private.py << EOF
 # app/bot/handlers/private.py
-import asyncio
-import re
 import logging
 
 from pathlib import Path
