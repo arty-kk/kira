@@ -1,4 +1,4 @@
-cat >alembic/env.py<< EOF
+cat >alembic/env.py<< 'EOF'
 #alembic/env.py
 import asyncio
 import os

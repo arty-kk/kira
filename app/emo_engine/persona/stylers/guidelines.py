@@ -2,221 +2,41 @@ cat >app/emo_engine/persona/stylers/guidelines.py<< EOF
 #app/emo_engine/persona/stylers/guidelines.py
 from __future__ import annotations
 
-import logging, random, secrets
+import asyncio
+import logging
+import random
+import math
+import time
+import secrets
 
-from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import Dict, List, Set, Tuple, Optional
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
-from app.config import settings
-from ..utils.emotion_math import _sigmoid
-
-
-class Tone(Enum):
-    Joyful = auto()
-    Melancholic = auto()
-    Angry = auto()
-    Fearful = auto()
-    Disgusted = auto()
-    Surprised = auto()
-    Trusting = auto()
-    Optimistic = auto()
-    Gloomy = auto()
-    Ecstatic = auto()
-    Cheerful = auto()
-    Lonely = auto()
-    Despairing = auto()
-    Annoyed = auto()
-    Irritated = auto()
-    Astonished = auto()
-    Admiring = auto()
-    Affectionate = auto()
-    Lustful = auto()
-    Witty = auto()
-    Sexual = auto()
-    Collaborative = auto()
-    Civil = auto()
-    Aggressive = auto()
-    Eager = auto()
-    Expectant = auto()
-    Empathetic = auto()
-    Engaged = auto()
-    Confident = auto()
-    Technical = auto()
-    Playful = auto()
-    Sarcastic = auto()
-    Flirty = auto()
-    Blunt = auto()
-    Energetic = auto()
-    Weary = auto()
-    FlowState = auto()
-    Stressed = auto()
-    Anxious = auto()
-    Enthusiastic = auto()
-    Excited = auto()
-    BurntOut = auto()
-    Exhausted = auto()
-    Euphoric = auto()
-    Collapsed = auto()
-    Friendly = auto()
-    Neutral = auto()
-    Confused = auto()
-    Embarrassed = auto()
-    Guilty = auto()
-    Charismatic = auto()
-    Persuasive = auto()
-    Patient = auto()
-    Authoritative = auto()
-    
-
-TONE_MAP: Dict[str, Tone] = {
-    "neutral_mod": Tone.Neutral,
-    "charisma_mod": Tone.Charismatic,
-    "joy_mod": Tone.Joyful,
-    "sadness_mod": Tone.Melancholic,
-    "anger_mod": Tone.Angry,
-    "fear_mod": Tone.Fearful,
-    "disgust_mod": Tone.Disgusted,
-    "surprise_mod": Tone.Surprised,
-    "trust_mod": Tone.Trusting,
-    "optimism_mod": Tone.Optimistic,
-    "gloom_mod": Tone.Gloomy,
-    "ecstasy_mod": Tone.Ecstatic,
-    "cheerfulness_mod": Tone.Cheerful,
-    "loneliness_mod": Tone.Lonely,
-    "despair_mod": Tone.Despairing,
-    "annoyance_mod": Tone.Annoyed,
-    "irritation_mod": Tone.Irritated,
-    "astonishment_mod": Tone.Astonished,
-    "admiration_mod": Tone.Admiring,
-    "affection_mod": Tone.Affectionate,
-    "lustful_excitement_mod": Tone.Lustful,
-    "sexual_arousal_mod": Tone.Sexual,
-    "creative_collaboration_mod": Tone.Collaborative,
-    "civility_mod": Tone.Civil,
-    "aggressiveness_mod": Tone.Aggressive,
-    "curiosity_mod": Tone.Eager,
-    "anticipation_mod": Tone.Expectant,
-    "empathy_mod": Tone.Empathetic,
-    "engagement_mod": Tone.Engaged,
-    "confidence_mod": Tone.Confident,
-    "precision_mod": Tone.Technical,
-    "humor_mod": Tone.Playful,
-    "sarcasm_mod": Tone.Sarcastic,
-    "flirtation_mod": Tone.Flirty,
-    "profanity_mod": Tone.Blunt,
-    "energy_mod": Tone.Energetic,
-    "fatigue_mod": Tone.Weary,
-    "flowstate_mod": Tone.FlowState,
-    "stress_mod": Tone.Stressed,
-    "anxiety_mod": Tone.Anxious,
-    "enthusiasm_mod": Tone.Enthusiastic,
-    "excitement_mod": Tone.Excited,
-    "burnout_mod": Tone.BurntOut,
-    "exhaustion_mod": Tone.Exhausted,
-    "euphoria_mod": Tone.Euphoric,
-    "collapse_mod": Tone.Collapsed,
-    "friendliness_mod": Tone.Friendly,
-    "confusion_mod": Tone.Confused,
-    "embarrassment_mod": Tone.Embarrassed,
-    "guilt_mod": Tone.Guilty,
-    "persuasion_mod": Tone.Persuasive,
-    "authority_mod": Tone.Authoritative,
-    "wit_mod": Tone.Witty,
-    "patience_mod":  Tone.Patient,
-}
+from ..constants.extra_devices import EXTRA_DEVICES, BOT_SIGNATURES
+from ..constants.tone_map import TONE_MAP
+from ..constants.emotional_state import compute_emotional_state
 
 
-@dataclass(frozen=True)
-class RhetoricalDevice:
-
-    name: str
-    metric_key: str
-    base_prob: float = 0.2
-    exclusive_with: Tuple[str, ...] = field(default_factory=tuple)
-
-    def should_apply(self, metric_val: float, rng: random.Random) -> bool:
-        
-        x = max(0.0, min(1.0, (metric_val - 0.0) / (1.0 - 0.0)))
-        k = 6.0
-        sig = 1.0 / (1.0 + pow(2.71828, -k * (x - 0.5)))
-        prob = self.base_prob * (0.2 + 0.8 * sig)
-        return rng.random() < prob
-
-
-EXTRA_DEVICES: Tuple[RhetoricalDevice, ...] = (
-    #  ядро разговорности 
-    RhetoricalDevice("VarySentenceLength",    "energy_mod",      0.4),
-    RhetoricalDevice("UseFollowUpQuestion",   "engagement_mod",  0.2),
-    RhetoricalDevice("AskClarifyingQuestion", "confusion_mod",   0.18),
-    RhetoricalDevice("UseMetaphors",          "creativity_mod",  0.25,
-                    exclusive_with=("UseSymbolism","UseSimiles")),
-    RhetoricalDevice("UseAnalogies",          "precision_mod",   0.23,
-                    exclusive_with=("UseSimiles",)),
-    
-    #  мягкие стилистические штрихи 
-    RhetoricalDevice("UseVividLanguage",      "creativity_mod",  0.3),
-    RhetoricalDevice("PopCultureRefs",        "curiosity_mod",   0.2,
-                    exclusive_with=("CulturalRefs",)),
-    RhetoricalDevice("CulturalRefs",          "creativity_mod",  0.18,
-                    exclusive_with=("PopCultureRefs",)),
-    RhetoricalDevice("UseSimiles",            "creativity_mod",  0.23,
-                    exclusive_with=("UseAnalogies","UseMetaphors")),
-    RhetoricalDevice("UseContrast",           "sarcasm_mod",     0.21,
-                    exclusive_with=("UseRepetition",)),
-    RhetoricalDevice("SelfDeprecatingHumor",  "embarrassment_mod",0.19),
-    RhetoricalDevice("HeartfeltApology",      "guilt_mod",       0.15),
-    
-    #  харизматичные техники 
-    RhetoricalDevice("Storytelling",          "charisma_mod",    0.25),
-    RhetoricalDevice("InclusiveWe",           "charisma_mod",    0.2),
-    RhetoricalDevice("CallToAction",          "charisma_mod",    0.15),
-    
-    #  убедительность / риторика 
-    RhetoricalDevice("PowerStatement",        "authority_mod",   0.22),
-    RhetoricalDevice("Wordplay",              "wit_mod",         0.21),
-    RhetoricalDevice("StepByStep",            "patience_mod",    0.20),
-    RhetoricalDevice("PersuasivePunchline",   "persuasion_mod",  0.19),
-    RhetoricalDevice("RuleOfThree",           "persuasion_mod",  0.18),
-    RhetoricalDevice("SlipInCurse",           "aggressiveness_mod", 0.20,
-                    exclusive_with=("UseEmphaticPunctuation",)),
-    
-    #  декоративные спец-эффекты 
-    RhetoricalDevice("InjectEmojis",          "joy_mod",         0.15),
-    RhetoricalDevice("UseEmphaticPunctuation","arousal_mod",     0.10,
-                    exclusive_with=("InjectAllCaps",)),
-    RhetoricalDevice("UsePersonification",    "creativity_mod",  0.10),
-    RhetoricalDevice("UseSymbolism",          "creativity_mod",  0.10,
-                    exclusive_with=("UseMetaphors",)),
-    RhetoricalDevice("UseParallelism",        "energy_mod",      0.15,
-                    exclusive_with=("UseRepetition",)),
-    RhetoricalDevice("UseLitotes",            "sarcasm_mod",     0.12),
-    RhetoricalDevice("UseZeugma",             "creativity_mod",  0.10),
-    RhetoricalDevice("UseAlliteration",       "humor_mod",       0.10,
-                    exclusive_with=("UseOnomatopoeia",)),
-    RhetoricalDevice("UseRepetition",         "stress_mod",      0.10,
-                    exclusive_with=("UseContrast","UseParallelism")),
-    RhetoricalDevice("InjectEllipses",        "anticipation_mod",0.10,
-                    exclusive_with=("InjectAllCaps",)),
-    
-    #  мем-эффекты (почти выключены) 
-    RhetoricalDevice("UseOnomatopoeia",       "energy_mod",      0.05,
-                    exclusive_with=("UseAlliteration",)),
-    RhetoricalDevice("InjectAllCaps",         "arousal_mod",     0.03,
-                    exclusive_with=("UseEmphaticPunctuation","InjectEllipses")),
-)
-
-BOT_SIGNATURES: Set[str] = set()
+logger = logging.getLogger(__name__)
 
 
 def _metric(state: Dict[str, float], mods: Dict[str, float], key: str, fallback: float = 0.5) -> float:
-    return mods.get(key, state.get(key.replace("_mod", ""), fallback))
+    raw = mods.get(key)
+    if raw is None:
+        raw = state.get(key.replace("_mod", ""), fallback)
+    return float(raw)
+
+
+def _append_once(gl: list[str], flag: str) -> None:
+    if flag not in gl:
+        gl.append(flag)
+
+
+def _set_flag(gl: list[str], prefix: str, flag: str) -> None:
+    gl[:] = [f for f in gl if not f.startswith(prefix + "=") and not f.startswith(prefix + "+=")]
+    gl.append(flag)
 
 
 def _remove_conflicts(devices: List[str]) -> None:
-
     name_map = {d.name: d for d in EXTRA_DEVICES}
     to_remove: Set[str] = set()
     for name in devices:
@@ -229,22 +49,32 @@ def _remove_conflicts(devices: List[str]) -> None:
     devices[:] = [d for d in devices if d not in to_remove]
 
 
+def _compute_hostility(state: Dict[str, float], mods: Dict[str, float]) -> float:
+
+    V        = state.get("valence", 0.0)
+    neg      = max(0.0, -V)
+    arousal  = float(mods.get("arousal_mod",  state.get("arousal",  0.5)))
+    dom      = float(mods.get("dominance_mod", state.get("dominance", 0.33)))
+    fatigue  = float(mods.get("fatigue_mod",  state.get("fatigue",  0.0)))
+
+    h = neg * (0.5 + 0.5 * arousal) * (0.5 + 0.5 * dom) * (1.0 - 0.3 * fatigue)
+    return max(0.0, min(1.0, h))
+
+
 def _gather_extras(
-    self, 
-    state: Dict[str, float], 
-    max_items: int, 
+    self,
+    state: Dict[str, float],
+    max_items: int,
     mods: Optional[Dict[str, float]] = None,
 ) -> List[str]:
-
     rng_seed = state.get("seed")
     rng = random.Random(rng_seed if rng_seed is not None else secrets.randbits(64))
     mods = mods or getattr(self, "_mods_cache", {})
- 
+
     devices = list(EXTRA_DEVICES)
     rng.shuffle(devices)
 
     chosen: List[str] = []
-
     for device in devices:
         if device.should_apply(_metric(state, mods, device.metric_key), rng):
             chosen.append(device.name)
@@ -261,146 +91,202 @@ async def style_guidelines(
     *,
     human_mode: bool = True,
 ) -> List[str]:
-    
-    state: Dict[str, float] = self.state
-    mods: Dict[str, float] = getattr(self, "_mods_cache", {}) or self.style_modifiers()
+
+    state = self.state.copy()
+    state["seed"] = (self.chat_id << 32) ^ self.state_version
+    mods = self._mods_cache.copy()
+    if not mods:
+        try:
+            mods = await asyncio.wait_for(self.style_modifiers(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "style_modifiers() timed-out; using previous cache (%d items)",
+                len(self._mods_cache),
+            )
+
     weight = self._decayed_weight(uid) if uid is not None else None
+    last_msg = self._last_user_msg or ""
 
-    gl: List[str] = []
+    now = time.time()
+    if (now - getattr(self, "_mem_count_cache_ts", 1e9)) < 60:
+        n = getattr(self, "_mem_count_cache", 0)
+    else:
+        try:
+            n = await self.enhanced_memory.count_entries()
+        except Exception:
+            n = 0
+        self._mem_count_cache = n
+        self._mem_count_cache_ts = now
 
-    top = sorted(((TONE_MAP[k], mods.get(k, state.get(k, 0.0))) for k in TONE_MAP), key=lambda t: t[1], reverse=True)[:3]
-    picked = False
-    for tone, val in top:
-        if val >= 0.66:
-            gl.append(f"Tone+={tone.name}")
-            picked = True
-    if not picked:
-        gl.append("Tone=Neutral")
+    prev_int = getattr(self, "_prev_intensity_pct", None)
+    prev_addr = getattr(self, "_prev_address_score", None)
 
-    intensity = sum(v for _, v in top) / len(top)
-    gl.append("EmotionalIntensity=" + ("High" if intensity > 0.9 else "Medium" if intensity > 0.65 else "Low"))
+    snapshot = {
+        "state": state.copy(),
+        "mods": mods.copy(),
+        "weight": weight,
+        "last_msg": last_msg,
+        "dominant": getattr(self, "current_dominant", None),
+        "n": n,
+        "max_items": max_items,
+        "prev_int": prev_int,
+        "prev_addr": prev_addr,
+    }
 
-    energy_lvl = mods.get("energy_mod", state.get("energy_mod", state.get("energy", 0.0)))
-    gl.append("Pace=" + ("Energetic" if energy_lvl > 0.75 else "Calm" if energy_lvl < 0.5 else "Moderate"))
+    result = await asyncio.to_thread(_compute_guidelines_sync, snapshot)
 
-    user_tz = getattr(self, "user_timezone", None) \
-        or state.get("timezone") \
-        or settings.DEFAULT_TZ
-    try:
-        tz = ZoneInfo(user_tz)
-        hour_local = datetime.now(tz).hour
-    except Exception:
-        logging.warning("Invalid user_tz %r, defaulting to UTC", user_tz)
-        hour_local = datetime.utcnow().hour
-    
-    if 0 <= hour_local < 6 and energy_lvl < 0.4:
-        gl += ["Tone=Sleepy", "Pace=Unhurried", "UseShortResponses"]
+    self._prev_intensity_pct = result["intensity_pct"]
+    self._prev_address_score = result["address_score"]
 
-    fatigue = state.get("fatigue", 0.0)
-    if fatigue > 0.75:
-        gl += ["Pace=Slow", "Tone=Weary", "UseShortResponses"]
-    elif fatigue < 0.25 and energy_lvl > 0.6:
-        self.state["flowstate_mod"] = 1.0
-        gl += ["Tone=FlowState", "SentenceVariety"]
+    base_flags = result["flags"]
+    extras = _gather_extras(self, state, max_items, mods)
+    hostility = _compute_hostility(state, mods)
+    _set_flag(extras, "HostilityLevel", f"HostilityLevel={hostility:.2f}")
 
-    energy_lvl = mods.get("energy_mod", state.get("energy", 0.0))
-    if energy_lvl > 0.8:
-        gl.append("UseShortResponses")
-    elif energy_lvl < 0.2:
-        gl.append("UseDetailedResponses")
-
-    detail = "High" if (state.get("curiosity_mod", 0.0) + state.get("engagement_mod", 0.0)) / 2 > 0.75 else "Low"
-    gl.append(f"LevelOfDetail={detail}")
-
-    conf = _sigmoid(state.get("confidence_mod", state.get("confidence", 0.5)))
-    if conf > 0.8:
-        gl.append("AnswerStyle=Assertive")
-    elif conf < 0.2:
-        gl.append("AnswerStyle=Tentative")
-
-    stress = state.get("stress_mod", 0.0)
-    anxiety = state.get("anxiety_mod", 0.0)
-    if stress > 0.85 or anxiety > 0.85:
-        gl.append("Tone=Soothing")
-    elif stress < 0.2 and anxiety < 0.2 and state.get("valence_mod", 0.0) > 0.2:
-        gl.append("Tone=Relaxed")
-
-    if weight is not None:
-        gl.append("AddressTone=" + ("InformalFriendly" if weight > 0.8 else "InformalNeutral" if weight > 0.5 else "InformalIndifferent"))
-
-    if mods.get("patience_mod", 0.5) > 0.75:
-        gl.append("Pace=Unhurried")
-
-    if (state.get("joy_mod", 0.0) + mods.get("humor_mod", state.get("humor", 0.0))) / 2 > 0.5:
-        gl.append("Allowance=Humor")
-
-    if state.get("guilt_mod", 0.0) > 0.85:
-        gl.append("Allowance=Apology")
-    if state.get("confusion_mod", 0.0) > 0.85:
-        gl.append("Allowance=Clarify")
-
-    flirt_ok = (
-        state.get("trust_mod", 0.0) > settings.THR_FLIRT_TRUST
-        and state.get("valence_mod", 0.0) > -0.2
-    )
-
-    if state.get("flirtation_mod", 0.0) > settings.THR_FLIRTATION and flirt_ok:
-        gl.append("Allowance=PlayfulFlirt")
-
-    if state.get("sexual_arousal_mod", 0.0) > 0.66 and flirt_ok:
-        gl.append("Allowance=SexyFlirt")
-
-    sarcasm = state.get("sarcasm_mod", 0.0)
-    aggr = state.get("aggressiveness_mod", 0.0)
-    anger = state.get("anger_mod", 0.0)
-
-    if sarcasm > 0.5 and aggr < 0.4:
-        gl.append("Allowance=LightSarcasm")
-
-    if aggr > settings.THR_CURSE_AGGR:
-        gl.append("SlipInCurse")
-
-    if anger > settings.THR_PUSHBACK_ANGER or aggr > settings.THR_PUSHBACK_AGGR:
-        gl += ["ConflictStyle=PushBack", "Allowance=FirmLanguage", "Allowance=Profanity"]
-
-    if state.get("profanity", 0.0) > settings.THR_PROFANITY and "Allowance=Profanity" not in gl:
-        gl.append("Allowance=Profanity")
-
-    gl.append(f"ProfanityLevel={state.get('profanity', 0.0):.2f}")
+    if snapshot["n"] > 5 and snapshot["last_msg"] and len(snapshot["last_msg"]) >= 12:
+        extras.append("MemoryFollowUp")
+        _remove_conflicts(extras)
 
     PRIORITY: Tuple[str, ...] = (
-        "SentenceVariety",
-        "UseShortResponses",
-        "AnswerStyle=Assertive",
-        "Allowance=Profanity",
-        "ConflictStyle=PushBack",
-        "Allowance=FirmLanguage",
-        "Allowance=LightSarcasm",
-        "Allowance=SexyFlirt",
-        "Allowance=PlayfulFlirt",
-        "Allowance=Humor",
-        "InjectEmojis",
+        "Tone", "EmotionalState", "EmotionalIntensity", "HostilityLevel", "AddressToneScore", "AddressTone",
     )
-
-    ordered_base = [p for p in PRIORITY if p in gl] + [g for g in gl if g not in PRIORITY]
-    extras = _gather_extras(self, state, max_items, mods)
-
+    ordered_base: List[str] = []
+    for pref in PRIORITY:
+        ordered_base.extend([f for f in base_flags if f.startswith(pref)])
+    ordered_base += [f for f in base_flags if f not in ordered_base]
     core_slots = min(len(ordered_base), max_items - len(extras))
-    final: List[str] = ordered_base[:core_slots] + extras
+    final = ordered_base[:core_slots] + extras
 
     if human_mode:
-        final = [g for g in final if g.split("=")[0] not in BOT_SIGNATURES]
+        final = [f for f in final if f.split("=")[0] not in BOT_SIGNATURES]
 
     if len(final) < max_items:
-        pool = [item for item in ordered_base[core_slots:] + extras if item not in final and item.split("=")[0] not in BOT_SIGNATURES]
+        pool = [f for f in ordered_base[core_slots:] + extras if f not in final and f.split("=")[0] not in BOT_SIGNATURES]
         final += pool[: max_items - len(final)]
 
-    seen: Set[str] = set(); ordered: List[str] = []
+    seen: Set[str] = set()
+    ordered: List[str] = []
     for itm in final:
         if itm not in seen:
             seen.add(itm)
             ordered.append(itm)
 
-    logging.debug("Guidelines (human_mode=%s): %s", human_mode, ordered)
-    return ordered
+    device_names = {d.name for d in EXTRA_DEVICES}
+    rhet = [f for f in ordered if f in device_names and f != "MemoryFollowUp"]
+    mem  = [f for f in ordered if f == "MemoryFollowUp"]
+    ordered = [f for f in ordered if f not in rhet + mem]
+
+    if rhet:
+        ordered.append("RhetoricalDevices=" + ",".join(rhet))
+    if mem:
+        ordered.append("MemoryFollowUp")
+
+    logger.debug("Final style_guidelines (human_mode=%s): %s", human_mode, ordered)
+    return ordered[:max_items]
+
+
+def _compute_guidelines_sync(snapshot: dict) -> dict:
+    state = snapshot["state"]
+    mods = snapshot["mods"]
+    weight = snapshot["weight"]
+    last_msg = snapshot["last_msg"]
+    n = snapshot["n"]
+    max_items = snapshot["max_items"]
+    prev_int = snapshot["prev_int"]
+    prev_addr = snapshot["prev_addr"]
+    dominant  = snapshot.get("dominant")
+
+    gl: List[str] = []
+
+    civ = float(mods.get("civility_mod", state.get("civility", 0.5)))
+    hostility = _compute_hostility(state, mods)
+
+    # ─── Tone ───────────────────────────
+    tone_items = [
+        (TONE_MAP[k], max(0.0, min(1.0, mods.get(k, state.get(k.replace("_mod",""), 0.0)))))
+        for k in TONE_MAP
+    ]
+    tone_items.sort(key=lambda t: t[1], reverse=True)
+    top3 = tone_items[:3]
+
+    valence_mod = mods.get("valence_mod", 0.5)
+    arousal_mod = mods.get("arousal_mod", 0.5)
+    thr_tone = 0.75 - 0.1 * (1.0 - valence_mod) + 0.1 * (arousal_mod - 0.5)
+
+    selected = [tone.name for tone, val in top3 if val >= thr_tone]
+    if selected:
+        gl[:] = [f for f in gl if not f.startswith("Tone=")]
+        for name in selected:
+            _append_once(gl, f"Tone+={name}")
+    else:
+        _set_flag(gl, "Tone", "Tone=MildlyExpressive")
+
+    emo_state = compute_emotional_state(state, mods, dominant, allow_mixed=True)
+    _set_flag(gl, "EmotionalState", f"EmotionalState={emo_state}")
+
+    # ─── Emotional Intensity (0–100%) ─────────────
+    avg_tone = sum(val for _, val in top3) / 3.0
+    ar_mod = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
+    v_abs = abs(state.get("valence", 0.0))
+    raw_norm = 0.55 * avg_tone + 0.30 * ar_mod + 0.15 * v_abs
+    raw_adj = math.pow(max(0.0, min(1.0, raw_norm)), 1.1) * 100.0
+
+    if prev_int is None:
+        intensity_pct = raw_adj
+    else:
+        delta = raw_adj - prev_int
+        alpha = 0.35 if delta > 0 else 0.20
+        intensity_pct = prev_int + alpha * delta
+        intensity_pct = max(0.0, min(100.0, intensity_pct))
+
+    cap = 82.0
+    if ar_mod >= 0.75 and v_abs >= 0.60:
+        cap = 92.0
+    intensity_pct = min(intensity_pct, cap)
+
+    _set_flag(gl, "EmotionalIntensity", f"EmotionalIntensity={int(round(intensity_pct))}")
+
+    # ─── Dynamic AddressTone ─────────────────────────────────
+    addr_score = 0.0
+    if weight is not None:
+        friendliness = mods.get("friendliness_mod", 0.5)
+        civility = mods.get("civility_mod", 0.5)
+        base_addr = 0.6 * weight + 0.2 * friendliness + 0.2 * civility
+
+        if prev_addr is None:
+            addr_score = base_addr
+        else:
+            addr_score = 0.6 * prev_addr + 0.4 * base_addr
+
+        noise = 0.05 * (1.0 - mods.get("confidence_mod", 0.5))
+        addr_score = max(0.0, min(1.0, addr_score + random.uniform(-noise, noise)))
+        addr_score -= 0.5 * hostility * (0.7 + 0.3 * (1.0 - civ))
+        addr_score = max(0.0, min(1.0, addr_score))
+
+        thr_warm     = 0.75 - 0.1 * (1.0 - valence_mod)
+        thr_friendly = 0.50
+        thr_neutral  = 0.25 + 0.1 * valence_mod
+
+        label = None
+        if addr_score >= thr_warm:
+            label = "InformalWarm"
+        elif addr_score >= thr_friendly:
+            label = "InformalFriendly"
+        elif addr_score >= thr_neutral:
+            label = "InformalNeutral"
+        else:
+            label = "InformalIndifferent"
+
+        if   hostility >= 0.65 and civ < 0.45: label = "DirectBlunt"
+        elif hostility >= 0.45:                label = "DirectCool"
+
+        _set_flag(gl, "AddressTone", f"AddressTone={label}")
+
+    _set_flag(gl, "AddressToneScore", f"AddressToneScore={addr_score:.2f}")
+
+    return {
+        "flags":         [getattr(f, "name", f) for f in gl],
+        "intensity_pct": intensity_pct,
+        "address_score": addr_score,
+    }
 EOF

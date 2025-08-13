@@ -1,4 +1,4 @@
-cat >app/services/addons/welcome_manager.py<< EOF
+cat >app/services/addons/welcome_manager.py<< 'EOF'
 #app/services/addons/welcome_manager.py
 
 from __future__ import annotations
@@ -9,10 +9,13 @@ import asyncio
 from aiogram.utils.markdown import hlink
 from redis.exceptions import RedisError
 
+from app.core.db import AsyncSessionLocal
+from app.core.models import User
+from app.core.memory import get_cached_gender, push_message, get_redis
 from app.clients.openai_client import _call_openai_with_retry
+from app.services.responder.prompt_builder import build_system_prompt
 from app.emo_engine import get_persona 
 from app.config import settings
-from app.core.memory import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -21,17 +24,18 @@ MAX_TEMPERATURE = 0.8
 MIN_TEMPERATURE = 0.6
 TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
-
+DEFAULT_MODS = {
+    "creativity_mod": 0.5, "sarcasm_mod": 0.0, "enthusiasm_mod": 0.5,
+    "confidence_mod": 0.5, "precision_mod": 0.5,
+    "fatigue_mod":   0.0, "stress_mod":    0.0,
+}
 
 async def can_greet(chat_id: int) -> bool:
     redis = get_redis()
     key = f"greet_times:{chat_id}"
     try:
-        if await redis.set(key, 1, ex=settings.GREETING_RATE_WINDOW_SECONDS, nx=True):
-            count = 1
-        else:
-            count = await redis.incr(key)
-        ttl = await redis.ttl(key)
+        count = await redis.incr(key)
+        await redis.expire(key, settings.GREETING_RATE_WINDOW_SECONDS, nx=True)
     except RedisError:
         logger.warning("can_greet: Redis error, allowing greeting for chat %s", chat_id)
         return True
@@ -57,35 +61,36 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
         f"tg://user?id={user.id}"
     )
     
-    persona = get_persona(chat_id)
+    persona = await get_persona(chat_id)
     try:
-        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5)
-    except asyncio.TimeoutError:
-        logger.warning("welcome_manager: persona restore timeout for chat %s", chat_id)
+        await persona._restored_evt.wait()
     except Exception:
-        logger.exception("welcome_manager: error waiting for persona restore for chat %s", chat_id)
+        logger.exception("welcome_manager: persona restore failed")
 
-    try:
-        mods = persona.style_modifiers()
-    except Exception:
-        logger.exception("welcome_manager: failed to compute style_modifiers for chat %s", chat_id)
-        mods = {
-            "creativity_mod": 1.0, "sarcasm_mod": 0.0, "enthusiasm_mod": 1.0,
-            "confidence_mod": 1.0, "precision_mod": 1.0, "fatigue_mod": 0.0, "stress_mod": 0.0,
-        }
-    persona._mods_cache = mods
+    orig_gender = getattr(persona, "user_gender", None)
+
+    gender = None
+    async with AsyncSessionLocal() as db:
+        u = await db.get(User, user.id)
+        if u and u.gender in ("male", "female"):
+            gender = u.gender
+    if gender is None:
+        gender = await get_cached_gender(user.id)
+    if gender in ("male", "female"):
+        persona.user_gender = gender
+    else:
+        persona.user_gender = "unknown"
+
+    style_mods = await persona.style_modifiers() or {}
+    mods = {
+        k: (style_mods.get(k) if style_mods.get(k) is not None else v)
+        for k, v in DEFAULT_MODS.items()
+    }
     guidelines = await persona.style_guidelines(user.id)
-
-    mods = persona._mods_cache
     language = getattr(user, "language_code", None) or settings.DEFAULT_LANG
 
-    system_msg = {
-        "role": "system",
-        "content": (
-            persona.to_prompt(guidelines)
-            + f"\nReply in the user's language ({language})."
-        ),
-    }
+    system_msg = await build_system_prompt(persona, guidelines)
+    system_msg["content"] += f"\nUser's language:{language}."
 
     novelty = (
         0.4 * mods["creativity_mod"]
@@ -103,21 +108,24 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
     dynamic_temperature = min(MAX_TEMPERATURE, max(MIN_TEMPERATURE, dynamic_temperature))
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
-    ctx_len = random.choice(range(10, 30, 5))
+    ctx_len = random.choice(range(5, 25, 2))
     max_tokens = 50
 
     if text:
         prompt = (
-            f"A new member {mention} just joined the chat and wrote: {text}. "
-            f"Write a punchy, creative welcome message on your own behalf of up to {ctx_len} tokens in length."
+            f"A new member just joined the chat and wrote: {text}. "
+            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length. "
+            "Do NOT include user's mention in your reply."
         )
         asyncio.create_task(persona.process_interaction(user.id, text))
     else:
         prompt = (
-            f"A new member {mention} just joined the chat. "
-            f"Write a punchy, creative welcome message on your own behalf of up to {ctx_len} tokens in length."
+            "A new member just joined the chat. "
+            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length. "
+            "Do NOT include user's mention in your reply."
         )
 
+    generated: str | None = None
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
@@ -125,26 +133,33 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
                 messages=[system_msg, {"role": "user", "content": prompt}],
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,
-                max_tokens=max_tokens,
+                max_completion_tokens=max_tokens,
+                frequency_penalty=0.4,
+                presence_penalty=0.25,
             ),
-            timeout=30.0,
+            timeout=60.0,
         )
-        generated = resp.choices[0].message.content.strip()
-        if generated:
-            return generated
+        generated = (resp.choices[0].message.content or "").strip()
+        
+        if generated and generated.strip():
+            generated = f"{mention} {generated.strip()}"
 
+            try:
+                await push_message(chat_id, "assistant", generated, user_id=user.id)
+            except Exception:
+                logger.warning("welcome_manager: push_message failed for chat %s", chat_id)
     except asyncio.TimeoutError:
         logger.warning("welcome_manager: OpenAI timeout for chat %s user %s", chat_id, user.id)
         try:
             redis = get_redis()
             metric_key = f"metrics:welcome:openai_timeout:{chat_id}"
-            count = await redis.incr(metric_key)
-            if count == 1:
+            if await redis.incr(metric_key) == 1:
                 await redis.expire(metric_key, 86_400)
         except RedisError:
-            logger.warning("welcome_manager: failed to record timeout metric for chat %s user %s",chat_id, user.id)
+            pass
     except Exception:
-        logger.exception(
-            "welcome_manager: OpenAI call failed for chat %s user %s", chat_id, user.id,)
-    return f"Welcome {mention}!"
+        logger.exception("welcome_manager: OpenAI call failed for chat %s user %s", chat_id, user.id)
+
+    persona.user_gender = orig_gender
+    return generated or f"Hello {mention}!"
 EOF

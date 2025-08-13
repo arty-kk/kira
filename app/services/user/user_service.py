@@ -1,4 +1,4 @@
-cat >app/services/user/user_service.py<< EOF
+cat >app/services/user/user_service.py<< 'EOF'
 # app/services/user/user_service.py
 from __future__ import annotations
 

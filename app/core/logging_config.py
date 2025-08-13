@@ -1,10 +1,14 @@
-cat >app/core/logging_config.py<< EOF
+cat >app/core/logging_config.py<< 'EOF'
 #app/core/logging_config.py
 import logging
 
 from logging.config import dictConfig
 
 def setup_logging() -> None:
+    
+    for h in logging.root.handlers[:]:
+        logging.root.removeHandler(h)
+
     dictConfig({
         "version": 1,
         "disable_existing_loggers": False,
@@ -24,21 +28,23 @@ def setup_logging() -> None:
         "loggers": {
             "": {
                 "handlers": ["console"],
-                "level": "DEBUG",
-                "propagate": True
+                "level": "INFO",
+                "propagate": False
             },
             "app": {
                 "handlers": ["console"],
-                "level": "DEBUG",
-                "propagate": True
+                "level": "INFO",
+                "propagate": False
             },
             "sqlalchemy.engine": {
                 "handlers": ["console"],
-                "level": "ERROR"
+                "level": "INFO",
+                "propagate": False
             },
             "aiohttp.server": {
                 "handlers": ["console"],
-                "level": "ERROR"
+                "level": "INFO",
+                "propagate": False
             }
         }
     }

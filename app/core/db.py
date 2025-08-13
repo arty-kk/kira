@@ -1,4 +1,4 @@
-cat >app/core/db.py<< EOF
+cat >app/core/db.py<< 'EOF'
 #app/core/db.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base

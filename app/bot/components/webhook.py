@@ -1,4 +1,4 @@
-cat > app/bot/components/webhook.py << EOF
+cat > app/bot/components/webhook.py << 'EOF'
 # app/bot/components/webhook.py
 import ssl
 import asyncio
@@ -13,6 +13,7 @@ from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramBadRequest
 
 from app.config import settings
+from app.core.memory import get_redis
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 import app.bot.components.constants as consts
@@ -28,6 +29,9 @@ bot = get_bot()
 
 async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
+
+    consts.redis_client = get_redis()
+    redis_client = consts.redis_client
 
     me = await bot.get_me()
     consts.BOT_ID = me.id
@@ -81,20 +85,27 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
 
     async def handle_webhook(request: web.Request) -> web.Response:
+
+        data = await request.json()
+        update_id = data.get("update_id")
+
+        response = web.Response(status=200)
+
         try:
-            data = await request.json()
-            logger.info("Incoming update: %s", data)
-            update = types.Update(**data)
-            await dp.feed_update(bot, update)
-            return web.Response(status=200)
-        except Exception as e:
-            logger.exception("Exception in handle_webhook", exc_info=e)
-            try:
-                if redis_client:
-                    await redis_client.lpush("dead_updates", json.dumps(data))
-            except Exception:
-                logger.exception("Failed to push update to dead letter queue")
-            return web.Response(status=500, text="")
+            key = f"tg:update:{update_id}"
+            seen = await redis_client.get(key)
+            if not seen:
+                await redis_client.set(key, "1", ex=60)
+                logger.info("Incoming update: %s", data)
+
+                upd = types.Update(**data)
+                asyncio.create_task(dp.feed_update(bot, upd))
+            else:
+                logger.debug("Duplicate update %s skipped", update_id)
+        except Exception:
+            logger.exception("Error scheduling update handling")
+
+        return response
 
     class IgnoreBadHttpMessage(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:

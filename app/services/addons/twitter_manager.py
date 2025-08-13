@@ -1,4 +1,4 @@
-cat >app/services/addons/twitter_manager.py<< EOF
+cat >app/services/addons/twitter_manager.py<< 'EOF'
 #app/services/addons/twitter_manager.py
 import random
 import asyncio
@@ -13,13 +13,14 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 TWEET_TYPES = [
-    "a quick personal story",
+    #"a quick personal story",
     "a bold forecast",
-    "a thought-provoking question",
+    #"a thought-provoking question",
     "a brief market observation",
-    "a clever crypto joke",
+    "a crypto joke",
+    "a crypto meme",
     "a day’s affirmation",
-    "an unexpected data point",
+    #"an unexpected data point",
     "a concise tip",
     "a reflective insight",
     "a motivational line",
@@ -31,37 +32,37 @@ MIN_TEMPERATURE = 0.6
 TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
 
+DEFAULT_MODS = {
+    "creativity_mod": 0.5, "sarcasm_mod": 0.0, "enthusiasm_mod": 0.5,
+    "confidence_mod": 0.5, "precision_mod": 0.5,
+    "fatigue_mod":   0.0, "stress_mod":    0.0,
+}
+
 async def generate_and_post_tweet() -> None:
-    persona = get_persona(settings.TWITTER_PERSONA_CHAT_ID)
+    persona = await get_persona(settings.TWITTER_PERSONA_CHAT_ID)
     try:
-        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
+        await persona._restored_evt.wait()
     except Exception:
         logger.exception("twitter_manager: persona restore failed")
+        
     try:
-        history = await load_context(settings.TWITTER_PERSONA_CHAT_ID)
+        history = await load_context(
+            settings.TWITTER_PERSONA_CHAT_ID,
+            settings.TWITTER_PERSONA_CHAT_ID,
+        )
     except Exception:
         logger.exception("twitter_manager: load_context failed")
         history = []
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
-    try:
-        guidelines = persona.style_guidelines()
-    except Exception:
-        logger.exception("twitter_manager: style_guidelines failed")
-        guidelines = []
-    try:
-        mods = persona.style_modifiers()
-    except Exception:
-        logger.exception("twitter_manager: style_modifiers failed")
-        mods = {
-            "creativity_mod": 1.0,
-            "sarcasm_mod": 0.0,
-            "enthusiasm_mod": 1.0,
-            "confidence_mod": 1.0,
-            "precision_mod": 1.0,
-            "fatigue_mod": 0.0,
-            "stress_mod": 0.0,
-        }
+
+    style_mods = await persona.style_modifiers() or {}
+    mods = {
+        k: (style_mods.get(k) if style_mods.get(k) is not None else v)
+        for k, v in DEFAULT_MODS.items()
+    }
+    guidelines = await persona.style_guidelines(settings.TWITTER_PERSONA_CHAT_ID)
+    
     novelty = 0.4 * mods.get("creativity_mod", 0.5) + 0.4 * mods.get("sarcasm_mod", 0.5) + 0.2 * mods.get("enthusiasm_mod", 0.5)
     coherence = (
         0.5 * mods.get("confidence_mod", 0.5)
@@ -75,8 +76,9 @@ async def generate_and_post_tweet() -> None:
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
     news_prompt = (
-        "Provide a concise 10 bullet summary of today's top events in the crypto industry, "
-        "each bullet 1–2 sentences. No commentary, only the bullet summary."
+        "Provide a concise 10-bullet summary of today's top crypto price movements and related industry events, "
+        "each bullet up to 3 sentences. "
+        "No commentary, only the bullet summary."
     )
     try:
         news_resp = await asyncio.wait_for(
@@ -86,13 +88,16 @@ async def generate_and_post_tweet() -> None:
                     {"role": "system", "content": "You are a professional crypto journalist."},
                     {"role": "user", "content": news_prompt},
                 ],
-                temperature=0.5,
-                top_p=0.9,
-                max_tokens=300,
+                max_completion_tokens=500,
+                temperature=0.0,
             ),
-            timeout=30.0,
+            timeout=120.0,
         )
-        news_snippet = news_resp.choices[0].message.content.strip()
+        news_snippet = (
+            news_resp.choices[0].message.content.strip()
+            if getattr(news_resp, "choices", None)
+            else ""
+        )
     except asyncio.TimeoutError:
         logger.warning("twitter_manager: news digest timed out")
         news_snippet = ""
@@ -101,7 +106,7 @@ async def generate_and_post_tweet() -> None:
         news_snippet = ""
     tweet_type = random.choice(TWEET_TYPES)
     try:
-        prompt_base = persona.to_prompt(guidelines)
+        prompt_base = await persona.to_prompt(guidelines)
     except Exception:
         logger.exception("twitter_manager: to_prompt failed")
         prompt_base = ""
@@ -115,15 +120,13 @@ async def generate_and_post_tweet() -> None:
     }
     user_prompt = (
         f"News digest:\n{news_snippet}\n\n"
-        f"Write one '{tweet_type}' tweet that engages your followers:\n"
-        "- Keep it under 250 characters\n"
-        "- Weave in up to 3 high-impact hashtags\n"
-        "- Write in a natural, first-person style with your own style\n"
+        f"Write one '{tweet_type}' tweet that engages twitter users:\n"
         "- Transform the summary into a fresh, punchy insight\n"
-        "- Address the audience directly, inspiring excitement\n"
-        "- Never mention bots, AI, or automation\n"
+        "- Weave in some high-impact and trending hashtags + #crypto\n"
+        "- Write in a natural, first-person style\n"
         "- Do not include explanations or commentary—only the tweet text.\n"
-        "Your goal: make readers stop scrolling and react instantly."
+        "- Keep it under 250 characters\n"
+        "Your goal: make readers stop scrolling and react instantly to your tweet."
     )
     messages = history + [system_msg, {"role": "user", "content": user_prompt}]
 
@@ -135,11 +138,15 @@ async def generate_and_post_tweet() -> None:
                 messages=messages,
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,
-                max_tokens=120,
+                max_completion_tokens=120,
             ),
-            timeout=30.0,
+            timeout=60.0,
         )
-        tweet = resp.choices[0].message.content.strip()
+        tweet = (
+            resp.choices[0].message.content.strip()
+            if getattr(resp, "choices", None)
+            else ""
+        )
     except asyncio.TimeoutError:
         logger.warning("twitter_manager: tweet generation timed out")
     except Exception:
@@ -159,9 +166,15 @@ async def generate_and_post_tweet() -> None:
         return
 
     try:
-        create = asyncio.create_task
-        create(persona.process_interaction(None, tweet))
-        create(push_message(settings.TWITTER_PERSONA_CHAT_ID, "assistant", tweet))
+        await asyncio.gather(
+            persona.process_interaction(settings.TWITTER_PERSONA_CHAT_ID, tweet),
+            push_message(
+                settings.TWITTER_PERSONA_CHAT_ID,
+                "assistant",
+                tweet,
+                user_id=settings.TWITTER_PERSONA_CHAT_ID,
+            ),
+        )
     except Exception:
         logger.exception("twitter_manager: saving to memory failed")
 EOF

@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/utils/trigger_patterns.py<< EOF
+cat >app/emo_engine/persona/utils/trigger_patterns.py<< 'EOF'
 #app/emo_engine/persona/utils/trigger_patterns.py
 import re
 

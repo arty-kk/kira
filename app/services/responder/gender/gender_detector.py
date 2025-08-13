@@ -1,4 +1,4 @@
-cat >app/services/responder/gender/gender_detector.py<< EOF
+cat >app/services/responder/gender/gender_detector.py<< 'EOF'
 #app/services/responder/gender/gender_detector.py
 import asyncio
 import logging
@@ -66,7 +66,7 @@ async def _ask_gpt(prompt: str, *, timeout: float) -> str | None:
                 model=settings.BASE_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=3,
+                max_completion_tokens=3,
             ),
             timeout=timeout,
         )

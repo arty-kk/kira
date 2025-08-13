@@ -1,9 +1,10 @@
-cat >app/services/responder/rag/knowledge_proc.py<< EOF
+cat >app/services/responder/rag/knowledge_proc.py<< 'EOF'
 #app/services/responder/rag/knowledge_proc.py
 from __future__ import annotations
 
 import json
 import logging
+import functools
 import numpy as np
 import asyncio
 
@@ -12,10 +13,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
 from app.clients.openai_client import get_openai
+from asyncio import get_running_loop
 
 logger = logging.getLogger(__name__)
 
+
 _KB_ENTRIES: Dict[str, List[Dict[str, Any]]] = {}
+_kb_init_lock = asyncio.Lock()
+
 
 BASE_DIR = Path(__file__).resolve().parents[4]
 EMBED_DIR = BASE_DIR / "data" / "embeddings"
@@ -49,13 +54,15 @@ def _load_precomputed(model: str) -> List[Dict[str, Any]]:
 
 async def _init_kb(model_name: Optional[str] = None) -> List[Dict[str, Any]]:
     model = model_name or settings.EMBEDDING_MODEL
-    if model in _KB_ENTRIES:
-        return _KB_ENTRIES[model]
-    entries = await asyncio.to_thread(_load_precomputed, model)
-    if entries:
-        _KB_ENTRIES["_MEAN_"] = np.mean([e["emb"] for e in entries], axis=0)
-    _KB_ENTRIES[model] = entries
-    return entries
+    async with _kb_init_lock:
+        if model in _KB_ENTRIES:
+            return _KB_ENTRIES[model]
+        entries = await asyncio.to_thread(_load_precomputed, model)
+        if entries:
+            mean_key = f"{model}__MEAN__"
+            _KB_ENTRIES[mean_key] = np.mean([e["emb"] for e in entries], axis=0)
+        _KB_ENTRIES[model] = entries
+        return entries
 
 
 def _normalize(vec: np.ndarray) -> np.ndarray:
@@ -76,7 +83,8 @@ async def get_relevant(
     if not entries:
         return []
 
-    mean_vec = _KB_ENTRIES.get("_MEAN_", 0)
+    mean_key = f"{file_model}__MEAN__"
+    mean_vec = _KB_ENTRIES.get(mean_key, 0)
 
     try:
         client = get_openai()
@@ -91,35 +99,57 @@ async def get_relevant(
         logger.exception("Embedding query failed for model %s", file_model)
         return []
 
-    sims_raw: list[tuple[float, str, str, np.ndarray]] = []
-    for entry in entries:
-        emb = _normalize(entry["emb"] - mean_vec)
-        score = float(np.dot(qemb, emb))
-        sims_raw.append((score, entry["id"], entry["text"], emb))
+    def _compute_mmr(
+        entries: List[Dict[str, Any]],
+        mean_vec: np.ndarray,
+        qemb: np.ndarray,
+        top_k: int,
+        λ: float
+    ) -> List[Tuple[float, str, str]]:
 
-    sims_raw.sort(key=lambda x: x[0], reverse=True)
+        sims: List[Tuple[float, str, str, np.ndarray]] = []
+        for entry in entries:
+            emb = entry["emb"]
+            diff = emb - mean_vec
+            emb_norm = diff / (np.linalg.norm(diff) or 1.0)
+            score = float(np.dot(qemb, emb_norm))
+            sims.append((score, entry["id"], entry["text"], emb_norm))
 
-    mmr_k = settings.KNOWLEDGE_TOP_K
-    λ = 0.20
-    picked: list[tuple[float, str, str]] = []
-    chosen_vecs: list[np.ndarray] = []
+        sims.sort(key=lambda x: x[0], reverse=True)
 
-    while sims_raw and len(picked) < mmr_k:
-        if not picked:
-            first = sims_raw.pop(0)
-            picked.append(first[:3])
-            chosen_vecs.append(first[3])
-            continue
+        picked: List[Tuple[float, str, str]] = []
+        chosen_vecs: List[np.ndarray] = []
+        while sims and len(picked) < top_k:
+            if not picked:
+                first = sims.pop(0)
+                picked.append(first[:3])
+                chosen_vecs.append(first[3])
+                continue
 
-        def mmr_score(c):
-            sim_q = c[0]
-            sim_r = max(float(np.dot(c[3], v)) for v in chosen_vecs)
-            return λ * sim_q - (1 - λ) * sim_r
+            def mmr_score(c: Tuple[float, str, str, np.ndarray]) -> float:
+                sim_q = c[0]
+                sim_r = max(float(np.dot(c[3], v)) for v in chosen_vecs)
+                return λ * sim_q - (1 - λ) * sim_r
 
-        sims_raw.sort(key=mmr_score, reverse=True)
-        best = sims_raw.pop(0)
-        picked.append(best[:3])
-        chosen_vecs.append(best[3])
+            sims.sort(key=mmr_score, reverse=True)
+            best = sims.pop(0)
+            picked.append(best[:3])
+            chosen_vecs.append(best[3])
 
+        return picked
+
+
+    loop = get_running_loop()
+    picked = await loop.run_in_executor(
+        None,
+        functools.partial(
+            _compute_mmr,
+            entries,
+            mean_vec,
+            qemb,
+            settings.KNOWLEDGE_TOP_K,
+            0.20,
+        )
+    )
     return picked
 EOF

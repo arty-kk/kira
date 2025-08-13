@@ -1,4 +1,4 @@
-cat >app/clients/telegram_client.py<< EOF
+cat >app/clients/telegram_client.py<< 'EOF'
 #app/clients/telegram_client.py
 from aiogram import Bot
 from aiogram.client.bot import DefaultBotProperties

@@ -1,4 +1,4 @@
-cat > app/core/memory.py << EOF
+cat > app/core/memory.py << 'EOF'
 #app/core/memory.py
 from __future__ import annotations
 
@@ -32,13 +32,15 @@ class SafeRedis:
             for n in range(self._attempts):
                 try:
                     return await orig(*args, **kwargs)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     if n == self._attempts - 1:
                         logger.exception(
                             "Redis cmd %s failed after %d attempts: %s",
                             name, self._attempts, exc,
                         )
-                        return None
+                        raise
                     logger.warning(
                         "Redis cmd %s failed (try %d/%d): %s",
                         name, n + 1, self._attempts, exc,
@@ -67,7 +69,7 @@ class SafeRedis:
                                 "Redis pipeline failed after %d attempts: %s",
                                 self._attempts, exc,
                             )
-                            return None
+                            raise
                         logger.warning(
                             "Redis pipeline failed (try %d/%d): %s",
                             n + 1, self._attempts, exc,
@@ -121,154 +123,180 @@ async def close_redis_pools() -> None:
         raw: Redis = getattr(client, "_client", client)
         try:
             await raw.close()
-            raw.connection_pool.disconnect()
+            raw.connection_pool.disconnect(inuse_connections=True)
         except Exception as exc:
             logger.warning("Failed to close Redis pool: %s", exc)
+        except RuntimeError:
+            pass
+
+
+def _k_g_msgs(chat_id: int, user_id: int) -> str:
+    return f"mem:g:{chat_id}:u:{user_id}:msgs"
+
+
+def _k_g_sum(chat_id: int) -> str:
+    return f"mem:g:{chat_id}:summary"
+
+
+def _k_g_sum_u(chat_id: int, user_id: int) -> str:
+    return f"mem:g:{chat_id}:u:{user_id}:summary"
+
+
+def _k_p_msgs(user_id: int) -> str:
+    return f"mem:p:{user_id}:msgs"
+
+
+def _k_p_sum(user_id: int) -> str:
+    return f"mem:p:{user_id}:summary"
+
+def _key_user_last_ts(chat_id: int) -> str:
+    return f"user_last_ts:{chat_id}"
+
+
+def _key_last_message_ts(chat_id: int) -> str:
+    return f"last_message_ts:{chat_id}"
 
 
 SHORT_LIMIT: int = settings.SHORT_MEMORY_LIMIT
 MEMORY_TTL: int = settings.MEMORY_TTL_DAYS * 86_400
 
-def _key_msgs(chat_id: int) -> str:
-    return f"mem:msgs:{chat_id}"
-
-def _key_summary(chat_id: int) -> str:
-    return f"mem:summary:{chat_id}"
-
-def _key_user_last_ts(chat_id: int) -> str:
-    return f"user_last_ts:{chat_id}"
-
-def _key_last_message_ts(chat_id: int) -> str:
-    return f"last_message_ts:{chat_id}"
 
 async def is_spam(chat_id: int, user_id: int) -> bool:
     window = settings.SPAM_WINDOW
     limit = settings.SPAM_LIMIT
-    now = time_module.time()
     key = f"spam:{chat_id}"
-    member = str(user_id)
-
     redis = get_redis()
+
     try:
-        async with redis.pipeline() as pipe:
-            pipe.zincrby(key, 1, member)
-            pipe.zscore(key, member)
-            pipe.expire(key, window)
-            _, count, _ = await pipe.execute()
+        count = await redis.hincrby(key, str(user_id), 1)
+        if count == 1:
+            await redis.expire(key, window + 2)
     except Exception:
         logger.exception("is_spam error for chat %s", chat_id)
         return False
 
-    return int(count or 0) > limit
+    return count > limit
+
 
 async def push_message(
     chat_id: int,
     role: str,
     content: str,
-    user_id: Optional[int] = None,
+    *,
+    user_id: int,
 ) -> None:
-    key = _key_msgs(chat_id)
-    entry: Dict[str, Any] = {"role": role, "content": content}
-    if user_id is not None:
-        entry["user_id"] = user_id
-    data = json.dumps(entry)
+
+    is_private = chat_id == user_id
+    key_log = _k_p_msgs(user_id) if is_private else _k_g_msgs(chat_id, user_id)
+
+    entry: Dict[str, Any] = {
+        "role": role,
+        "content": content,
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "ts": time_module.time(),
+    }
 
     redis = get_redis()
     try:
-        pipe = redis.pipeline()
-        pipe.rpush(key, data)
-        pipe.ltrim(key, -SHORT_LIMIT, -1)
-        pipe.expire(key, MEMORY_TTL)
-        pipe.llen(key)
-        result = await pipe.execute()
-        if result is None:
-            return
-        length = result[-1]
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.rpush(key_log, json.dumps(entry, ensure_ascii=False))
+            pipe.expire(key_log, MEMORY_TTL)
+            pipe.llen(key_log)
+            _, _, length = await pipe.execute()
     except Exception:
         logger.exception("push_message error for chat %s", chat_id)
         return
 
-    logger.debug("push_message: chat=%s length=%d", chat_id, length)
-
     if length >= SHORT_LIMIT:
+        flag = f"{key_log}:_summary_pending"
         try:
-            from app.tasks.celery_app import celery
-            celery.send_task("summarize_old", args=[chat_id, length])
+            if await redis.setnx(flag, 1):
+                await redis.expire(flag, settings.SHORT_MEMORY_LIMIT * 2)
+                from app.tasks.celery_app import celery
+                if is_private:
+                    celery.send_task("summarize_private_old", args=[user_id, length])
+                else:
+                    celery.send_task("summarize_group_old", args=[chat_id, user_id, length])
         except Exception:
-            logger.exception("Failed to enqueue summarize_old task")
+            logger.exception("Failed to enqueue summarize task or set guard flag")
 
-async def load_context(chat_id: int) -> List[Dict[str, Any]]:
-    key_msgs = _key_msgs(chat_id)
-    key_sum = _key_summary(chat_id)
+async def load_context(
+    chat_id: int,
+    user_id: int,
+) -> List[Dict[str, Any]]:
+
+    is_private = chat_id == user_id
     redis = get_redis()
 
-    try:
-        async with redis.pipeline() as pipe:
-            pipe.get(key_sum)
-            pipe.lrange(key_msgs, -SHORT_LIMIT, -1)
-            res = await pipe.execute()
-            if res is None:
-                return []
-            summary, raw = res
-    except Exception:
-        logger.exception("load_context error for chat %s", chat_id)
-        return []
+    if is_private:
+        key_sum = _k_p_sum(user_id)
+        key_log = _k_p_msgs(user_id)
+    else:
+        key_sum = _k_g_sum_u(chat_id, user_id)
+        key_log = _k_g_msgs(chat_id, user_id)
 
-    logger.debug("load_context: chat=%s summary_present=%s messages=%d", 
-                 chat_id, bool(summary), len(raw or []))
+    try:
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.get(key_sum)
+            pipe.lrange(key_log, -SHORT_LIMIT, -1)
+            summary, rows = await pipe.execute()
+    except Exception:
+        logger.exception("load_context error chat=%s user=%s", chat_id, user_id)
+        return []
 
     ctx: List[Dict[str, Any]] = []
     if summary:
         ctx.append({"role": "system", "content": f"Summary: {summary}"})
-    for item in raw or []:
+
+    for r in rows or []:
         try:
-            ctx.append(json.loads(item))
-        except (json.JSONDecodeError, TypeError):
-            logger.warning("Bad JSON in memory for chat %s: %s", chat_id, item)
+            ctx.append(json.loads(r))
+        except json.JSONDecodeError:
+            logger.warning("Bad JSON in memory chat=%s: %s", chat_id, r)
+
     return ctx
 
+
 async def inc_msg_count(chat_id: int) -> None:
-    key = f"msg_count:{chat_id}"
     redis = get_redis()
     try:
-        async with redis.pipeline() as pipe:
-            pipe.incr(key)
-            pipe.expire(key, 86_400)
-            if await pipe.execute() is None:
-                return
+        await redis.incr(f"msg_count:{chat_id}")
+        await redis.expire(f"msg_count:{chat_id}", 86_400)
     except Exception:
-        logger.exception("inc_msg_count error for chat %s", chat_id)
+        logger.exception("inc_msg_count error chat=%s", chat_id)
+
 
 async def record_activity(chat_id: int, user_id: int) -> None:
-    now = time_module.time()
     redis = get_redis()
+    now = time_module.time()
     try:
-        async with redis.pipeline() as pipe:
+        async with redis.pipeline(transaction=True) as pipe:
             pipe.sadd(f"all_users:{chat_id}", user_id)
             pipe.expire(f"all_users:{chat_id}", MEMORY_TTL)
-            pipe.zadd(_key_user_last_ts(chat_id), {user_id: now})
-            pipe.expire(_key_user_last_ts(chat_id), MEMORY_TTL)
-            pipe.set(_key_last_message_ts(chat_id), now)
-            pipe.expire(_key_last_message_ts(chat_id), MEMORY_TTL)
-            if await pipe.execute() is None:
-                return
+            pipe.zadd(f"user_last_ts:{chat_id}", {user_id: now})
+            pipe.expire(f"user_last_ts:{chat_id}", MEMORY_TTL)
+            pipe.set(f"last_message_ts:{chat_id}", now)
+            pipe.expire(f"last_message_ts:{chat_id}", MEMORY_TTL)
+            await pipe.execute()
     except Exception:
-        logger.exception("record_activity error for chat %s, user %s", chat_id, user_id)
+        logger.exception("record_activity error chat=%s user=%s", chat_id, user_id)
 
 
-_GENDER_KEY = lambda user_id: f"user_gender:{user_id}"
+async def get_cached_gender(user_id: int) -> Optional[str]:
+    redis = get_redis()
+    raw = await redis.hgetall(f"user_gender_counts:{user_id}") or {}
+    counts = {g: int(c) for g, c in raw.items() if g in ("male", "female")}
+    return max(counts, key=counts.get) if counts else None
 
-async def get_cached_gender(user_id: int) -> str | None:
-
-    raw = await get_redis().get(_GENDER_KEY(user_id))
-    return raw if isinstance(raw, str) else (raw.decode() if raw else None)
 
 async def cache_gender(user_id: int, value: str) -> None:
-
+    if value not in ("male", "female", "unknown"):
+        return
     redis = get_redis()
-
-    if value in ("male", "female"):
-        await redis.set(_GENDER_KEY(user_id), value)
-    else:
-        await redis.set(_GENDER_KEY(user_id), "unknown", ex=86_400)
+    try:
+        await redis.hincrby(f"user_gender_counts:{user_id}", value, 1)
+        await redis.expire(f"user_gender_counts:{user_id}", MEMORY_TTL)
+    except Exception:
+        logger.exception("cache_gender failed user=%s", user_id)
 EOF

@@ -1,3 +1,3 @@
-cat >app/services/__init__.py<< EOF
+cat >app/services/__init__.py<< 'EOF'
 #app/services/__init__.py
 EOF

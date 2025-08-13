@@ -1,4 +1,4 @@
-cat >app/services/responder/coref/needs_coref.py<< EOF
+cat >app/services/responder/coref/needs_coref.py<< 'EOF'
 #app/services/responder/coref/needs_coref.py
 import logging
 import asyncio
@@ -15,10 +15,9 @@ _COREF_PROMPT = """You are a classifier that decides whether a user message cont
 
 Rules:
 - Return exactly one uppercase word: YES or NO (no punctuation, quotes, extra text, or newlines).
-- Consider only pronouns for third-person entities (he, she, it, they, this, that, these, those, etc.) in any language.
-- Ignore all second-person pronouns referring to the assistant (you, your, твой, 您, etc.).
-- Ignore all first-person pronouns (I, we, us, мне, 我们, etc.).
-- If any sentence in the text contains a pronoun that refers to a non-assistant entity, return YES.
+- Consider only pronouns that refer to entities not related to the assistant and/or user.
+- Ignore any pronoun (first‑ or second‑person) whose antecedent is related to the assistant and/or user (I, me, we, us, you, your, твой, 您, etc.).
+- If any sentence in the text contains a pronoun that refers to some third‑party entity, return YES.
 - Otherwise, return NO.
 
 Examples:
@@ -43,7 +42,7 @@ async def needs_coref(text: str) -> bool:
                 model=settings.BASE_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=5,
+                max_completion_tokens=5,
             ),
             timeout=_COREF_TIMEOUT,
         )

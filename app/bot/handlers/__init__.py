@@ -1,4 +1,4 @@
-cat >app/bot/handlers/__init__.py << EOF
+cat >app/bot/handlers/__init__.py << 'EOF'
 # app/bot/handlers/__init__.py
 from . import battle
 from . import group

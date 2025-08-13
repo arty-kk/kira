@@ -1,12 +1,27 @@
-cat >app/tasks/celery_app.py<< EOF
+cat >app/tasks/celery_app.py<< 'EOF'
 #app/tasks/celery_app.py
 from __future__ import annotations
 
 import os
+import asyncio
+import logging
 
 from celery import Celery
 
 from app.config import settings
+from app.services.responder.rag.knowledge_proc import _init_kb
+from app.core.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+from celery.signals import setup_logging as celery_setup_logging
+
+
+@celery_setup_logging.connect
+def _disable_celery_autologger(**_kwargs):
+    return None
+
 
 broker_url = os.getenv("CELERY_BROKER_URL")
 if not broker_url:
@@ -19,7 +34,9 @@ celery = Celery(
     "synchatica",
     broker=broker_url,
     backend=None,
-    include=["app.tasks.message"],
+    include=[
+        "app.tasks.summarize",
+    ],
 )
 
 
@@ -30,27 +47,24 @@ celery.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    task_reject_on_worker_lost=True,
     broker_transport_options={
         "visibility_timeout": 3600,
-        "socket_timeout": 10,
+        "socket_timeout": 60,
     },
-    task_acks_late=False,
+    task_acks_late=True,
     worker_pool_restarts=True,
     worker_prefetch_multiplier=1,
     worker_concurrency=settings.CELERY_CONCURRENCY,
+    worker_hijack_root_logger=False,
 )
 
 
 @celery.on_after_finalize.connect
-def _warm_up(_sender, **_kwargs) -> None:
-
-    import asyncio
-    from app.services.responder.rag.knowledge_proc import _init_kb
+def _warm_up(sender=None, **_kwargs) -> None:
 
     try:
         asyncio.run(_init_kb())
     except Exception:
         pass
-
-celery.autodiscover_tasks(["app"])
 EOF

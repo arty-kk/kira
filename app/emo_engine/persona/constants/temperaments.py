@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/constants/temperaments.py<< EOF
+cat >app/emo_engine/persona/constants/temperaments.py<< 'EOF'
 #app/emo_engine/persona/constants/temperaments.py
 from typing import Dict
 

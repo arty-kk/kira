@@ -1,18 +1,18 @@
-cat >app/services/addons/price_fetcher.py<< EOF
-#app/services/addons/price_fetcher.py
+cat > app/services/addons/price_fetcher.py << 'EOF'
+# app/services/addons/price_fetcher.py
 
 import asyncio
-import logging
 import json
-from datetime import datetime
+import logging
 from typing import List
 
 from app.clients.http_client import http_client
 
 logger = logging.getLogger(__name__)
 
-def format_price(price: float) -> str:
+SYMBOLS = ["BTCUSDT","ETHUSDT","SOLUSDT","ADAUSDT","XRPUSDT","NEARUSDT","TONUSDT"]
 
+def format_price(price: float) -> str:
     if price >= 1000:
         decimals = 2
     elif price >= 1:
@@ -22,45 +22,42 @@ def format_price(price: float) -> str:
     return f"{price:,.{decimals}f}"
 
 async def price_fetcher() -> List[str]:
-    stats_url = "https://api.binance.com/api/v3/ticker/24hr"
-    price_url = "https://api.binance.com/api/v3/ticker/price"
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "XRPUSDT", "NEARUSDT", "TONUSDT"]
-    params = {"symbols": json.dumps(symbols, separators=(",", ":"))}
 
-    stats_task = http_client.get_json(stats_url, params=params)
-    prices_task = http_client.get_json(price_url, params=params)
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    params = {"symbols": json.dumps(SYMBOLS, separators=(",", ":"))}
 
     try:
-        stats_data, price_data = await asyncio.gather(stats_task, prices_task)
+        data = await asyncio.wait_for(
+            http_client.get_json(url, params=params),
+            timeout=8
+        )
     except Exception:
-        logger.exception("Error fetching crypto data")
+        logger.exception("price_fetcher: request failed")
         return ["💹 Crypto Market 💹\n_____________________________\n<i>Failed to fetch data.</i>"]
 
-    if not isinstance(stats_data, list) or not isinstance(price_data, list):
-        logger.warning("Unexpected response format for symbols: %r", symbols)
+    if not isinstance(data, list):
+        logger.warning("price_fetcher: unexpected payload type: %r", type(data))
         return ["💹 Crypto Market 💹\n_____________________________\n<i>No data available.</i>"]
 
-    price_map = {item["symbol"]: float(item["price"]) for item in price_data}
+    by_symbol = {it.get("symbol"): it for it in data if isinstance(it, dict)}
 
-    lines: List[str] = [
-        "💹 Crypto Market 💹",
-        "_____________________________",
-    ]
-
-    for stat in stats_data:
-        symbol = stat.get("symbol")
-        if symbol not in price_map:
+    lines = ["💹 Crypto Market 💹", "_____________________________"]
+    for sym in SYMBOLS:
+        it = by_symbol.get(sym)
+        if not it:
             continue
+        try:
+            price = float(it.get("lastPrice"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            change_pct = float(it.get("priceChangePercent", 0.0))
+        except (TypeError, ValueError):
+            change_pct = 0.0
+        lines.append(f"{sym} - $ {format_price(price)} ({change_pct:+.2f}%)")
 
-        current_price = price_map[symbol]
-        change_percent = float(stat["priceChangePercent"])
+    if len(lines) <= 2:
+        return ["💹 Crypto Market 💹\n_____________________________\n<i>No data available.</i>"]
 
-        price_str = format_price(current_price)
-        change_str = f"{change_percent:+.2f}%"
-
-        lines.append(f"{symbol} - $ {price_str} ({change_str})")
-
-    message = "\n".join(lines)
-    logger.debug("Formatted crypto message:\n%s", message)
-    return [message]
+    return ["\n".join(lines)]
 EOF

@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/utils/lru_cache.py<< EOF
+cat >app/emo_engine/persona/utils/lru_cache.py<< 'EOF'
 #app/emo_engine/persona/utils/lru_cache.py
 from collections import OrderedDict
 

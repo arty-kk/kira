@@ -1,4 +1,4 @@
-cat >app/services/addons/group_battle.py<< EOF
+cat >app/services/addons/group_battle.py<< 'EOF'
 #app/services/addons/group_battle.py
 from __future__ import annotations
 
@@ -10,12 +10,14 @@ import time as _time
 
 from datetime import datetime, timedelta, timezone
 from typing import Coroutine, Any
+from html import escape
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 
 from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.memory import get_redis
+from redis.asyncio.lock import LockError
 
 logger = logging.getLogger(__name__)
 
@@ -49,33 +51,12 @@ async def launch_battle(p1_id: str, p2_id: str) -> None:
 
         m1 = await bot.get_chat_member(CHAT_ID, int(p1_id))
         m2 = await bot.get_chat_member(CHAT_ID, int(p2_id))
-        p1_name = m1.user.username or m1.user.full_name
-        p2_name = m2.user.username or m2.user.full_name
+        p1_name = escape(m1.user.username or m1.user.full_name or str(p1_id))
+        p2_name = escape(m2.user.username or m2.user.full_name or str(p2_id))
 
         gid = str(uuid.uuid4())
         key = f"game:{gid}"
         started_ts = datetime.now(timezone.utc).isoformat()
-
-        await redis.hset(
-            key,
-            mapping={
-                "state": "CREATED",
-                "ts": started_ts,
-                "player1_id": p1_id,
-                "player2_id": p2_id,
-                "player1_name": p1_name,
-                "player2_name": p2_name,
-                "choice1": "",
-                "choice2": "",
-            },
-        )
-
-        ttl_start = int((T_START + SAFETY).total_seconds())
-        await redis.set(f"active_game:{CHAT_ID}", gid, ex=ttl_start)
-        await redis.expire(key, ttl_start)
-
-        create_task_safe(_battle_start_timeout(gid))
-
         text = (
             f"⚔️ <b>Battle Time!</b> ⚔️\n"
             f"<a href='tg://user?id={p1_id}'>{p1_name}</a> vs "
@@ -83,11 +64,28 @@ async def launch_battle(p1_id: str, p2_id: str) -> None:
             "Press <b>Start Battle!</b> to accept."
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="▶️ Start Battle!", callback_data=f"battle_start:{gid}",),
+            InlineKeyboardButton(text="▶️ Start Battle!", callback_data=f"battle_start:{gid}"),
         ]])
         msg = await bot.send_message(CHAT_ID, text, parse_mode="HTML", reply_markup=kb)
-        await redis.hset(key, mapping={"msg_id": msg.message_id})
 
+        ttl_start = int((T_START + SAFETY).total_seconds())
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.hset(key, mapping={
+                "state":          "CREATED",
+                "ts":             started_ts,
+                "player1_id":     p1_id,
+                "player2_id":     p2_id,
+                "player1_name":   p1_name,
+                "player2_name":   p2_name,
+                "choice1":        "",
+                "choice2":        "",
+                "msg_id":         msg.message_id,
+            })
+            pipe.set(f"active_game:{CHAT_ID}", gid, ex=ttl_start)
+            pipe.expire(key, ttl_start)
+            await pipe.execute()
+
+        create_task_safe(_battle_start_timeout(gid))
         logger.info("New battle %s between %s and %s", gid, p1_name, p2_name)
     except Exception:
         logger.exception("Error in launch_battle")
@@ -99,7 +97,7 @@ async def start_battle_job() -> None:
         redis = get_redis()
 
         now = _time.time()
-        window = settings.ACTIVE_RECENT_SECONDS
+        window = settings.GROUP_PING_ACTIVE_RECENT_SECONDS
 
         opt_out = await redis.smembers("battle:opt_out")
         members = await redis.zrangebyscore(f"user_last_ts:{CHAT_ID}", now - window, now)
@@ -189,18 +187,22 @@ async def on_battle_start(query: CallbackQuery) -> None:
         ready1 = await redis.get(f"ready:{gid}:{game['player1_id']}")
         ready2 = await redis.get(f"ready:{gid}:{game['player2_id']}")
         if ready1 and ready2:
-            lock = redis.lock(f"lock:game_start:{gid}", timeout=5)
-            acquired = await lock.acquire(blocking=False)
+            lock = redis.lock(f"lock:game_start:{gid}", timeout=5, blocking_timeout=0)
+            acquired = await lock.acquire()
             if not acquired:
                 logger.debug("Battle %s: already started by another task", gid)
                 return
             try:
-                new_ts = datetime.now(timezone.utc).isoformat()
-                await redis.hset(key, mapping={"state": "STARTED", "ts": new_ts})
-
                 ttl_move = int((T_MOVE + SAFETY).total_seconds())
-                await redis.expire(key, ttl_move)
-                await redis.expire(f"active_game:{CHAT_ID}", ttl_move)
+                new_ts = datetime.now(timezone.utc).isoformat()
+                async with redis.pipeline(transaction=True) as pipe:
+                    pipe.hset(key, mapping={
+                        "state": "STARTED",
+                        "ts": new_ts,
+                    })
+                    pipe.expire(key, ttl_move)
+                    pipe.expire(f"active_game:{CHAT_ID}", ttl_move)
+                    await pipe.execute()
                 create_task_safe(_battle_move_timeout(gid))
 
                 updated = await redis.hgetall(key)
@@ -225,11 +227,15 @@ async def on_battle_start(query: CallbackQuery) -> None:
                 logger.info("Battle %s entered move phase", gid)
                 return
             finally:
-                pass
+                try:
+                    await lock.release()
+                except LockError:
+                    logger.warning("Game-start lock for %s was not held", gid)
 
-        uname = query.from_user.username or query.from_user.full_name or uid
+
+        uname = escape(query.from_user.username or query.from_user.full_name or uid)
         opp_id = game['player2_id'] if uid == game['player1_id'] else game['player1_id']
-        opp_name = game['player2_name'] if uid == game['player1_id'] else game['player1_name']
+        opp_name = escape(game['player2_name'] if uid == game['player1_id'] else game['player1_name'])
         await query.message.edit_text(
             f"✅ <a href='tg://user?id={uid}'>@{uname}</a> is ready!\n"
             f"▶️ <a href='tg://user?id={opp_id}'>{opp_name}</a>, press Start Battle to accept.",
@@ -262,19 +268,26 @@ async def on_battle_move(query: CallbackQuery) -> None:
 
         updated = await redis.hgetall(key)
         if updated.get("choice1") and updated.get("choice2"):
-            async with redis.lock(f"lock:game:{gid}", timeout=5, blocking=False) as lock:
-                if not lock:
-                    return
+            lock = redis.lock(f"lock:game:{gid}", timeout=5, blocking_timeout=0)
+            acquired = await lock.acquire()
+            if not acquired:
+                return
+            try:
                 await conclude_game(gid)
+            finally:
+                try:
+                    await lock.release()
+                except LockError:
+                    logger.warning("Game-move lock for %s was not held", gid)
             return
 
         ts_start = datetime.fromisoformat(game['ts'])
         elapsed = datetime.now(timezone.utc) - ts_start
         rem = max(0, int(T_MOVE.total_seconds() - elapsed.total_seconds()))
         msg_id = int(game['msg_id'])
-        uname = query.from_user.username or query.from_user.full_name or uid
+        uname = escape(query.from_user.username or query.from_user.full_name or uid)
         wait_id = game['player2_id'] if field == "choice1" else game['player1_id']
-        wait_name = game['player2_name'] if field == "choice1" else game['player1_name']
+        wait_name = escape(game['player2_name'] if field == "choice1" else game['player1_name'])
         await bot.edit_message_text(
             chat_id=CHAT_ID,
             message_id=msg_id,
@@ -332,7 +345,7 @@ async def _cleanup_data_only(gid: str) -> None:
 
         key = f"game:{gid}"
         game = await redis.hgetall(key)
-        async with redis.pipeline() as pipe:
+        async with redis.pipeline(transaction=True) as pipe:
             pipe.delete(f"active_game:{CHAT_ID}")
             pipe.delete(key)
             for pid in (game.get("player1_id"), game.get("player2_id")):

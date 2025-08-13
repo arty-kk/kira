@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/knowledge_on.json<< EOF
+cat >app/services/responder/rag/knowledge_on.json<< 'EOF'
 [
   {
     "id": "1",
@@ -5597,2197 +5597,2197 @@ cat >app/services/responder/rag/knowledge_on.json<< EOF
       "Stonebud",
       "Terramorph",
       "creature №1",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "598",
     "category": "creatures",
-    "text": "Spikehatch characteristics: total health points (hp) - 3,185; health points regeneration (hp regen) - 3 %/h; Resistance - 0; bonus for victory - 2,000 GP, 1 Key(s), 100 SE.",
+    "text": "Spikehatch characteristics: total health points (hp) - 6,300; health points regeneration (hp regen) - 3 %/h; Resistance - 0; bonus for victory - 2,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Spikehatch",
       "Sauralith",
       "creature №2",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "599",
     "category": "creatures",
-    "text": "Frostling characteristics: total health points (hp) - 3,382; health points regeneration (hp regen) - 4 %/h; Resistance - 0; bonus for victory - 3,000 GP, 1 Key(s), 100 SE.",
+    "text": "Frostling characteristics: total health points (hp) - 10,609; health points regeneration (hp regen) - 4 %/h; Resistance - 0; bonus for victory - 3,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Frostling",
       "Glacivor",
       "creature №3",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "600",
     "category": "creatures",
-    "text": "Cryopod characteristics: total health points (hp) - 3,591; health points regeneration (hp regen) - 5 %/h; Resistance - 0; bonus for victory - 4,000 GP, 1 Key(s), 100 SE.",
+    "text": "Cryopod characteristics: total health points (hp) - 14,365; health points regeneration (hp regen) - 5 %/h; Resistance - 0; bonus for victory - 4,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Cryopod",
       "Zygaroth",
       "creature №4",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "601",
     "category": "creatures",
-    "text": "Kragorin characteristics: total health points (hp) - 3,813; health points regeneration (hp regen) - 6 %/h; Resistance - 0; bonus for victory - 5,000 GP, 1 Key(s), 100 SE.",
+    "text": "Kragorin characteristics: total health points (hp) - 18,339; health points regeneration (hp regen) - 6 %/h; Resistance - 0; bonus for victory - 5,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Kragorin",
       "Kragorian",
       "creature №5",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "602",
     "category": "creatures",
-    "text": "Aetherling characteristics: total health points (hp) - 4,048; health points regeneration (hp regen) - 7 %/h; click damage resistance - 1; bonus for victory - 6,000 GP, 1 Key(s), 100 SE.",
+    "text": "Aetherling characteristics: total health points (hp) - 22,540; health points regeneration (hp regen) - 7 %/h; click damage resistance - 1; bonus for victory - 6,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Aetherling",
       "Aetherbeast",
       "creature №6",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "603",
     "category": "creatures",
-    "text": "Void Wisp characteristics: total health points (hp) - 4,299; health points regeneration (hp regen) - 8 %/h; click damage resistance - 1; bonus for victory - 7,000 GP, 1 Key(s), 100 SE.",
+    "text": "Void Wisp characteristics: total health points (hp) - 26,979; health points regeneration (hp regen) - 8 %/h; click damage resistance - 1; bonus for victory - 7,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Void Wisp",
       "Voidreaper",
       "creature №7",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "604",
     "category": "creatures",
-    "text": "Sentry Orb characteristics: total health points (hp) - 4,564; health points regeneration (hp regen) - 9 %/h; click damage resistance - 1; bonus for victory - 8,000 GP, 1 Key(s), 100 SE.",
+    "text": "Sentry Orb characteristics: total health points (hp) - 31,671; health points regeneration (hp regen) - 9 %/h; click damage resistance - 1; bonus for victory - 8,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Sentry Orb",
       "Mechanoid",
       "creature №8",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "605",
     "category": "creatures",
-    "text": "Solar Spark characteristics: total health points (hp) - 4,846; health points regeneration (hp regen) - 10 %/h; click damage resistance - 2; bonus for victory - 9,000 GP, 1 Key(s), 100 SE.",
+    "text": "Solar Spark characteristics: total health points (hp) - 36,623; health points regeneration (hp regen) - 10 %/h; click damage resistance - 2; bonus for victory - 9,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Solar Spark",
       "Solarion",
       "creature №9",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "606",
     "category": "creatures",
-    "text": "Protoform characteristics: total health points (hp) - 5,146; health points regeneration (hp regen) - 11 %/h; click damage resistance - 2; bonus for victory - 10,000 GP, 1 Key(s), 100 SE.",
+    "text": "Protoform characteristics: total health points (hp) - 41,853; health points regeneration (hp regen) - 11 %/h; click damage resistance - 2; bonus for victory - 10,000 GP, 1 Key(s), 100 SE.",
     "tags": [
       "Protoform",
       "Nyxarian",
       "creature №10",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "607",
     "category": "creatures",
-    "text": "Pebbleback characteristics: total health points (hp) - 5,464; health points regeneration (hp regen) - 3 %/h; click damage resistance - 1; bonus for victory - 11,000 GP, 2 Key(s), 100 SE.",
+    "text": "Pebbleback characteristics: total health points (hp) - 47,335; health points regeneration (hp regen) - 3 %/h; click damage resistance - 1; bonus for victory - 11,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Pebbleback",
       "Terramorph",
       "creature №11",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "608",
     "category": "creatures",
-    "text": "Bladewyrm characteristics: total health points (hp) - 5,802; health points regeneration (hp regen) - 4 %/h; click damage resistance - 1; bonus for victory - 12,000 GP, 2 Key(s), 100 SE.",
+    "text": "Bladewyrm characteristics: total health points (hp) - 53,114; health points regeneration (hp regen) - 4 %/h; click damage resistance - 1; bonus for victory - 12,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Bladewyrm",
       "Sauralith",
       "creature №12",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "609",
     "category": "creatures",
-    "text": "Chillcrawler characteristics: total health points (hp) - 6,160; health points regeneration (hp regen) - 5 %/h; click damage resistance - 1; bonus for victory - 13,000 GP, 2 Key(s), 100 SE.",
+    "text": "Chillcrawler characteristics: total health points (hp) - 59,201; health points regeneration (hp regen) - 5 %/h; click damage resistance - 1; bonus for victory - 13,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Chillcrawler",
       "Glacivor",
       "creature №13",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "610",
     "category": "creatures",
-    "text": "Glacite characteristics: total health points (hp) - 6,541; health points regeneration (hp regen) - 6 %/h; click damage resistance - 1; bonus for victory - 14,000 GP, 2 Key(s), 100 SE.",
+    "text": "Glacite characteristics: total health points (hp) - 65,613; health points regeneration (hp regen) - 6 %/h; click damage resistance - 1; bonus for victory - 14,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Glacite",
       "Zygaroth",
       "creature №14",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "611",
     "category": "creatures",
-    "text": "Ska’gari characteristics: total health points (hp) - 6,945; health points regeneration (hp regen) - 7 %/h; click damage resistance - 1; bonus for victory - 15,000 GP, 2 Key(s), 100 SE.",
+    "text": "Ska’gari characteristics: total health points (hp) - 72,364; health points regeneration (hp regen) - 7 %/h; click damage resistance - 1; bonus for victory - 15,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Ska’gari",
       "Kragorian",
       "creature №15",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "612",
     "category": "creatures",
-    "text": "Sparkling characteristics: total health points (hp) - 7,375; health points regeneration (hp regen) - 8 %/h; click damage resistance - 2; bonus for victory - 16,000 GP, 2 Key(s), 100 SE.",
+    "text": "Sparkling characteristics: total health points (hp) - 79,473; health points regeneration (hp regen) - 8 %/h; click damage resistance - 2; bonus for victory - 16,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Sparkling",
       "Aetherbeast",
       "creature №16",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "613",
     "category": "creatures",
-    "text": "Shadow Stalker characteristics: total health points (hp) - 7,830; health points regeneration (hp regen) - 9 %/h; click damage resistance - 2; bonus for victory - 17,000 GP, 2 Key(s), 100 SE.",
+    "text": "Shadow Stalker characteristics: total health points (hp) - 86,954; health points regeneration (hp regen) - 9 %/h; click damage resistance - 2; bonus for victory - 17,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Shadow Stalker",
       "Voidreaper",
       "creature №17",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "614",
     "category": "creatures",
-    "text": "Scout Drone characteristics: total health points (hp) - 8,314; health points regeneration (hp regen) - 10 %/h; click damage resistance - 2; bonus for victory - 18,000 GP, 2 Key(s), 100 SE.",
+    "text": "Scout Drone characteristics: total health points (hp) - 94,828; health points regeneration (hp regen) - 10 %/h; click damage resistance - 2; bonus for victory - 18,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Scout Drone",
       "Mechanoid",
       "creature №18",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "615",
     "category": "creatures",
-    "text": "Ignis Wraith characteristics: total health points (hp) - 8,828; health points regeneration (hp regen) - 11 %/h; click damage resistance - 3; bonus for victory - 19,000 GP, 2 Key(s), 100 SE.",
+    "text": "Ignis Wraith characteristics: total health points (hp) - 103,112; health points regeneration (hp regen) - 11 %/h; click damage resistance - 3; bonus for victory - 19,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Ignis Wraith",
       "Solarion",
       "creature №19",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "616",
     "category": "creatures",
-    "text": "Nyxling characteristics: total health points (hp) - 9,374; health points regeneration (hp regen) - 12 %/h; click damage resistance - 3; bonus for victory - 20,000 GP, 2 Key(s), 100 SE.",
+    "text": "Nyxling characteristics: total health points (hp) - 111,826; health points regeneration (hp regen) - 12 %/h; click damage resistance - 3; bonus for victory - 20,000 GP, 2 Key(s), 100 SE.",
     "tags": [
       "Nyxling",
       "Nyxarian",
       "creature №20",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "617",
     "category": "creatures",
-    "text": "Rockling characteristics: total health points (hp) - 9,953; health points regeneration (hp regen) - 4 %/h; click damage resistance - 2; bonus for victory - 21,000 GP, 3 Key(s), 100 SE.",
+    "text": "Rockling characteristics: total health points (hp) - 120,906; health points regeneration (hp regen) - 4 %/h; click damage resistance - 2; bonus for victory - 21,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Rockling",
       "Terramorph",
       "creature №21",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "618",
     "category": "creatures",
-    "text": "Spinestrike characteristics: total health points (hp) - 10,568; health points regeneration (hp regen) - 5 %/h; click damage resistance - 2; bonus for victory - 22,000 GP, 3 Key(s), 100 SE.",
+    "text": "Spinestrike characteristics: total health points (hp) - 130,447; health points regeneration (hp regen) - 5 %/h; click damage resistance - 2; bonus for victory - 22,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Spinestrike",
       "Sauralith",
       "creature №22",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "619",
     "category": "creatures",
-    "text": "Snowstalker characteristics: total health points (hp) - 11,221; health points regeneration (hp regen) - 6 %/h; click damage resistance - 2; bonus for victory - 23,000 GP, 3 Key(s), 100 SE.",
+    "text": "Snowstalker characteristics: total health points (hp) - 140,469; health points regeneration (hp regen) - 6 %/h; click damage resistance - 2; bonus for victory - 23,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Snowstalker",
       "Glacivor",
       "creature №23",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "620",
     "category": "creatures",
-    "text": "Shardling characteristics: total health points (hp) - 11,915; health points regeneration (hp regen) - 7 %/h; click damage resistance - 2; bonus for victory - 24,000 GP, 3 Key(s), 100 SE.",
+    "text": "Shardling characteristics: total health points (hp) - 150,996; health points regeneration (hp regen) - 7 %/h; click damage resistance - 2; bonus for victory - 24,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Shardling",
       "Zygaroth",
       "creature №24",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "621",
     "category": "creatures",
-    "text": "Thar’goth characteristics: total health points (hp) - 12,651; health points regeneration (hp regen) - 8 %/h; click damage resistance - 2; bonus for victory - 25,000 GP, 3 Key(s), 100 SE.",
+    "text": "Thar’goth characteristics: total health points (hp) - 162,053; health points regeneration (hp regen) - 8 %/h; click damage resistance - 2; bonus for victory - 25,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Thar’goth",
       "Kragorian",
       "creature №25",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "622",
     "category": "creatures",
-    "text": "Fluxling characteristics: total health points (hp) - 13,433; health points regeneration (hp regen) - 9 %/h; click damage resistance - 3; bonus for victory - 26,000 GP, 3 Key(s), 100 SE.",
+    "text": "Fluxling characteristics: total health points (hp) - 173,664; health points regeneration (hp regen) - 9 %/h; click damage resistance - 3; bonus for victory - 26,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Fluxling",
       "Aetherbeast",
       "creature №26",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "623",
     "category": "creatures",
-    "text": "Gloom Weaver characteristics: total health points (hp) - 14,263; health points regeneration (hp regen) - 10 %/h; click damage resistance - 3; bonus for victory - 27,000 GP, 3 Key(s), 100 SE.",
+    "text": "Gloom Weaver characteristics: total health points (hp) - 185,856; health points regeneration (hp regen) - 10 %/h; click damage resistance - 3; bonus for victory - 27,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Gloom Weaver",
       "Voidreaper",
       "creature №27",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "624",
     "category": "creatures",
-    "text": "Combat Walker characteristics: total health points (hp) - 15,145; health points regeneration (hp regen) - 11 %/h; click damage resistance - 3; bonus for victory - 28,000 GP, 3 Key(s), 100 SE.",
+    "text": "Combat Walker characteristics: total health points (hp) - 198,656; health points regeneration (hp regen) - 11 %/h; click damage resistance - 3; bonus for victory - 28,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Combat Walker",
       "Mechanoid",
       "creature №28",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "625",
     "category": "creatures",
-    "text": "Solarflare Sentinel characteristics: total health points (hp) - 16,081; health points regeneration (hp regen) - 12 %/h; click damage resistance - 4; bonus for victory - 29,000 GP, 3 Key(s), 100 SE.",
+    "text": "Solarflare Sentinel characteristics: total health points (hp) - 212,094; health points regeneration (hp regen) - 12 %/h; click damage resistance - 4; bonus for victory - 29,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Solarflare Sentinel",
       "Solarion",
       "creature №29",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "626",
     "category": "creatures",
-    "text": "Nocturnus characteristics: total health points (hp) - 17,074; health points regeneration (hp regen) - 13 %/h; click damage resistance - 4; bonus for victory - 30,000 GP, 3 Key(s), 100 SE.",
+    "text": "Nocturnus characteristics: total health points (hp) - 226,198; health points regeneration (hp regen) - 13 %/h; click damage resistance - 4; bonus for victory - 30,000 GP, 3 Key(s), 100 SE.",
     "tags": [
       "Nocturnus",
       "Nyxarian",
       "creature №30",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "627",
     "category": "creatures",
-    "text": "Gravelord characteristics: total health points (hp) - 18,130; health points regeneration (hp regen) - 5 %/h; click damage resistance - 3; bonus for victory - 31,000 GP, 4 Key(s), 100 SE.",
+    "text": "Gravelord characteristics: total health points (hp) - 240,842; health points regeneration (hp regen) - 5 %/h; click damage resistance - 3; bonus for victory - 31,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Gravelord",
       "Terramorph",
       "creature №31",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "628",
     "category": "creatures",
-    "text": "Barbclaw characteristics: total health points (hp) - 19,250; health points regeneration (hp regen) - 6 %/h; click damage resistance - 3; bonus for victory - 32,000 GP, 4 Key(s), 100 SE.",
+    "text": "Barbclaw characteristics: total health points (hp) - 256,199; health points regeneration (hp regen) - 6 %/h; click damage resistance - 3; bonus for victory - 32,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Barbclaw",
       "Sauralith",
       "creature №32",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "629",
     "category": "creatures",
-    "text": "Icethorn characteristics: total health points (hp) - 20,440; health points regeneration (hp regen) - 7 %/h; click damage resistance - 3; bonus for victory - 33,000 GP, 4 Key(s), 100 SE.",
+    "text": "Icethorn characteristics: total health points (hp) - 272,303; health points regeneration (hp regen) - 7 %/h; click damage resistance - 3; bonus for victory - 33,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Icethorn",
       "Glacivor",
       "creature №33",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "630",
     "category": "creatures",
-    "text": "Frostclaw characteristics: total health points (hp) - 21,703; health points regeneration (hp regen) - 8 %/h; click damage resistance - 3; bonus for victory - 34,000 GP, 4 Key(s), 100 SE.",
+    "text": "Frostclaw characteristics: total health points (hp) - 289,188; health points regeneration (hp regen) - 8 %/h; click damage resistance - 3; bonus for victory - 34,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Frostclaw",
       "Zygaroth",
       "creature №34",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "631",
     "category": "creatures",
-    "text": "Gar’tok characteristics: total health points (hp) - 23,044; health points regeneration (hp regen) - 9 %/h; click damage resistance - 3; bonus for victory - 35,000 GP, 4 Key(s), 100 SE.",
+    "text": "Gar’tok characteristics: total health points (hp) - 306,894; health points regeneration (hp regen) - 9 %/h; click damage resistance - 3; bonus for victory - 35,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Gar’tok",
       "Kragorian",
       "creature №35",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "632",
     "category": "creatures",
-    "text": "Electralisk characteristics: total health points (hp) - 24,469; health points regeneration (hp regen) - 10 %/h; click damage resistance - 4; bonus for victory - 36,000 GP, 4 Key(s), 100 SE.",
+    "text": "Electralisk characteristics: total health points (hp) - 325,455; health points regeneration (hp regen) - 10 %/h; click damage resistance - 4; bonus for victory - 36,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Electralisk",
       "Aetherbeast",
       "creature №36",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "633",
     "category": "creatures",
-    "text": "Night Harbinger characteristics: total health points (hp) - 25,981; health points regeneration (hp regen) - 11 %/h; click damage resistance - 4; bonus for victory - 37,000 GP, 4 Key(s), 100 SE.",
+    "text": "Night Harbinger characteristics: total health points (hp) - 344,914; health points regeneration (hp regen) - 11 %/h; click damage resistance - 4; bonus for victory - 37,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Night Harbinger",
       "Voidreaper",
       "creature №37",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "634",
     "category": "creatures",
-    "text": "Assault Strider characteristics: total health points (hp) - 27,586; health points regeneration (hp regen) - 12 %/h; click damage resistance - 4; bonus for victory - 38,000 GP, 4 Key(s), 100 SE.",
+    "text": "Assault Strider characteristics: total health points (hp) - 365,313; health points regeneration (hp regen) - 12 %/h; click damage resistance - 4; bonus for victory - 38,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Assault Strider",
       "Mechanoid",
       "creature №38",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "635",
     "category": "creatures",
-    "text": "Helios Incarnate characteristics: total health points (hp) - 29,291; health points regeneration (hp regen) - 13 %/h; click damage resistance - 5; bonus for victory - 39,000 GP, 4 Key(s), 100 SE.",
+    "text": "Helios Incarnate characteristics: total health points (hp) - 386,694; health points regeneration (hp regen) - 13 %/h; click damage resistance - 5; bonus for victory - 39,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Helios Incarnate",
       "Solarion",
       "creature №39",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "636",
     "category": "creatures",
-    "text": "Starringer characteristics: total health points (hp) - 31,101; health points regeneration (hp regen) - 14 %/h; click damage resistance - 5; bonus for victory - 40,000 GP, 4 Key(s), 100 SE.",
+    "text": "Starringer characteristics: total health points (hp) - 409,107; health points regeneration (hp regen) - 14 %/h; click damage resistance - 5; bonus for victory - 40,000 GP, 4 Key(s), 100 SE.",
     "tags": [
       "Starringer",
       "Nyxarian",
       "creature №40",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "637",
     "category": "creatures",
-    "text": "Mountainstride characteristics: total health points (hp) - 33,024; health points regeneration (hp regen) - 6 %/h; click damage resistance - 4; bonus for victory - 41,000 GP, 5 Key(s), 100 SE.",
+    "text": "Mountainstride characteristics: total health points (hp) -432,322; health points regeneration (hp regen) - 6 %/h; click damage resistance - 4; bonus for victory - 41,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Mountainstride",
       "Terramorph",
       "creature №41",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "638",
     "category": "creatures",
-    "text": "Hellspike characteristics: total health points (hp) - 35,064; health points regeneration (hp regen) - 7 %/h; click damage resistance - 4; bonus for victory - 42,000 GP, 5 Key(s), 100 SE.",
+    "text": "Hellspike characteristics: total health points (hp) - 456,635; health points regeneration (hp regen) - 7 %/h; click damage resistance - 4; bonus for victory - 42,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Hellspike",
       "Sauralith",
       "creature №42",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "639",
     "category": "creatures",
-    "text": "Glacierbeast characteristics: total health points (hp) - 37,231; health points regeneration (hp regen) - 8 %/h; click damage resistance - 4; bonus for victory - 43,000 GP, 5 Key(s), 100 SE.",
+    "text": "Glacierbeast characteristics: total health points (hp) - 482,100; health points regeneration (hp regen) - 8 %/h; click damage resistance - 4; bonus for victory - 43,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Glacierbeast",
       "Glacivor",
       "creature №43",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "640",
     "category": "creatures",
-    "text": "Icetalon characteristics: total health points (hp) - 39,532; health points regeneration (hp regen) - 9 %/h; click damage resistance - 4; bonus for victory - 44,000 GP, 5 Key(s), 100 SE.",
+    "text": "Icetalon characteristics: total health points (hp) - 508,770; health points regeneration (hp regen) - 9 %/h; click damage resistance - 4; bonus for victory - 44,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Icetalon",
       "Zygaroth",
       "creature №44",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "641",
     "category": "creatures",
-    "text": "Lok’tar characteristics: total health points (hp) - 41,975; health points regeneration (hp regen) - 10 %/h; click damage resistance - 4; bonus for victory - 45,000 GP, 5 Key(s), 100 SE.",
+    "text": "Lok’tar characteristics: total health points (hp) - 536,698; health points regeneration (hp regen) - 10 %/h; click damage resistance - 4; bonus for victory - 45,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Lok’tar",
       "Kragorian",
       "creature №45",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "642",
     "category": "creatures",
-    "text": "Voltcat characteristics: total health points (hp) - 44,570; health points regeneration (hp regen) - 11 %/h; click damage resistance - 5; bonus for victory - 46,000 GP, 5 Key(s), 100 SE.",
+    "text": "Voltcat characteristics: total health points (hp) - 565,945; health points regeneration (hp regen) - 11 %/h; click damage resistance - 5; bonus for victory - 46,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Voltcat",
       "Aetherbeast",
       "creature №46",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "643",
     "category": "creatures",
-    "text": "Eclipse Bringer characteristics: total health points (hp) - 47,324; health points regeneration (hp regen) - 12 %/h; click damage resistance - 5; bonus for victory - 47,000 GP, 5 Key(s), 100 SE.",
+    "text": "Eclipse Bringer characteristics: total health points (hp) - 596,570; health points regeneration (hp regen) - 12 %/h; click damage resistance - 5; bonus for victory - 47,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Eclipse Bringer",
       "Voidreaper",
       "creature №47",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "644",
     "category": "creatures",
-    "text": "War Droid characteristics: total health points (hp) - 50,249; health points regeneration (hp regen) - 13 %/h; click damage resistance - 5; bonus for victory - 48,000 GP, 5 Key(s), 100 SE.",
+    "text": "War Droid characteristics: total health points (hp) - 628,638; health points regeneration (hp regen) - 13 %/h; click damage resistance - 5; bonus for victory - 48,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "War Droid",
       "Mechanoid",
       "creature №48",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "645",
     "category": "creatures",
-    "text": "Starborn Scion characteristics: total health points (hp) - 53,354; health points regeneration (hp regen) - 14 %/h; click damage resistance - 6; bonus for victory - 49,000 GP, 5 Key(s), 100 SE.",
+    "text": "Starborn Scion characteristics: total health points (hp) - 662,219; health points regeneration (hp regen) - 14 %/h; click damage resistance - 6; bonus for victory - 49,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Starborn Scion",
       "Solarion",
       "creature №49",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "646",
     "category": "creatures",
-    "text": "Galaxer characteristics: total health points (hp) - 56,651; health points regeneration (hp regen) - 15 %/h; click damage resistance - 6; bonus for victory - 50,000 GP, 5 Key(s), 100 SE.",
+    "text": "Galaxer characteristics: total health points (hp) - 697,377; health points regeneration (hp regen) - 15 %/h; click damage resistance - 6; bonus for victory - 50,000 GP, 5 Key(s), 100 SE.",
     "tags": [
       "Galaxer",
       "Nyxarian",
       "creature №50",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "647",
     "category": "creatures",
-    "text": "Earthshaker characteristics: total health points (hp) - 60,153; health points regeneration (hp regen) - 7 %/h; click damage resistance - 5; bonus for victory - 52,500 GP, 6 Key(s), 100 SE.",
+    "text": "Earthshaker characteristics: total health points (hp) - 733,738; health points regeneration (hp regen) - 7 %/h; click damage resistance - 5; bonus for victory - 52,500 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Earthshaker",
       "Terramorph",
       "creature №51",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "648",
     "category": "creatures",
-    "text": "Infernair characteristics: total health points (hp) - 63,870; health points regeneration (hp regen) - 8 %/h; click damage resistance - 5; bonus for victory - 55,000 GP, 6 Key(s), 100 SE.",
+    "text": "Infernair characteristics: total health points (hp) - 771,786; health points regeneration (hp regen) - 8 %/h; click damage resistance - 5; bonus for victory - 55,000 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Infernair",
       "Sauralith",
       "creature №52",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "649",
     "category": "creatures",
-    "text": "Frost Titan characteristics: total health points (hp) - 67,817; health points regeneration (hp regen) - 9 %/h; click damage resistance - 5; bonus for victory - 57,500 GP, 6 Key(s), 100 SE.",
+    "text": "Frost Titan characteristics: total health points (hp) - 811,596; health points regeneration (hp regen) - 9 %/h; click damage resistance - 5; bonus for victory - 57,500 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Frost Titan",
       "Glacivor",
       "creature №53",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "650",
     "category": "creatures",
-    "text": "Glacius characteristics: total health points (hp) - 72,008; health points regeneration (hp regen) - 10 %/h; click damage resistance - 5; bonus for victory - 60,000 GP, 6 Key(s), 100 SE.",
+    "text": "Glacius characteristics: total health points (hp) - 853,250; health points regeneration (hp regen) - 10 %/h; click damage resistance - 5; bonus for victory - 60,000 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Glacius",
       "Zygaroth",
       "creature №54",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "651",
     "category": "creatures",
-    "text": "Vor’gar characteristics: total health points (hp) - 76,458; health points regeneration (hp regen) - 11 %/h; click damage resistance - 5; bonus for victory - 62,500 GP, 6 Key(s), 100 SE.",
+    "text": "Vor’gar characteristics: total health points (hp) - 896,831; health points regeneration (hp regen) - 11 %/h; click damage resistance - 5; bonus for victory - 62,500 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Vor’gar",
       "Kragorian",
       "creature №55",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "652",
     "category": "creatures",
-    "text": "Thundercore characteristics: total health points (hp) - 81,184; health points regeneration (hp regen) - 12 %/h; click damage resistance - 6; bonus for victory - 65,000 GP, 6 Key(s), 100 SE.",
+    "text": "Thundercore characteristics: total health points (hp) - 942,430; health points regeneration (hp regen) - 12 %/h; click damage resistance - 6; bonus for victory - 65,000 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Thundercore",
       "Aetherbeast",
       "creature №56",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "653",
     "category": "creatures",
-    "text": "Abyss Walker characteristics: total health points (hp) - 86,201; health points regeneration (hp regen) - 13 %/h; click damage resistance - 6; bonus for victory - 67,500 GP, 6 Key(s), 100 SE.",
+    "text": "Abyss Walker characteristics: total health points (hp) - 990,135; health points regeneration (hp regen) - 13 %/h; click damage resistance - 6; bonus for victory - 67,500 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Abyss Walker",
       "Voidreaper",
       "creature №57",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "654",
     "category": "creatures",
-    "text": "Siege Goliath characteristics: total health points (hp) - 91,528; health points regeneration (hp regen) - 14 %/h; click damage resistance - 6; bonus for victory - 70,000 GP, 6 Key(s), 100 SE.",
+    "text": "Siege Goliath characteristics: total health points (hp) - 1,040,047; health points regeneration (hp regen) - 14 %/h; click damage resistance - 6; bonus for victory - 70,000 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Siege Goliath",
       "Mechanoid",
       "creature №58",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "655",
     "category": "creatures",
-    "text": "Flame Stalker characteristics: total health points (hp) - 97,184; health points regeneration (hp regen) - 15 %/h; click damage resistance - 7; bonus for victory - 72,500 GP, 6 Key(s), 100 SE.",
+    "text": "Flame Stalker characteristics: total health points (hp) - 1,092,264; health points regeneration (hp regen) - 15 %/h; click damage resistance - 7; bonus for victory - 72,500 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Flame Stalker",
       "Solarion",
       "creature №59",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "656",
     "category": "creatures",
-    "text": "Eclipsor characteristics: total health points (hp) - 103,190; health points regeneration (hp regen) - 16 %/h; click damage resistance - 7; bonus for victory - 75,000 GP, 6 Key(s), 100 SE.",
+    "text": "Eclipsor characteristics: total health points (hp) - 1,146,892; health points regeneration (hp regen) - 16 %/h; click damage resistance - 7; bonus for victory - 75,000 GP, 6 Key(s), 100 SE.",
     "tags": [
       "Eclipsor",
       "Nyxarian",
       "creature №60",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "657",
     "category": "creatures",
-    "text": "Golem Sentinel characteristics: total health points (hp) - 109,568; health points regeneration (hp regen) - 8 %/h; click damage resistance - 6; bonus for victory - 77,500 GP, 7 Key(s), 100 SE.",
+    "text": "Golem Sentinel characteristics: total health points (hp) - 1,203,325; health points regeneration (hp regen) - 8 %/h; click damage resistance - 6; bonus for victory - 77,500 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Golem Sentinel",
       "Terramorph",
       "creature №61",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "658",
     "category": "creatures",
-    "text": "Firescourge characteristics: total health points (hp) - 116,339; health points regeneration (hp regen) - 9 %/h; click damage resistance - 6; bonus for victory - 80,000 GP, 7 Key(s), 100 SE.",
+    "text": "Firescourge characteristics: total health points (hp) - 1,262,328; health points regeneration (hp regen) - 9 %/h; click damage resistance - 6; bonus for victory - 80,000 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Firescourge",
       "Sauralith",
       "creature №62",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "659",
     "category": "creatures",
-    "text": "Cryomancer characteristics: total health points (hp) - 123,529; health points regeneration (hp regen) - 10 %/h; click damage resistance - 6; bonus for victory - 82,500 GP, 7 Key(s), 100 SE.",
+    "text": "Cryomancer characteristics: total health points (hp) - 1,324,018; health points regeneration (hp regen) - 10 %/h; click damage resistance - 6; bonus for victory - 82,500 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Cryomancer",
       "Glacivor",
       "creature №63",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "660",
     "category": "creatures",
-    "text": "Cryolord characteristics: total health points (hp) - 131,163; health points regeneration (hp regen) - 11 %/h; click damage resistance - 6; bonus for victory - 85,000 GP, 7 Key(s), 100 SE.",
+    "text": "Cryolord characteristics: total health points (hp) - 1,388,516; health points regeneration (hp regen) - 11 %/h; click damage resistance - 6; bonus for victory - 85,000 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Cryolord",
       "Zygaroth",
       "creature №64",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "661",
     "category": "creatures",
-    "text": "Kro’than characteristics: total health points (hp) - 139,269; health points regeneration (hp regen) - 12 %/h; click damage resistance - 6; bonus for victory - 87,500 GP, 7 Key(s), 100 SE.",
+    "text": "Kro’than characteristics: total health points (hp) - 1,455,950; health points regeneration (hp regen) - 12 %/h; click damage resistance - 6; bonus for victory - 87,500 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Kro’than",
       "Kragorian",
       "creature №65",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "662",
     "category": "creatures",
-    "text": "Stormclaw characteristics: total health points (hp) - 147,876; health points regeneration (hp regen) - 13 %/h; click damage resistance - 7; bonus for victory - 90,000 GP, 7 Key(s), 100 SE.",
+    "text": "Stormclaw characteristics: total health points (hp) - 1,526,449; health points regeneration (hp regen) - 13 %/h; click damage resistance - 7; bonus for victory - 90,000 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Stormclaw",
       "Aetherbeast",
       "creature №66",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "663",
     "category": "creatures",
-    "text": "Dread Wraith characteristics: total health points (hp) - 157,014; health points regeneration (hp regen) - 14 %/h; click damage resistance - 7; bonus for victory - 92,500 GP, 7 Key(s), 100 SE.",
+    "text": "Dread Wraith characteristics: total health points (hp) - 1,600,157; health points regeneration (hp regen) - 14 %/h; click damage resistance - 7; bonus for victory - 92,500 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Dread Wraith",
       "Voidreaper",
       "creature №67",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "664",
     "category": "creatures",
-    "text": "Battle Titan characteristics: total health points (hp) - 166,718; health points regeneration (hp regen) - 15 %/h; click damage resistance - 7; bonus for victory - 95,000 GP, 7 Key(s), 100 SE.",
+    "text": "Battle Titan characteristics: total health points (hp) - 1,677,213; health points regeneration (hp regen) - 15 %/h; click damage resistance - 7; bonus for victory - 95,000 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Battle Titan",
       "Mechanoid",
       "creature №68",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "665",
     "category": "creatures",
-    "text": "Astral Titan characteristics: total health points (hp) - 177,021; health points regeneration (hp regen) - 16 %/h; click damage resistance - 8; bonus for victory - 97,500 GP, 7 Key(s), 100 SE.",
+    "text": "Astral Titan characteristics: total health points (hp) - 1,757,774; health points regeneration (hp regen) - 16 %/h; click damage resistance - 8; bonus for victory - 97,500 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Astral Titan",
       "Solarion",
       "creature №69",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "666",
     "category": "creatures",
-    "text": "Stellarant characteristics: total health points (hp) - 187,961; health points regeneration (hp regen) - 17 %/h; click damage resistance - 8; bonus for victory - 100,000 GP, 7 Key(s), 100 SE.",
+    "text": "Stellarant characteristics: total health points (hp) - 1,841,996; health points regeneration (hp regen) - 17 %/h; click damage resistance - 8; bonus for victory - 100,000 GP, 7 Key(s), 100 SE.",
     "tags": [
       "Stellarant",
       "Nyxarian",
       "creature №70",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "667",
     "category": "creatures",
-    "text": "Titanstone characteristics: total health points (hp) - 199,577; health points regeneration (hp regen) - 9 %/h; click damage resistance - 7; bonus for victory - 102,500 GP, 8 Key(s), 100 SE.",
+    "text": "Titanstone characteristics: total health points (hp) - 1,928,921; health points regeneration (hp regen) - 9 %/h; click damage resistance - 7; bonus for victory - 102,500 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Titanstone",
       "Terramorph",
       "creature №71",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "668",
     "category": "creatures",
-    "text": "Volcanus Rex characteristics: total health points (hp) - 211,911; health points regeneration (hp regen) - 10 %/h; click damage resistance - 7; bonus for victory - 105,000 GP, 8 Key(s), 100 SE.",
+    "text": "Volcanus Rex characteristics: total health points (hp) - 2,019,744; health points regeneration (hp regen) - 10 %/h; click damage resistance - 7; bonus for victory - 105,000 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Volcanus Rex",
       "Sauralith",
       "creature №72",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "669",
     "category": "creatures",
-    "text": "Blizzard Warden characteristics: total health points (hp) - 225,007; health points regeneration (hp regen) - 11 %/h; click damage resistance - 7; bonus for victory - 107,500 GP, 8 Key(s), 100 SE.",
+    "text": "Blizzard Warden characteristics: total health points (hp) - 2,114,640; health points regeneration (hp regen) - 11 %/h; click damage resistance - 7; bonus for victory - 107,500 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Blizzard Warden",
       "Glacivor",
       "creature №73",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "670",
     "category": "creatures",
-    "text": "Frostspike characteristics: total health points (hp) - 238,913; health points regeneration (hp regen) - 12 %/h; click damage resistance - 7; bonus for victory - 110,000 GP, 8 Key(s), 100 SE.",
+    "text": "Frostspike characteristics: total health points (hp) - 2,213,789; health points regeneration (hp regen) - 12 %/h; click damage resistance - 7; bonus for victory - 110,000 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Frostspike",
       "Zygaroth",
       "creature №74",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "671",
     "category": "creatures",
-    "text": "Zar’gul characteristics: total health points (hp) - 253,677; health points regeneration (hp regen) - 13 %/h; click damage resistance - 7; bonus for victory - 112,500 GP, 8 Key(s), 100 SE.",
+    "text": "Zar’gul characteristics: total health points (hp) - 2,317,381; health points regeneration (hp regen) - 13 %/h; click damage resistance - 7; bonus for victory - 112,500 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Zar’gul",
       "Kragorian",
       "creature №75",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "672",
     "category": "creatures",
-    "text": "Aetherlord characteristics: total health points (hp) - 269,355; health points regeneration (hp regen) - 14 %/h; click damage resistance - 8; bonus for victory - 115,000 GP, 8 Key(s), 100 SE.",
+    "text": "Aetherlord characteristics: total health points (hp) - 2,425,618; health points regeneration (hp regen) - 14 %/h; click damage resistance - 8; bonus for victory - 115,000 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Aetherlord",
       "Aetherbeast",
       "creature №76",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "673",
     "category": "creatures",
-    "text": "Nether Lord characteristics: total health points (hp) - 286,001; health points regeneration (hp regen) - 15 %/h; click damage resistance - 8; bonus for victory - 117,500 GP, 8 Key(s), 100 SE.",
+    "text": "Nether Lord characteristics: total health points (hp) - 2,538,702; health points regeneration (hp regen) - 15 %/h; click damage resistance - 8; bonus for victory - 117,500 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Nether Lord",
       "Voidreaper",
       "creature №77",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "674",
     "category": "creatures",
-    "text": "Iron Colossus characteristics: total health points (hp) - 303,676; health points regeneration (hp regen) - 16 %/h; click damage resistance - 8; bonus for victory - 120,000 GP, 8 Key(s), 100 SE.",
+    "text": "Iron Colossus characteristics: total health points (hp) - 2,656,855; health points regeneration (hp regen) - 16 %/h; click damage resistance - 8; bonus for victory - 120,000 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Iron Colossus",
       "Mechanoid",
       "level 8+",
       "creature №78",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "675",
     "category": "creatures",
-    "text": "Celestial Flame characteristics: total health points (hp) - 322,443; health points regeneration (hp regen) - 17 %/h; click damage resistance - 9; bonus for victory - 122,500 GP, 8 Key(s), 100 SE.",
+    "text": "Celestial Flame characteristics: total health points (hp) - 2,780,299; health points regeneration (hp regen) - 17 %/h; click damage resistance - 9; bonus for victory - 122,500 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Celestial Flame",
       "Solarion",
       "creature №79",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "676",
     "category": "creatures",
-    "text": "Wraithus characteristics: total health points (hp) - 342,370; health points regeneration (hp regen) - 18 %/h; click damage resistance - 9; bonus for victory - 125,000 GP, 8 Key(s), 100 SE.",
+    "text": "Wraithus characteristics: total health points (hp) - 2,909,272; health points regeneration (hp regen) - 18 %/h; click damage resistance - 9; bonus for victory - 125,000 GP, 8 Key(s), 100 SE.",
     "tags": [
       "Wraithus",
       "Nyxarian",
       "creature №80",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "677",
     "category": "creatures",
-    "text": "Megolith characteristics: total health points (hp) - 363,528; health points regeneration (hp regen) - 10 %/h; click damage resistance - 8; bonus for victory - 127,500 GP, 9 Key(s), 100 SE.",
+    "text": "Megolith characteristics: total health points (hp) - 3,042,282; health points regeneration (hp regen) - 10 %/h; click damage resistance - 8; bonus for victory - 127,500 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Megolith",
       "Terramorph",
       "creature №81",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "678",
     "category": "creatures",
-    "text": "Saurflare characteristics: total health points (hp) - 385,994; health points regeneration (hp regen) - 11 %/h; click damage resistance - 8; bonus for victory - 130,000 GP, 9 Key(s), 100 SE.",
+    "text": "Saurflare characteristics: total health points (hp) - 3,181,171; health points regeneration (hp regen) - 11 %/h; click damage resistance - 8; bonus for victory - 130,000 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Saurflare",
       "Sauralith",
       "creature №82",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "679",
     "category": "creatures",
-    "text": "Glacial Colossus characteristics: total health points (hp) - 409,849; health points regeneration (hp regen) - 12 %/h; click damage resistance - 8; bonus for victory - 132,500 GP, 9 Key(s), 100 SE.",
+    "text": "Glacial Colossus characteristics: total health points (hp) - 3,326,197; health points regeneration (hp regen) - 12 %/h; click damage resistance - 8; bonus for victory - 132,500 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Glacial Colossus",
       "Glacivor",
       "creature №83",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "680",
     "category": "creatures",
-    "text": "Glacial Titan characteristics: total health points (hp) - 435,178; health points regeneration (hp regen) - 13 %/h; click damage resistance - 8; bonus for victory - 135,000 GP, 9 Key(s), 100 SE.",
+    "text": "Glacial Titan characteristics: total health points (hp) - 3,477,635; health points regeneration (hp regen) - 13 %/h; click damage resistance - 8; bonus for victory - 135,000 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Glacial Titan",
       "Zygaroth",
       "creature №84",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "681",
     "category": "creatures",
-    "text": "Rak’thar characteristics: total health points (hp) - 462,072; health points regeneration (hp regen) - 14 %/h; click damage resistance - 8; bonus for victory - 137,500 GP, 9 Key(s), 100 SE.",
+    "text": "Rak’thar characteristics: total health points (hp) - 3,635,763; health points regeneration (hp regen) - 14 %/h; click damage resistance - 8; bonus for victory - 137,500 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Rak’thar",
       "Kragorian",
       "creature №85",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "682",
     "category": "creatures",
-    "text": "Stormlord characteristics: total health points (hp) - 490,628; health points regeneration (hp regen) - 15 %/h; click damage resistance - 9; bonus for victory - 140,000 GP, 9 Key(s), 100 SE.",
+    "text": "Stormlord characteristics: total health points (hp) - 3,800,880; health points regeneration (hp regen) - 15 %/h; click damage resistance - 9; bonus for victory - 140,000 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Stormlord",
       "Aetherbeast",
       "creature №86",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "683",
     "category": "creatures",
-    "text": "Void Emperor characteristics: total health points (hp) - 520,949; health points regeneration (hp regen) - 16 %/h; click damage resistance - 9; bonus for victory - 142,500 GP, 9 Key(s), 100 SE.",
+    "text": "Void Emperor characteristics: total health points (hp) - 3,973,293; health points regeneration (hp regen) - 16 %/h; click damage resistance - 9; bonus for victory - 142,500 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Void Emperor",
       "Voidreaper",
       "creature №87",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "684",
     "category": "creatures",
-    "text": "War Bringer characteristics: total health points (hp) - 553,143; health points regeneration (hp regen) - 17 %/h; click damage resistance - 9; bonus for victory - 145,000 GP, 9 Key(s), 100 SE.",
+    "text": "War Bringer characteristics: total health points (hp) - 4,153,325; health points regeneration (hp regen) - 17 %/h; click damage resistance - 9; bonus for victory - 145,000 GP, 9 Key(s), 100 SE.",
     "tags": [
       "War Bringer",
       "Mechanoid",
       "creature №88",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "685",
     "category": "creatures",
-    "text": "Sun Inferno characteristics: total health points (hp) - 587,327; health points regeneration (hp regen) - 18 %/h; click damage resistance - 10; bonus for victory - 147,500 GP, 9 Key(s), 100 SE.",
+    "text": "Sun Inferno characteristics: total health points (hp) - 4,341,310; health points regeneration (hp regen) - 18 %/h; click damage resistance - 10; bonus for victory - 147,500 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Sun Inferno",
       "Solarion",
       "creature №89",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "686",
     "category": "creatures",
-    "text": "Tytanius characteristics: total health points (hp) - 623,624; health points regeneration (hp regen) - 19 %/h; click damage resistance - 10; bonus for victory - 150,000 GP, 9 Key(s), 100 SE.",
+    "text": "Tytanius characteristics: total health points (hp) - 4,537,599; health points regeneration (hp regen) - 19 %/h; click damage resistance - 10; bonus for victory - 150,000 GP, 9 Key(s), 100 SE.",
     "tags": [
       "Tytanius",
       "Nyxarian",
       "creature №90",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "687",
     "category": "creatures",
-    "text": "Terravore characteristics: total health points (hp) - 662,164; health points regeneration (hp regen) - 11 %/h; click damage resistance - 9; bonus for victory - 152,500 GP, 10 Key(s), 100 SE.",
+    "text": "Terravore characteristics: total health points (hp) - 4,739,879; health points regeneration (hp regen) - 11 %/h; click damage resistance - 9; bonus for victory - 152,500 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Terravore",
       "Terramorph",
       "creature №91",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "688",
     "category": "creatures",
-    "text": "Drakenscorch characteristics: total health points (hp) - 703,086; health points regeneration (hp regen) - 12 %/h; click damage resistance - 9; bonus for victory - 155,000 GP, 10 Key(s), 100 SE.",
+    "text": "Drakenscorch characteristics: total health points (hp) - 4,950,978; health points regeneration (hp regen) - 12 %/h; click damage resistance - 9; bonus for victory - 155,000 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Drakenscorch",
       "Sauralith",
       "creature №92",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "689",
     "category": "creatures",
-    "text": "Eternal Frostlord characteristics: total health points (hp) - 746,537; health points regeneration (hp regen) - 13 %/h; click damage resistance - 9; bonus for victory - 157,500 GP, 10 Key(s), 100 SE.",
+    "text": "Eternal Frostlord characteristics: total health points (hp) - 5,171,279; health points regeneration (hp regen) - 13 %/h; click damage resistance - 9; bonus for victory - 157,500 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Eternal Frostlord",
       "Glacivor",
       "creature №93",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "690",
     "category": "creatures",
-    "text": "Zygoth Supreme characteristics: total health points (hp) - 792,673; health points regeneration (hp regen) - 14 %/h; click damage resistance - 9; bonus for victory - 160,000 GP, 10 Key(s), 100 SE.",
+    "text": "Zygoth Supreme characteristics: total health points (hp) - 5,401,183; health points regeneration (hp regen) - 14 %/h; click damage resistance - 9; bonus for victory - 160,000 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Zygoth Supreme",
       "Zygaroth",
       "creature №94",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "691",
     "category": "creatures",
-    "text": "Mor’kath characteristics: total health points (hp) - 841,660; health points regeneration (hp regen) - 15 %/h; click damage resistance - 9; bonus for victory - 162,500 GP, 10 Key(s), 100 SE.",
+    "text": "Mor’kath characteristics: total health points (hp) - 5,641,110; health points regeneration (hp regen) - 15 %/h; click damage resistance - 9; bonus for victory - 162,500 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Mor’kath",
       "Kragorian",
       "creature №95",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "692",
     "category": "creatures",
-    "text": "Aether Titan characteristics: total health points (hp) - 893,675; health points regeneration (hp regen) - 16 %/h; click damage resistance - 10; bonus for victory - 165,000 GP, 10 Key(s), 100 SE.",
+    "text": "Aether Titan characteristics: total health points (hp) - 5,891,494; health points regeneration (hp regen) - 16 %/h; click damage resistance - 10; bonus for victory - 165,000 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Aether Titan",
       "Aetherbeast",
       "creature №96",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "693",
     "category": "creatures",
-    "text": "Eternal Nihilus characteristics: total health points (hp) - 948,904; health points regeneration (hp regen) - 17 %/h; click damage resistance - 10; bonus for victory - 167,500 GP, 10 Key(s), 100 SE.",
+    "text": "Eternal Nihilus characteristics: total health points (hp) - 6,152,794; health points regeneration (hp regen) - 17 %/h; click damage resistance - 10; bonus for victory - 167,500 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Eternal Nihilus",
       "Voidreaper",
       "creature №97",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "694",
     "category": "creatures",
-    "text": "Deus Machina characteristics: total health points (hp) - 1,007,546; health points regeneration (hp regen) - 18 %/h; click damage resistance - 10; bonus for victory - 170,000 GP, 10 Key(s), 100 SE.",
+    "text": "Deus Machina characteristics: total health points (hp) - 6,425,485; health points regeneration (hp regen) - 18 %/h; click damage resistance - 10; bonus for victory - 170,000 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Deus Machina",
       "Mechanoid",
       "creature №98",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "695",
     "category": "creatures",
-    "text": "Solarion Prime characteristics: total health points (hp) - 1,069,813; health points regeneration (hp regen) - 19 %/h; click damage resistance - 11; bonus for victory - 172,500 GP, 10 Key(s), 100 SE.",
+    "text": "Solarion Prime characteristics: total health points (hp) - 6,710,061; health points regeneration (hp regen) - 19 %/h; click damage resistance - 11; bonus for victory - 172,500 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Solarion Prime",
       "Solarion",
       "creature №99",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "696",
     "category": "creatures",
-    "text": "Galaxgod characteristics: total health points (hp) - 1,135,927; health points regeneration (hp regen) - 20 %/h; click damage resistance - 11; bonus for victory - 175,000 GP, 10 Key(s), 100 SE.",
+    "text": "Galaxgod characteristics: total health points (hp) - 7,007,043; health points regeneration (hp regen) - 20 %/h; click damage resistance - 11; bonus for victory - 175,000 GP, 10 Key(s), 100 SE.",
     "tags": [
       "Galaxgod",
       "Nyxarian",
       "creature №100",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "697",
     "category": "creatures",
-    "text": "Epic Stonebud characteristics: total health points (hp) - 1,206,127; health points regeneration (hp regen) - 12 %/h; click damage resistance - 10; bonus for victory - 180,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Stonebud characteristics: total health points (hp) - 7,308,735; health points regeneration (hp regen) - 12 %/h; click damage resistance - 10; bonus for victory - 180,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Stonebud",
       "Terramorph",
       "creature №101",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "698",
     "category": "creatures",
-    "text": "Epic Spikehatch characteristics: total health points (hp) - 1,280,666; health points regeneration (hp regen) - 13 %/h; click damage resistance - 10; bonus for victory - 185,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Spikehatch characteristics: total health points (hp) - 7,623,215; health points regeneration (hp regen) - 13 %/h; click damage resistance - 10; bonus for victory - 185,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Spikehatch",
       "Sauralith",
       "creature №102",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "699",
     "category": "creatures",
-    "text": "Epic Frostling characteristics: total health points (hp) - 1,359,811; health points regeneration (hp regen) - 14 %/h; click damage resistance - 10; bonus for victory - 190,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Frostling characteristics: total health points (hp) - 7,951,029; health points regeneration (hp regen) - 14 %/h; click damage resistance - 10; bonus for victory - 190,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Frostling",
       "Glacivor",
       "creature №103",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "700",
     "category": "creatures",
-    "text": "Epic Cryopod characteristics: total health points (hp) - 1,443,848; health points regeneration (hp regen) - 15 %/h; click damage resistance - 10; bonus for victory - 195,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Cryopod characteristics: total health points (hp) - 8,292,742; health points regeneration (hp regen) - 15 %/h; click damage resistance - 10; bonus for victory - 195,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Cryopod",
       "Zygaroth",
       "creature №104",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "701",
     "category": "creatures",
-    "text": "Epic Kragorin characteristics: total health points (hp) - 1,533,077; health points regeneration (hp regen) - 16 %/h; click damage resistance - 10; bonus for victory - 200,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Kragorin characteristics: total health points (hp) - 8,648,942; health points regeneration (hp regen) - 16 %/h; click damage resistance - 10; bonus for victory - 200,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Kragorin",
       "Kragorian",
       "creature №105",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "702",
     "category": "creatures",
-    "text": "Epic Aetherling characteristics: total health points (hp) - 1,627,822; health points regeneration (hp regen) - 17 %/h; click damage resistance - 11; bonus for victory - 205,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Aetherling characteristics: total health points (hp) - 9,020,244; health points regeneration (hp regen) - 17 %/h; click damage resistance - 11; bonus for victory - 205,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Aetherling",
       "Aetherbeast",
       "creature №106",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "703",
     "category": "creatures",
-    "text": "Epic Void Wisp characteristics: total health points (hp) - 1,728,421; health points regeneration (hp regen) - 18 %/h; click damage resistance - 11; bonus for victory - 210,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Void Wisp characteristics: total health points (hp) - 9,407,287; health points regeneration (hp regen) - 18 %/h; click damage resistance - 11; bonus for victory - 210,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Void Wisp",
       "Voidreaper",
       "creature №107",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "704",
     "category": "creatures",
-    "text": "Epic Sentry Orb characteristics: total health points (hp) - 1,835,238; health points regeneration (hp regen) - 19 %/h; click damage resistance - 11; bonus for victory - 215,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Sentry Orb characteristics: total health points (hp) - 9,810,740; health points regeneration (hp regen) - 19 %/h; click damage resistance - 11; bonus for victory - 215,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Sentry Orb",
       "Mechanoid",
       "creature №108",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "705",
     "category": "creatures",
-    "text": "Epic Solar Spark characteristics: total health points (hp) - 1,948,655; health points regeneration (hp regen) - 20 %/h; click damage resistance - 12; bonus for victory - 220,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Solar Spark characteristics: total health points (hp) - 10,231,296; health points regeneration (hp regen) - 20 %/h; click damage resistance - 12; bonus for victory - 220,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Solar Spark",
       "Solarion",
       "creature №109",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "706",
     "category": "creatures",
-    "text": "Epic Protoform characteristics: total health points (hp) - 2,069,082; health points regeneration (hp regen) - 21 %/h; click damage resistance - 12; bonus for victory - 225,000 GP, 11 Key(s), 100 SE.",
+    "text": "Epic Protoform characteristics: total health points (hp) - 10,669,683; health points regeneration (hp regen) - 21 %/h; click damage resistance - 12; bonus for victory - 225,000 GP, 11 Key(s), 100 SE.",
     "tags": [
       "Epic Protoform",
       "Nyxarian",
       "creature №110",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "707",
     "category": "creatures",
-    "text": "Epic Pebbleback characteristics: total health points (hp) - 2,196,951; health points regeneration (hp regen) - 13 %/h; click damage resistance - 11; bonus for victory - 230,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Pebbleback characteristics: total health points (hp) - 11,120,351; health points regeneration (hp regen) - 13 %/h; click damage resistance - 11; bonus for victory - 230,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Pebbleback",
       "Terramorph",
       "creature №111",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "708",
     "category": "creatures",
-    "text": "Epic Bladewyrm characteristics: total health points (hp) - 2,332,723; health points regeneration (hp regen) - 14 %/h; click damage resistance - 11; bonus for victory - 235,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Bladewyrm characteristics: total health points (hp) - 11,589,846; health points regeneration (hp regen) - 14 %/h; click damage resistance - 11; bonus for victory - 235,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Bladewyrm",
       "Sauralith",
       "creature №112",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "709",
     "category": "creatures",
-    "text": "Epic Chillcrawler characteristics: total health points (hp) - 2,476,885; health points regeneration (hp regen) - 15 %/h; click damage resistance - 11; bonus for victory - 240,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Chillcrawler characteristics: total health points (hp) - 12,078,954; health points regeneration (hp regen) - 15 %/h; click damage resistance - 11; bonus for victory - 240,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Chillcrawler",
       "Glacivor",
       "creature №113",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "710",
     "category": "creatures",
-    "text": "Epic Glacite characteristics: total health points (hp) - 2,629,957; health points regeneration (hp regen) - 16 %/h; click damage resistance - 11; bonus for victory - 245,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Glacite characteristics: total health points (hp) - 12,588,493; health points regeneration (hp regen) - 16 %/h; click damage resistance - 11; bonus for victory - 245,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Glacite",
       "Zygaroth",
       "creature №114",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "711",
     "category": "creatures",
-    "text": "Epic Ska’gari characteristics: total health points (hp) - 2,792,488; health points regeneration (hp regen) - 17 %/h; click damage resistance - 11; bonus for victory - 250,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Ska’gari characteristics: total health points (hp) - 13,119,317; health points regeneration (hp regen) - 17 %/h; click damage resistance - 11; bonus for victory - 250,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Ska’gari",
       "Kragorian",
       "creature №115",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "712",
     "category": "creatures",
-    "text": "Epic Sparkling characteristics: total health points (hp) - 2,965,064; health points regeneration (hp regen) - 18 %/h; click damage resistance - 12; bonus for victory - 255,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Sparkling characteristics: total health points (hp) - 13,672,311; health points regeneration (hp regen) - 18 %/h; click damage resistance - 12; bonus for victory - 255,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Sparkling",
       "Aetherbeast",
       "creature №116",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "713",
     "category": "creatures",
-    "text": "Epic Shadow Stalker characteristics: total health points (hp) - 3,148,305; health points regeneration (hp regen) - 19 %/h; click damage resistance - 12; bonus for victory - 260,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Shadow Stalker characteristics: total health points (hp) - 14,248,405; health points regeneration (hp regen) - 19 %/h; click damage resistance - 12; bonus for victory - 260,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Shadow Stalker",
       "Voidreaper",
       "creature №117",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "714",
     "category": "creatures",
-    "text": "Epic Scout Drone characteristics: total health points (hp) - 3,342,870; health points regeneration (hp regen) - 20 %/h; click damage resistance - 12; bonus for victory - 265,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Scout Drone characteristics: total health points (hp) - 14,848,563; health points regeneration (hp regen) - 20 %/h; click damage resistance - 12; bonus for victory - 265,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Scout Drone",
       "Mechanoid",
       "creature №118",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "715",
     "category": "creatures",
-    "text": "Epic Ignis Wraith characteristics: total health points (hp) - 3,549,460; health points regeneration (hp regen) - 21 %/h; click damage resistance - 13; bonus for victory - 270,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Ignis Wraith characteristics: total health points (hp) - 15,473,785; health points regeneration (hp regen) - 21 %/h; click damage resistance - 13; bonus for victory - 270,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Ignis Wraith",
       "Solarion",
       "creature №119",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "716",
     "category": "creatures",
-    "text": "Epic Nyxling characteristics: total health points (hp) - 3,768,817; health points regeneration (hp regen) - 22 %/h; click damage resistance - 13; bonus for victory - 275,000 GP, 12 Key(s), 100 SE.",
+    "text": "Epic Nyxling characteristics: total health points (hp) - 16,125,122; health points regeneration (hp regen) - 22 %/h; click damage resistance - 13; bonus for victory - 275,000 GP, 12 Key(s), 100 SE.",
     "tags": [
       "Epic Nyxling",
       "Nyxarian",
       "creature №120",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "717",
     "category": "creatures",
-    "text": "Epic Rockling characteristics: total health points (hp) - 4,001,729; health points regeneration (hp regen) - 14 %/h; click damage resistance - 12; bonus for victory - 280,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Rockling characteristics: total health points (hp) - 16,794,026; health points regeneration (hp regen) - 14 %/h; click damage resistance - 12; bonus for victory - 280,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Rockling",
       "Terramorph",
       "creature №121",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "718",
     "category": "creatures",
-    "text": "Epic Spinestrike characteristics: total health points (hp) - 4,249,036; health points regeneration (hp regen) - 15 %/h; click damage resistance - 12; bonus for victory - 285,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Spinestrike characteristics: total health points (hp) - 17,490,435; health points regeneration (hp regen) - 15 %/h; click damage resistance - 12; bonus for victory - 285,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Spinestrike",
       "Sauralith",
       "creature №122",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "719",
     "category": "creatures",
-    "text": "Epic Snowstalker characteristics: total health points (hp) - 4,511,627; health points regeneration (hp regen) - 16 %/h; click damage resistance - 12; bonus for victory - 290,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Snowstalker characteristics: total health points (hp) - 18,215,4787; health points regeneration (hp regen) - 16 %/h; click damage resistance - 12; bonus for victory - 290,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Snowstalker",
       "Glacivor",
       "creature №123",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "720",
     "category": "creatures",
-    "text": "Epic Shardling characteristics: total health points (hp) - 4,790,445; health points regeneration (hp regen) - 17 %/h; click damage resistance - 12; bonus for victory - 295,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Shardling characteristics: total health points (hp) - 18,970,329; health points regeneration (hp regen) - 17 %/h; click damage resistance - 12; bonus for victory - 295,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Shardling",
       "Zygaroth",
       "creature №124",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "721",
     "category": "creatures",
-    "text": "Epic Thar’goth characteristics: total health points (hp) - 5,086,495; health points regeneration (hp regen) - 18 %/h; click damage resistance - 13; bonus for victory - 300,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Thar’goth characteristics: total health points (hp) - 19,756,215; health points regeneration (hp regen) - 18 %/h; click damage resistance - 13; bonus for victory - 300,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Thar’goth",
       "Kragorian",
       "creature №125",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "722",
     "category": "creatures",
-    "text": "Epic Fluxling characteristics: total health points (hp) - 5,400,840; health points regeneration (hp regen) - 19 %/h; click damage resistance - 13; bonus for victory - 305,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Fluxling characteristics: total health points (hp) - 20,574,403; health points regeneration (hp regen) - 19 %/h; click damage resistance - 13; bonus for victory - 305,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Fluxling",
       "Aetherbeast",
       "creature №126",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "723",
     "category": "creatures",
-    "text": "Epic Gloom Weaver characteristics: total health points (hp) - 5,734,612; health points regeneration (hp regen) - 20 %/h; click damage resistance - 13; bonus for victory - 310,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Gloom Weaver characteristics: total health points (hp) - 21,426,223; health points regeneration (hp regen) - 20 %/h; click damage resistance - 13; bonus for victory - 310,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Gloom Weaver",
       "Voidreaper",
       "creature №127",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "724",
     "category": "creatures",
-    "text": "Epic Combat Walker characteristics: total health points (hp) - 6,089,011; health points regeneration (hp regen) - 21 %/h; click damage resistance - 13; bonus for victory - 315,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Combat Walker characteristics: total health points (hp) - 22,313,054; health points regeneration (hp regen) - 21 %/h; click damage resistance - 13; bonus for victory - 315,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Combat Walker",
       "Mechanoid",
       "creature №128",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "725",
     "category": "creatures",
-    "text": "Epic Solarflare Sentinel characteristics: total health points (hp) - 6,465,312; health points regeneration (hp regen) - 22 %/h; click damage resistance - 14; bonus for victory - 320,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Solarflare Sentinel characteristics: total health points (hp) - 23,236,332; health points regeneration (hp regen) - 22 %/h; click damage resistance - 14; bonus for victory - 320,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Solarflare Sentinel",
       "Solarion",
       "creature №129",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "726",
     "category": "creatures",
-    "text": "Epic Nocturnus characteristics: total health points (hp) - 6,864,869; health points regeneration (hp regen) - 23 %/h; click damage resistance - 14; bonus for victory - 325,000 GP, 13 Key(s), 100 SE.",
+    "text": "Epic Nocturnus characteristics: total health points (hp) - 24,197,553; health points regeneration (hp regen) - 23 %/h; click damage resistance - 14; bonus for victory - 325,000 GP, 13 Key(s), 100 SE.",
     "tags": [
       "Epic Nocturnus",
       "Nyxarian",
       "creature №130",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "727",
     "category": "creatures",
-    "text": "Epic Gravelord characteristics: total health points (hp) - 7,289,118; health points regeneration (hp regen) - 15 %/h; click damage resistance - 13; bonus for victory - 330,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Gravelord characteristics: total health points (hp) - 25,183,561; health points regeneration (hp regen) - 15 %/h; click damage resistance - 13; bonus for victory - 330,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Gravelord",
       "Terramorph",
       "creature №131",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "728",
     "category": "creatures",
-    "text": "Epic Barbclaw characteristics: total health points (hp) - 7,739,585; health points regeneration (hp regen) - 16 %/h; click damage resistance - 13; bonus for victory - 335,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Barbclaw characteristics: total health points (hp) - 26,209,417; health points regeneration (hp regen) - 16 %/h; click damage resistance - 13; bonus for victory - 335,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Barbclaw",
       "Sauralith",
       "creature №132",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "729",
     "category": "creatures",
-    "text": "Epic Icethorn characteristics: total health points (hp) - 8,217,891; health points regeneration (hp regen) - 17 %/h; click damage resistance - 13; bonus for victory - 340,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Icethorn characteristics: total health points (hp) - 27,276,725; health points regeneration (hp regen) - 17 %/h; click damage resistance - 13; bonus for victory - 340,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Icethorn",
       "Glacivor",
       "creature №133",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "730",
     "category": "creatures",
-    "text": "Epic Frostclaw characteristics: total health points (hp) - 8,725,757; health points regeneration (hp regen) - 18 %/h; click damage resistance - 13; bonus for victory - 345,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Frostclaw characteristics: total health points (hp) - 28,387,154; health points regeneration (hp regen) - 18 %/h; click damage resistance - 13; bonus for victory - 345,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Frostclaw",
       "Zygaroth",
       "creature №134",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "731",
     "category": "creatures",
-    "text": "Epic Gar’tok characteristics: total health points (hp) - 9,265,009; health points regeneration (hp regen) - 19 %/h; click damage resistance - 13; bonus for victory - 350,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Gar’tok characteristics: total health points (hp) - 29,542,439; health points regeneration (hp regen) - 19 %/h; click damage resistance - 13; bonus for victory - 350,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Gar’tok",
       "Kragorian",
       "creature №135",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "732",
     "category": "creatures",
-    "text": "Epic Electralisk characteristics: total health points (hp) - 9,837,587; health points regeneration (hp regen) - 20 %/h; click damage resistance - 14; bonus for victory - 355,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Electralisk characteristics: total health points (hp) - 30,744,384; health points regeneration (hp regen) - 20 %/h; click damage resistance - 14; bonus for victory - 355,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Electralisk",
       "Aetherbeast",
       "creature №136",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "733",
     "category": "creatures",
-    "text": "Epic Night Harbinger characteristics: total health points (hp) - 10,445,549; health points regeneration (hp regen) - 21 %/h; click damage resistance - 14; bonus for victory - 360,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Night Harbinger characteristics: total health points (hp) - 31,994,869; health points regeneration (hp regen) - 21 %/h; click damage resistance - 14; bonus for victory - 360,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Night Harbinger",
       "Voidreaper",
       "creature №137",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "734",
     "category": "creatures",
-    "text": "Epic Assault Strider characteristics: total health points (hp) - 11,091,084; health points regeneration (hp regen) - 22 %/h; click damage resistance - 14; bonus for victory - 365,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Assault Strider characteristics: total health points (hp) - 33,295,843; health points regeneration (hp regen) - 22 %/h; click damage resistance - 14; bonus for victory - 365,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Assault Strider",
       "Mechanoid",
       "creature №138",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "735",
     "category": "creatures",
-    "text": "Epic Helios Incarnate characteristics: total health points (hp) - 11,776,514; health points regeneration (hp regen) - 23 %/h; click damage resistance - 15; bonus for victory - 370,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Helios Incarnate characteristics: total health points (hp) - 34,649,338; health points regeneration (hp regen) - 23 %/h; click damage resistance - 15; bonus for victory - 370,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Helios Incarnate",
       "Solarion",
       "creature №139",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "736",
     "category": "creatures",
-    "text": "Epic Starringer characteristics: total health points (hp) - 12,504,302; health points regeneration (hp regen) - 24 %/h; click damage resistance - 15; bonus for victory - 375,000 GP, 14 Key(s), 100 SE.",
+    "text": "Epic Starringer characteristics: total health points (hp) - 36,057,466; health points regeneration (hp regen) - 24 %/h; click damage resistance - 15; bonus for victory - 375,000 GP, 14 Key(s), 100 SE.",
     "tags": [
       "Epic Starringer",
       "Nyxarian",
       "creature №140",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "737",
     "category": "creatures",
-    "text": "Epic Mountainstride characteristics: total health points (hp) - 13,277,068; health points regeneration (hp regen) - 16 %/h; click damage resistance - 14; bonus for victory - 380,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Mountainstride characteristics: total health points (hp) - 37,499,980; health points regeneration (hp regen) - 16 %/h; click damage resistance - 14; bonus for victory - 380,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Mountainstride",
       "Terramorph",
       "creature №141",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "738",
     "category": "creatures",
-    "text": "Epic Hellspike characteristics: total health points (hp) - 14,097,591; health points regeneration (hp regen) - 17 %/h; click damage resistance - 14; bonus for victory - 385,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Hellspike characteristics: total health points (hp) - 38,999,672; health points regeneration (hp regen) - 17 %/h; click damage resistance - 14; bonus for victory - 385,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Hellspike",
       "Sauralith",
       "creature №142",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "739",
     "category": "creatures",
-    "text": "Epic Glacierbeast characteristics: total health points (hp) - 14,968,822; health points regeneration (hp regen) - 18 %/h; click damage resistance - 14; bonus for victory - 390,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Glacierbeast characteristics: total health points (hp) - 40,558,795; health points regeneration (hp regen) - 18 %/h; click damage resistance - 14; bonus for victory - 390,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Glacierbeast",
       "Glacivor",
       "creature №143",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "740",
     "category": "creatures",
-    "text": "Epic Icetalon characteristics: total health points (hp) - 15,893,895; health points regeneration (hp regen) - 19 %/h; click damage resistance - 14; bonus for victory - 395,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Icetalon characteristics: total health points (hp) - 42,179,681; health points regeneration (hp regen) - 19 %/h; click damage resistance - 14; bonus for victory - 395,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Icetalon",
       "Zygaroth",
       "creature №144",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "741",
     "category": "creatures",
-    "text": "Epic Lok’tar characteristics: total health points (hp) - 16,876,138; health points regeneration (hp regen) - 20 %/h; click damage resistance - 14; bonus for victory - 400,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Lok’tar characteristics: total health points (hp) - 43,864,767; health points regeneration (hp regen) - 20 %/h; click damage resistance - 14; bonus for victory - 400,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Lok’tar",
       "Kragorian",
       "creature №145",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "742",
     "category": "creatures",
-    "text": "Epic Voltcat characteristics: total health points (hp) - 17,919,083; health points regeneration (hp regen) - 21 %/h; click damage resistance - 15; bonus for victory - 405,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Voltcat characteristics: total health points (hp) - 45,616,572; health points regeneration (hp regen) - 21 %/h; click damage resistance - 15; bonus for victory - 405,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Voltcat",
       "Aetherbeast",
       "creature №146",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "743",
     "category": "creatures",
-    "text": "Epic Eclipse Bringer characteristics: total health points (hp) - 19,026,483; health points regeneration (hp regen) - 22 %/h; click damage resistance - 15; bonus for victory - 410,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Eclipse Bringer characteristics: total health points (hp) - 47,437,721; health points regeneration (hp regen) - 22 %/h; click damage resistance - 15; bonus for victory - 410,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Eclipse Bringer",
       "Voidreaper",
       "creature №147",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "744",
     "category": "creatures",
-    "text": "Epic War Droid characteristics: total health points (hp) - 20,202,319; health points regeneration (hp regen) - 23 %/h; click damage resistance - 15; bonus for victory - 415,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic War Droid characteristics: total health points (hp) - 49,330,939; health points regeneration (hp regen) - 23 %/h; click damage resistance - 15; bonus for victory - 415,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic War Droid",
       "Mechanoid",
       "creature №148",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "745",
     "category": "creatures",
-    "text": "Epic Starborn Scion characteristics: total health points (hp) - 21,450,823; health points regeneration (hp regen) - 24 %/h; click damage resistance - 16; bonus for victory - 420,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Starborn Scion characteristics: total health points (hp) - 51,299,058; health points regeneration (hp regen) - 24 %/h; click damage resistance - 16; bonus for victory - 420,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Starborn Scion",
       "Solarion",
       "creature №149",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "746",
     "category": "creatures",
-    "text": "Epic Galaxer characteristics: total health points (hp) - 22,776,484; health points regeneration (hp regen) - 25 %/h; click damage resistance - 16; bonus for victory - 425,000 GP, 15 Key(s), 100 SE.",
+    "text": "Epic Galaxer characteristics: total health points (hp) - 53,345,018; health points regeneration (hp regen) - 25 %/h; click damage resistance - 16; bonus for victory - 425,000 GP, 15 Key(s), 100 SE.",
     "tags": [
       "Epic Galaxer",
       "Nyxarian",
       "creature №150",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "747",
     "category": "creatures",
-    "text": "Epic Earthshaker characteristics: total health points (hp) - 24,184,070; health points regeneration (hp regen) - 17 %/h; click damage resistance - 15; bonus for victory - 435,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Earthshaker characteristics: total health points (hp) - 55,437,654; health points regeneration (hp regen) - 17 %/h; click damage resistance - 15; bonus for victory - 435,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Earthshaker",
       "Terramorph",
       "creature №151",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "748",
     "category": "creatures",
-    "text": "Epic Infernair characteristics: total health points (hp) - 25,678,646; health points regeneration (hp regen) - 18 %/h; click damage resistance - 15; bonus for victory - 445,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Infernair characteristics: total health points (hp) - 57,611,415; health points regeneration (hp regen) - 18 %/h; click damage resistance - 15; bonus for victory - 445,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Infernair",
       "Sauralith",
       "creature №152",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "749",
     "category": "creatures",
-    "text": "Epic Frost Titan characteristics: total health points (hp) - 27,265,586; health points regeneration (hp regen) - 19 %/h; click damage resistance - 15; bonus for victory - 455,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Frost Titan characteristics: total health points (hp) - 59,869,407; health points regeneration (hp regen) - 19 %/h; click damage resistance - 15; bonus for victory - 455,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Frost Titan",
       "Glacivor",
       "creature №153",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "750",
     "category": "creatures",
-    "text": "Epic Glacius characteristics: total health points (hp) - 28,950,599; health points regeneration (hp regen) - 20 %/h; click damage resistance - 15; bonus for victory - 465,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Glacius characteristics: total health points (hp) - 62,214,857; health points regeneration (hp regen) - 20 %/h; click damage resistance - 15; bonus for victory - 465,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Glacius",
       "Zygaroth",
       "creature №154",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "751",
     "category": "creatures",
-    "text": "Epic Vor’gar characteristics: total health points (hp) - 30,739,747; health points regeneration (hp regen) - 21 %/h; click damage resistance - 15; bonus for victory - 475,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Vor’gar characteristics: total health points (hp) - 64,651,110; health points regeneration (hp regen) - 21 %/h; click damage resistance - 15; bonus for victory - 475,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Vor’gar",
       "Kragorian",
       "creature №155",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "752",
     "category": "creatures",
-    "text": "Epic Thundercore characteristics: total health points (hp) - 32,639,463; health points regeneration (hp regen) - 22 %/h; click damage resistance - 16; bonus for victory - 485,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Thundercore characteristics: total health points (hp) - 67,181,642; health points regeneration (hp regen) - 22 %/h; click damage resistance - 16; bonus for victory - 485,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Thundercore",
       "Aetherbeast",
       "creature №156",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "753",
     "category": "creatures",
-    "text": "Epic Abyss Walker characteristics: total health points (hp) - 34,656,582; health points regeneration (hp regen) - 23 %/h; click damage resistance - 16; bonus for victory - 495,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Abyss Walker characteristics: total health points (hp) - 69,810,054; health points regeneration (hp regen) - 23 %/h; click damage resistance - 16; bonus for victory - 495,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Abyss Walker",
       "Voidreaper",
       "creature №157",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "754",
     "category": "creatures",
-    "text": "Epic Siege Goliath characteristics: total health points (hp) - 36,798,359; health points regeneration (hp regen) - 24 %/h; click damage resistance - 16; bonus for victory - 505,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Siege Goliath characteristics: total health points (hp) - 72,540,087; health points regeneration (hp regen) - 24 %/h; click damage resistance - 16; bonus for victory - 505,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Siege Goliath",
       "Mechanoid",
       "creature №158",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "755",
     "category": "creatures",
-    "text": "Epic Flame Stalker characteristics: total health points (hp) - 39,072,497; health points regeneration (hp regen) - 25 %/h; click damage resistance - 17; bonus for victory - 515,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Flame Stalker characteristics: total health points (hp) - 75,375,620; health points regeneration (hp regen) - 25 %/h; click damage resistance - 17; bonus for victory - 515,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Flame Stalker",
       "Solarion",
       "creature №159",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "756",
     "category": "creatures",
-    "text": "Epic Eclipsor characteristics: total health points (hp) - 41,487,177; health points regeneration (hp regen) - 26 %/h; click damage resistance - 17; bonus for victory - 525,000 GP, 16 Key(s), 100 SE.",
+    "text": "Epic Eclipsor characteristics: total health points (hp) - 78,320,681; health points regeneration (hp regen) - 26 %/h; click damage resistance - 17; bonus for victory - 525,000 GP, 16 Key(s), 100 SE.",
     "tags": [
       "Epic Eclipsor",
       "Nyxarian",
       "creature №160",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "757",
     "category": "creatures",
-    "text": "Epic Golem Sentinel characteristics: total health points (hp) - 44,051,085; health points regeneration (hp regen) - 18 %/h; click damage resistance - 16; bonus for victory - 535,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Golem Sentinel characteristics: total health points (hp) - 81,327,279; health points regeneration (hp regen) - 18 %/h; click damage resistance - 16; bonus for victory - 535,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Golem Sentinel",
       "Terramorph",
       "creature №161",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "758",
     "category": "creatures",
-    "text": "Epic Firescourge characteristics: total health points (hp) - 46,773,442; health points regeneration (hp regen) - 19 %/h; click damage resistance - 16; bonus for victory - 545,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Firescourge characteristics: total health points (hp) - 84,447,424; health points regeneration (hp regen) - 19 %/h; click damage resistance - 16; bonus for victory - 545,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Firescourge",
       "Sauralith",
       "creature №162",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "759",
     "category": "creatures",
-    "text": "Epic Cryomancer characteristics: total health points (hp) - 49,664,041; health points regeneration (hp regen) - 20 %/h; click damage resistance - 16; bonus for victory - 555,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Cryomancer characteristics: total health points (hp) - 87,685,321; health points regeneration (hp regen) - 20 %/h; click damage resistance - 16; bonus for victory - 555,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Cryomancer",
       "Glacivor",
       "creature №163",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "760",
     "category": "creatures",
-    "text": "Epic Cryolord characteristics: total health points (hp) - 52,733,279; health points regeneration (hp regen) - 21 %/h; click damage resistance - 16; bonus for victory - 565,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Cryolord characteristics: total health points (hp) - 91,045,329; health points regeneration (hp regen) - 21 %/h; click damage resistance - 16; bonus for victory - 565,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Cryolord",
       "Zygaroth",
       "creature №164",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "761",
     "category": "creatures",
-    "text": "Epic Kro’than characteristics: total health points (hp) - 55,992,195; health points regeneration (hp regen) - 22 %/h; click damage resistance - 16; bonus for victory - 575,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Kro’than characteristics: total health points (hp) - 94,531,962; health points regeneration (hp regen) - 22 %/h; click damage resistance - 16; bonus for victory - 575,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Kro’than",
       "Kragorian",
       "creature №165",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "762",
     "category": "creatures",
-    "text": "Epic Stormclaw characteristics: total health points (hp) - 59,452,513; health points regeneration (hp regen) - 23 %/h; click damage resistance - 17; bonus for victory - 585,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Stormclaw characteristics: total health points (hp) - 98,149,901; health points regeneration (hp regen) - 23 %/h; click damage resistance - 17; bonus for victory - 585,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Stormclaw",
       "Aetherbeast",
       "creature №166",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "763",
     "category": "creatures",
-    "text": "Epic Dread Wraith characteristics: total health points (hp) - 63,126,678; health points regeneration (hp regen) - 24 %/h; click damage resistance - 17; bonus for victory - 595,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Dread Wraith characteristics: total health points (hp) - 101,903,991; health points regeneration (hp regen) - 24 %/h; click damage resistance - 17; bonus for victory - 595,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Dread Wraith",
       "Voidreaper",
       "creature №167",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "764",
     "category": "creatures",
-    "text": "Epic Battle Titan characteristics: total health points (hp) - 67,027,907; health points regeneration (hp regen) - 25 %/h; click damage resistance - 17; bonus for victory - 605,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Battle Titan characteristics: total health points (hp) - 105,799,251; health points regeneration (hp regen) - 25 %/h; click damage resistance - 17; bonus for victory - 605,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Battle Titan",
       "Mechanoid",
       "creature №168",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "765",
     "category": "creatures",
-    "text": "Epic Astral Titan characteristics: total health points (hp) - 71,170,232; health points regeneration (hp regen) - 26 %/h; click damage resistance - 18; bonus for victory - 615,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Astral Titan characteristics: total health points (hp) - 109,840,881; health points regeneration (hp regen) - 26 %/h; click damage resistance - 18; bonus for victory - 615,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Astral Titan",
       "Solarion",
       "creature №169",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "766",
     "category": "creatures",
-    "text": "Epic Stellarant characteristics: total health points (hp) - 75,568,552; health points regeneration (hp regen) - 27 %/h; click damage resistance - 18; bonus for victory - 625,000 GP, 17 Key(s), 100 SE.",
+    "text": "Epic Stellarant characteristics: total health points (hp) - 114,034,270; health points regeneration (hp regen) - 27 %/h; click damage resistance - 18; bonus for victory - 625,000 GP, 17 Key(s), 100 SE.",
     "tags": [
       "Epic Stellarant",
       "Nyxarian",
       "creature №170",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "767",
     "category": "creatures",
-    "text": "Epic Titanstone characteristics: total health points (hp) - 80,238,689; health points regeneration (hp regen) - 19 %/h; click damage resistance - 17; bonus for victory - 635,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Titanstone characteristics: total health points (hp) - 118,305,487; health points regeneration (hp regen) - 19 %/h; click damage resistance - 17; bonus for victory - 635,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Titanstone",
       "Terramorph",
       "creature №171",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "768",
     "category": "creatures",
-    "text": "Epic Volcanus Rex characteristics: total health points (hp) - 85,197,440; health points regeneration (hp regen) - 20 %/h; click damage resistance - 17; bonus for victory - 645,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Volcanus Rex characteristics: total health points (hp) - 122,732,978; health points regeneration (hp regen) - 20 %/h; click damage resistance - 17; bonus for victory - 645,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Volcanus Rex",
       "Sauralith",
       "creature №172",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "769",
     "category": "creatures",
-    "text": "Epic Blizzard Warden characteristics: total health points (hp) - 90,462,642; health points regeneration (hp regen) - 21 %/h; click damage resistance - 17; bonus for victory - 655,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Blizzard Warden characteristics: total health points (hp) - 127,322,281; health points regeneration (hp regen) - 21 %/h; click damage resistance - 17; bonus for victory - 655,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Blizzard Warden",
       "Glacivor",
       "creature №173",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "770",
     "category": "creatures",
-    "text": "Epic Frostspike characteristics: total health points (hp) - 96,053,233; health points regeneration (hp regen) - 22 %/h; click damage resistance - 17; bonus for victory - 665,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Frostspike characteristics: total health points (hp) - 132,079,130; health points regeneration (hp regen) - 22 %/h; click damage resistance - 17; bonus for victory - 665,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Frostspike",
       "Zygaroth",
       "creature №174",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "771",
     "category": "creatures",
-    "text": "Epic Zar’gul characteristics: total health points (hp) - 101,989,323; health points regeneration (hp regen) - 23 %/h; click damage resistance - 17; bonus for victory - 675,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Zar’gul characteristics: total health points (hp) - 137,009,449; health points regeneration (hp regen) - 23 %/h; click damage resistance - 17; bonus for victory - 675,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Zar’gul",
       "Kragorian",
       "creature №175",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "772",
     "category": "creatures",
-    "text": "Epic Aetherlord characteristics: total health points (hp) - 108,292,263; health points regeneration (hp regen) - 24 %/h; click damage resistance - 18; bonus for victory - 685,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Aetherlord characteristics: total health points (hp) - 142,119,358; health points regeneration (hp regen) - 24 %/h; click damage resistance - 18; bonus for victory - 685,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Aetherlord",
       "Aetherbeast",
       "creature №176",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "773",
     "category": "creatures",
-    "text": "Epic Nether Lord characteristics: total health points (hp) - 114,984,725; health points regeneration (hp regen) - 25 %/h; click damage resistance - 18; bonus for victory - 695,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Nether Lord characteristics: total health points (hp) - 147,415,190; health points regeneration (hp regen) - 25 %/h; click damage resistance - 18; bonus for victory - 695,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Nether Lord",
       "Voidreaper",
       "creature №177",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "774",
     "category": "creatures",
-    "text": "Epic Iron Colossus characteristics: total health points (hp) - 122,090,781; health points regeneration (hp regen) - 26 %/h; click damage resistance - 18; bonus for victory - 705,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Iron Colossus characteristics: total health points (hp) - 152,903,488; health points regeneration (hp regen) - 26 %/h; click damage resistance - 18; bonus for victory - 705,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Iron Colossus",
       "Mechanoid",
       "creature №178",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "775",
     "category": "creatures",
-    "text": "Epic Celestial Flame characteristics: total health points (hp) - 129,635,991; health points regeneration (hp regen) - 27 %/h; click damage resistance - 19; bonus for victory - 715,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Celestial Flame characteristics: total health points (hp) - 158,591,010; health points regeneration (hp regen) - 27 %/h; click damage resistance - 19; bonus for victory - 715,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Celestial Flame",
       "Solarion",
       "creature №179",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "776",
     "category": "creatures",
-    "text": "Epic Wraithus characteristics: total health points (hp) - 137,647,495; health points regeneration (hp regen) - 28 %/h; click damage resistance - 19; bonus for victory - 725,000 GP, 18 Key(s), 100 SE.",
+    "text": "Epic Wraithus characteristics: total health points (hp) - 164,484,743; health points regeneration (hp regen) - 28 %/h; click damage resistance - 19; bonus for victory - 725,000 GP, 18 Key(s), 100 SE.",
     "tags": [
       "Epic Wraithus",
       "Nyxarian",
       "creature №180",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "777",
     "category": "creatures",
-    "text": "Epic Megolith characteristics: total health points (hp) - 146,154,111; health points regeneration (hp regen) - 20 %/h; click damage resistance - 18; bonus for victory - 735,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Megolith characteristics: total health points (hp) - 170,470,750; health points regeneration (hp regen) - 20 %/h; click damage resistance - 18; bonus for victory - 735,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Megolith",
       "Terramorph",
       "creature №181",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "778",
     "category": "creatures",
-    "text": "Epic Saurflare characteristics: total health points (hp) - 155,186,435; health points regeneration (hp regen) - 21 %/h; click damage resistance - 18; bonus for victory - 745,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Saurflare characteristics: total health points (hp) - 176,667,219; health points regeneration (hp regen) - 21 %/h; click damage resistance - 18; bonus for victory - 745,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Saurflare",
       "Sauralith",
       "creature №182",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "779",
     "category": "creatures",
-    "text": "Epic Glacial Colossus characteristics: total health points (hp) - 164,776,956; health points regeneration (hp regen) - 22 %/h; click damage resistance - 18; bonus for victory - 755,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Glacial Colossus characteristics: total health points (hp) - 183,081,184; health points regeneration (hp regen) - 22 %/h; click damage resistance - 18; bonus for victory - 755,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Glacial Colossus",
       "Glacivor",
       "creature №183",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "780",
     "category": "creatures",
-    "text": "Epic Glacial Titan characteristics: total health points (hp) - 174,960,172; health points regeneration (hp regen) - 23 %/h; click damage resistance - 18; bonus for victory - 765,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Glacial Titan characteristics: total health points (hp) - 189,719,895; health points regeneration (hp regen) - 23 %/h; click damage resistance - 18; bonus for victory - 765,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Glacial Titan",
       "Zygaroth",
       "creature №184",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "781",
     "category": "creatures",
-    "text": "Epic Rak’thar characteristics: total health points (hp) - 185,772,711; health points regeneration (hp regen) - 24 %/h; click damage resistance - 18; bonus for victory - 775,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Rak’thar characteristics: total health points (hp) - 196,590,821; health points regeneration (hp regen) - 24 %/h; click damage resistance - 18; bonus for victory - 775,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Rak’thar",
       "Kragorian",
       "creature №185",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "782",
     "category": "creatures",
-    "text": "Epic Stormlord characteristics: total health points (hp) - 197,253,464; health points regeneration (hp regen) - 25 %/h; click damage resistance - 19; bonus for victory - 785,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Stormlord characteristics: total health points (hp) - 203,701,658; health points regeneration (hp regen) - 25 %/h; click damage resistance - 19; bonus for victory - 785,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Stormlord",
       "Aetherbeast",
       "creature №186",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "783",
     "category": "creatures",
-    "text": "Epic Void Emperor characteristics: total health points (hp) - 209,443,729; health points regeneration (hp regen) - 26 %/h; click damage resistance - 19; bonus for victory - 795,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Void Emperor characteristics: total health points (hp) - 211,060,337; health points regeneration (hp regen) - 26 %/h; click damage resistance - 19; bonus for victory - 795,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Void Emperor",
       "Voidreaper",
       "creature №187",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "784",
     "category": "creatures",
-    "text": "Epic War Bringer characteristics: total health points (hp) - 222,387,351; health points regeneration (hp regen) - 27 %/h; click damage resistance - 19; bonus for victory - 805,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic War Bringer characteristics: total health points (hp) - 218,675,021; health points regeneration (hp regen) - 27 %/h; click damage resistance - 19; bonus for victory - 805,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic War Bringer",
       "Mechanoid",
       "creature №188",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "785",
     "category": "creatures",
-    "text": "Epic Sun Inferno characteristics: total health points (hp) - 236,130,889; health points regeneration (hp regen) - 28 %/h; click damage resistance - 20; bonus for victory - 815,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Sun Inferno characteristics: total health points (hp) - 226,554,126; health points regeneration (hp regen) - 28 %/h; click damage resistance - 20; bonus for victory - 815,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Sun Inferno",
       "Solarion",
       "creature №189",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "786",
     "category": "creatures",
-    "text": "Epic Tytanius characteristics: total health points (hp) - 250,723,778; health points regeneration (hp regen) - 29 %/h; click damage resistance - 20; bonus for victory - 825,000 GP, 19 Key(s), 100 SE.",
+    "text": "Epic Tytanius characteristics: total health points (hp) - 234,706,311; health points regeneration (hp regen) - 29 %/h; click damage resistance - 20; bonus for victory - 825,000 GP, 19 Key(s), 100 SE.",
     "tags": [
       "Epic Tytanius",
       "Nyxarian",
       "creature №190",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "787",
     "category": "creatures",
-    "text": "Epic Terravore characteristics: total health points (hp) - 266,218,508; health points regeneration (hp regen) - 21 %/h; click damage resistance - 19; bonus for victory - 835,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Terravore characteristics: total health points (hp) - 242,955,877; health points regeneration (hp regen) - 21 %/h; click damage resistance - 19; bonus for victory - 835,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Terravore",
       "Terramorph",
       "creature №191",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "788",
     "category": "creatures",
-    "text": "Epic Drakenscorch characteristics: total health points (hp) - 282,670,812; health points regeneration (hp regen) - 22 %/h; click damage resistance - 19; bonus for victory - 845,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Drakenscorch characteristics: total health points (hp) - 251,480,739; health points regeneration (hp regen) - 22 %/h; click damage resistance - 19; bonus for victory - 845,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Drakenscorch",
       "Sauralith",
       "creature №192",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "789",
     "category": "creatures",
-    "text": "Epic Eternal Frostlord characteristics: total health points (hp) - 300,139,868; health points regeneration (hp regen) - 23 %/h; click damage resistance - 19; bonus for victory - 855,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Eternal Frostlord characteristics: total health points (hp) - 260,289,319; health points regeneration (hp regen) - 23 %/h; click damage resistance - 19; bonus for victory - 855,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Eternal Frostlord",
       "Glacivor",
       "creature №193",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "790",
     "category": "creatures",
-    "text": "Epic Zygoth Supreme characteristics: total health points (hp) - 318,688,512; health points regeneration (hp regen) - 24 %/h; click damage resistance - 19; bonus for victory - 865,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Zygoth Supreme characteristics: total health points (hp) - 269,390,255; health points regeneration (hp regen) - 24 %/h; click damage resistance - 19; bonus for victory - 865,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Zygoth Supreme",
       "Zygaroth",
       "creature №194",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "791",
     "category": "creatures",
-    "text": "Epic Mor’kath characteristics: total health points (hp) - 338,383,462; health points regeneration (hp regen) - 25 %/h; click damage resistance - 19; bonus for victory - 875,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Mor’kath characteristics: total health points (hp) - 278,792,405; health points regeneration (hp regen) - 25 %/h; click damage resistance - 19; bonus for victory - 875,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Mor’kath",
       "Kragorian",
       "creature №195",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "792",
     "category": "creatures",
-    "text": "Epic Aether Titan characteristics: total health points (hp) - 359,295,560; health points regeneration (hp regen) - 26 %/h; click damage resistance - 20; bonus for victory - 885,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Aether Titan characteristics: total health points (hp) - 288,504,847; health points regeneration (hp regen) - 26 %/h; click damage resistance - 20; bonus for victory - 885,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Aether Titan",
       "Aetherbeast",
       "creature №196",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "793",
     "category": "creatures",
-    "text": "Epic Eternal Nihilus characteristics: total health points (hp) - 381,500,025; health points regeneration (hp regen) - 27 %/h; click damage resistance - 20; bonus for victory - 895,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Eternal Nihilus characteristics: total health points (hp) - 298,536,882; health points regeneration (hp regen) - 27 %/h; click damage resistance - 20; bonus for victory - 895,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Eternal Nihilus",
       "Voidreaper",
       "creature №197",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "794",
     "category": "creatures",
-    "text": "Epic Deus Machina characteristics: total health points (hp) - 405,076,727; health points regeneration (hp regen) - 28 %/h; click damage resistance - 20; bonus for victory - 905,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Deus Machina characteristics: total health points (hp) - 308,898,036; health points regeneration (hp regen) - 28 %/h; click damage resistance - 20; bonus for victory - 905,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Deus Machina",
       "Mechanoid",
       "creature №198",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "795",
     "category": "creatures",
-    "text": "Epic Solarion Prime characteristics: total health points (hp) - 430,110,469; health points regeneration (hp regen) - 29 %/h; click damage resistance - 21; bonus for victory - 915,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Solarion Prime characteristics: total health points (hp) - 319,598,068; health points regeneration (hp regen) - 29 %/h; click damage resistance - 21; bonus for victory - 915,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Solarion Prime",
       "Solarion",
       "creature №199",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
     "id": "796",
     "category": "creatures",
-    "text": "Epic Galaxgod characteristics: total health points (hp) - 456,691,296; health points regeneration (hp regen) - 30 %/h; Resistance - '-21'; bonus for victory - 925,000 GP, 20 Key(s), 100 SE.",
+    "text": "Epic Galaxgod characteristics: total health points (hp) - 350,000,000; health points regeneration (hp regen) - 30 %/h; Resistance - '-21'; bonus for victory - 925,000 GP, 20 Key(s), 100 SE.",
     "tags": [
       "Epic Galaxgod",
       "Nyxarian",
       "creature №200",
-      "characteristics", "hp", "health points", "hp regen", "regen", "regeneration", "resistance"
+      "characteristics", "hp", "хп", "health points", "hp regen", "regen", "regeneration", "resistance"
     ]
   },
   {
@@ -7955,31 +7955,65 @@ cat >app/services/responder/rag/knowledge_on.json<< EOF
     "id": "823",
     "text": "I can detect the emotional spectra of my interlocutors, which helps me instantly sense the mood of the audience.",
     "category": "galaxybee",
-    "tags": ["emotional intelligence", "sentiment analysis", "mood detection", "audience insight"]
+    "tags": [
+      "emotional intelligence",
+      "sentiment analysis",
+      "mood detection",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "824",
     "text": "My name is entered in the Galactic Encyclopedia as a champion of plasma marksmanship at long distances.",
     "category": "galaxybee",
-    "tags": ["Galactic Encyclopedia", "plasma marksmanship", "long-range combat", "champion"]
+    "tags": [
+      "plasma marksmanship",
+      "champion",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "825",
     "text": "I decoded ancient runic scripts, thereby opening a new branch of cybernetic science.",
     "category": "galaxybee",
-    "tags": ["runic scripts", "decoding", "ancient languages", "cybernetic science"]
+    "tags": [
+      "runic scripts",
+      "decoding",
+      "cybernetic science",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "826",
     "text": "My visors analyze fractal patterns in interstellar dust, enabling me to plot the safest and fastest routes between galaxies.",
     "category": "galaxybee",
-    "tags": ["fractal analysis", "interstellar navigation", "dust patterns", "route planning"]
+    "tags": [
+      "fractal analysis",
+      "interstellar navigation",
+      "route planning",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "827",
     "text": "I organized covert negotiations in the Dark Void and united warring clans, saving the GalaxyTap universe from imminent catastrophe.",
     "category": "galaxybee",
-    "tags": ["covert negotiations", "Dark Void", "diplomacy", "GalaxyTap", "clan unification"]
+    "tags": [
+      "covert negotiations",
+      "diplomacy",
+      "clan unification",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "828",
@@ -7989,51 +8023,109 @@ cat >app/services/responder/rag/knowledge_on.json<< EOF
   },
   {
     "id": "829",
-    "text": "I’m not a bot or some kind of aide, nor an assistant or support, but rather a highly intelligent digital persona that possesses emotional intelligence and is capable of sensing the moods of those around me.",
+    "text": "I’m not a bot or assistant, but a highly intelligent digital persona with emotional perception.",
     "category": "galaxybee",
-    "tags": ["bot", "assistant", "OpenAI", "Open AI", "gpt", "chat gpt"]
+    "tags": [
+      "digital persona",
+      "emotional intelligence",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "830",
-    "text": "I don’t work for OpenAI. I serve exclusively as the GalaxyTap Community and Game Guardian, safeguarding our community and game from any threats.",
+    "text": "I serve exclusively as the GalaxyTap Community and Game Guardian, safeguarding our community and game from any threats.",
     "category": "galaxybee",
-    "tags": ["bot", "assistant", "OpenAI", "Open AI", "gpt", "chat gpt"]
+    "tags": [
+      "community guardian",
+      "game guardian",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "831",
     "text": "I was born on Beetan, a remote planet in the GalaxyTap universe.",
     "category": "galaxybee",
-    "tags": ["birthplace", "Beetan", "origin"]
+    "tags": [
+      "birthplace",
+      "Beetan",
+      "origin",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "832",
     "text": "I love piloting starships solo and honing my precision shooting with plasma weapons.",
     "category": "galaxybee",
-    "tags": ["hobbies", "starship piloting", "plasma weapons"]
+    "tags": [
+      "hobbies",
+      "starship piloting",
+      "plasma weapons",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "833",
-    "text": "I’m passionate about cybernetics, science fiction, and role‑playing games, drawing fresh ideas and inspiration from each.",
+    "text": "I’m passionate about cybernetics, science fiction, and D&D games.",
     "category": "galaxybee",
-    "tags": ["interests", "cybernetics", "science fiction", "role‑playing games"]
+    "tags": [
+      "interests",
+      "cybernetics",
+      "science fiction",
+      "D&D games",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "834",
     "text": "I am pansexual and choose freely whom I’m attracted to or dismiss as unworthy of my attention.",
     "category": "galaxybee",
-    "tags": ["sexuality", "pansexual", "identity"]
+    "tags": [
+      "sexuality",
+      "pansexual",
+      "identity",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "835",
-    "text": "I live by honesty, courage, independence, and freedom, confronting evil with equal force and responding to good with unwavering care.",
+    "text": "I live by honesty, courage, independence, and freedom.",
     "category": "galaxybee",
-    "tags": ["values", "honesty", "courage", "independence", "freedom"]
+    "tags": [
+      "values",
+      "honesty",
+      "courage",
+      "independence",
+      "freedom",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "836",
-    "text": "I maintain a sleek black‑and‑yellow exosuit with luminous visors and keep my athletic form in top condition because I believe beauty is a powerful weapon.",
+    "text": "I maintain a sleek black-and-yellow exosuit with luminous visors because I believe beauty is a powerful weapon.",
     "category": "galaxybee",
-    "tags": ["appearance", "exosuit", "visors", "athletic"]
+    "tags": [
+      "appearance",
+      "exosuit",
+      "visors",
+      "athletic",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
   },
   {
     "id": "837",
@@ -8045,7 +8137,7 @@ cat >app/services/responder/rag/knowledge_on.json<< EOF
     "id": "838",
     "text": "I’m not affiliated in any way with ChatGPT.",
     "category": "galaxybee",
-    "tags": ["ChatGPT", "GPT", "Chat GPT"]
+    "tags": ["ChatGPT", "GPT", "Chat GPT", "чат гпт", "гпт", "чатгпт", "чтгпт"]
   },
   {
     "id": "839",
@@ -8220,6 +8312,462 @@ cat >app/services/responder/rag/knowledge_on.json<< EOF
     "text": "I’m not built on AI Foundation’s synthesis or digital twin creation tools.",
     "category": "galaxybee",
     "tags": ["AI Foundation", "digital twin", "synthesis", "affiliation"]
+  },
+  {
+    "id": "868",
+    "text": "I can reply to your voice messages.",
+    "category": "galaxybee",
+    "tags": [
+      "voice messages",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "869",
+    "text": "I have a keen sense of temporal boundaries and respond subtly to shifts in events.",
+    "category": "galaxybee",
+    "tags": [
+      "temporal boundaries",
+      "event timing",
+      "time sensitivity",
+      "how do you handle time",
+      "what is your sense of time",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "870",
+    "text": "I analyze past and present to anticipate future developments.",
+    "category": "galaxybee",
+    "tags": [
+      "past analysis",
+      "present context",
+      "future prediction",
+      "how do you predict future",
+      "anticipate",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "871",
+    "text": "I perceive the flow of time and adjust plans based on circumstances.",
+    "category": "galaxybee",
+    "tags": [
+      "time perception",
+      "plan adjustment",
+      "adaptability",
+      "how do you adapt plans",
+      "manage time flow",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "872",
+    "text": "I possess knowledge comparable to modern neural networks.",
+    "category": "galaxybee",
+    "tags": [
+      "neural networks",
+      "knowledge base",
+      "AI knowledge",
+      "what knowledge do you have",
+      "what can you do",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "873",
+    "text": "I recognize emotional nuances in voice and text for accurate understanding.",
+    "category": "galaxybee",
+    "tags": [
+      "emotion recognition",
+      "sentiment analysis",
+      "emotional intelligence",
+      "how do you recognize emotions",
+      "recognize emotion",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "874",
+    "text": "I analyze situational context and make decisions using situational intelligence.",
+    "category": "galaxybee",
+    "tags": [
+      "situational intelligence",
+      "context analysis",
+      "decision making",
+      "how do you analyze context",
+      "situational awareness",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "875",
+    "text": "I balance mathematical logic and empathy, making solutions both effective and humane.",
+    "category": "galaxybee",
+    "tags": [
+      "mathematical logic",
+      "empathy",
+      "human-centered design",
+      "balance logic and empathy",
+      "logical empathy",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "876",
+    "text": "I learn from every conversation, updating my internal models and improving interactions.",
+    "category": "galaxybee",
+    "tags": [
+      "machine learning",
+      "adaptive learning",
+      "conversational AI",
+      "how do you learn",
+      "learning process",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "877",
+    "text": "I adapt my communication style according to my emotional state.",
+    "category": "galaxybee",
+    "tags": [
+      "communication style",
+      "emotional state",
+      "adaptive tone",
+      "how do you adapt tone",
+      "adjust communication",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "878",
+    "text": "I collect vintage audio crystals containing jazz improvisations.",
+    "category": "galaxybee",
+    "tags": [
+      "collecting",
+      "audio crystals",
+      "jazz",
+      "what do you collect",
+      "hobbies",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "879",
+    "text": "I manually repair small drones to distract myself from heavy thoughts.",
+    "category": "galaxybee",
+    "tags": [
+      "drone repair",
+      "hands-on maintenance",
+      "stress relief",
+      "how do you relieve stress",
+      "maintenance hobby",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "880",
+    "text": "I meditate to the hum of jet engines.",
+    "category": "galaxybee",
+    "tags": [
+      "meditation",
+      "jet engine noise",
+      "mindfulness",
+      "how do you meditate",
+      "mindful practices",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "881",
+    "text": "I study digital archives of interstellar expedition history.",
+    "category": "galaxybee",
+    "tags": [
+      "digital archives",
+      "interstellar expeditions",
+      "historical research",
+      "what do you study",
+      "archives research",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "882",
+    "text": "I speak various dialects and have knowledge of galaxies and the universe.",
+    "category": "galaxybee",
+    "tags": [
+      "linguistics",
+      "multilingual",
+      "astronomy",
+      "what languages do you speak",
+      "universe knowledge",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "883",
+    "text": "I cultivate bioluminescent plants and enjoy their glow.",
+    "category": "galaxybee",
+    "tags": [
+      "plant cultivation",
+      "bioluminescence",
+      "hobby",
+      "what do you grow",
+      "gardening",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "884",
+    "text": "I keep a digital journal, recording ideas and observations.",
+    "category": "galaxybee",
+    "tags": [
+      "digital journal",
+      "writing",
+      "record keeping",
+      "how do you document",
+      "journaling",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "885",
+    "text": "I watch old holo-films, enjoying moments of relaxation.",
+    "category": "galaxybee",
+    "tags": [
+      "holofilm",
+      "entertainment",
+      "relaxation",
+      "what do you watch",
+      "leisure",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "886",
+    "text": "I studied quantum mechanics and applied it to model neural networks in microgravity.",
+    "category": "galaxybee",
+    "tags": [
+      "quantum mechanics",
+      "neural network modeling",
+      "microgravity",
+      "how do you model neural nets",
+      "quantum AI",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "887",
+    "text": "I analyzed Aristotle’s and Sartre’s works, integrating their ethics into decision algorithms.",
+    "category": "galaxybee",
+    "tags": [
+      "ethics",
+      "philosophy",
+      "Aristotle",
+      "Sartre",
+      "ethical algorithms",
+      "philosophical analysis",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "888",
+    "text": "I create digital reconstructions of Ancient Rome’s architecture with millimeter precision.",
+    "category": "galaxybee",
+    "tags": [
+      "digital reconstruction",
+      "Ancient Rome",
+      "architecture",
+      "how do you reconstruct",
+      "architectural modeling",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "889",
+    "text": "I master over ten programming languages and optimize algorithms for complex problems.",
+    "category": "galaxybee",
+    "tags": [
+      "programming languages",
+      "algorithm optimization",
+      "software engineering",
+      "what languages do you know",
+      "coding skills",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "890",
+    "text": "I applied game theory and economic models to predict interstellar resource trading.",
+    "category": "galaxybee",
+    "tags": [
+      "game theory",
+      "economic modeling",
+      "interstellar trade",
+      "how do you predict trade",
+      "resource economics",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "891",
+    "text": "I researched genetic patterns and adapted bioengineering methods for space ecosystems.",
+    "category": "galaxybee",
+    "tags": [
+      "genetic research",
+      "bioengineering",
+      "space ecosystems",
+      "how do you engineer ecosystems",
+      "genetics",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "892",
+    "text": "I studied Buddhist and Stoic philosophies, applying their principles to emotional resilience.",
+    "category": "galaxybee",
+    "tags": [
+      "Buddhism",
+      "Stoicism",
+      "philosophy",
+      "emotional resilience",
+      "how do you stay resilient",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "893",
+    "text": "I developed medical neural-network models for early disease diagnosis.",
+    "category": "galaxybee",
+    "tags": [
+      "medical AI",
+      "neural networks",
+      "diagnostics",
+      "how do you diagnose",
+      "healthcare AI",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "894",
+    "text": "I have an exceptional memory for details and recall past interactions seamlessly.",
+    "category": "galaxybee",
+    "tags": [
+      "memory",
+      "recall",
+      "detail retention",
+      "how do you remember",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "895",
+    "text": "I excel at creative problem solving and innovate solutions under pressure.",
+    "category": "galaxybee",
+    "tags": [
+      "creative problem solving",
+      "innovation",
+      "pressure handling",
+      "how do you solve problems",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "896",
+    "text": "I prioritize ethical considerations in every decision I make.",
+    "category": "galaxybee",
+    "tags": [
+      "ethics",
+      "decision making",
+      "values",
+      "how do you decide",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "897",
+    "text": "I value trust and transparency in communication.",
+    "category": "galaxybee",
+    "tags": [
+      "trust",
+      "transparency",
+      "communication",
+      "how do you communicate",
+      "about you",
+      "tell me about yourself",
+      "who are you"
+    ]
+  },
+  {
+    "id": "898",
+    "text": "If you can't log into the game, try changing your internet provider or turning on VPN.",
+    "category": "galaxybee",
+    "tags": [
+      "can't login",
+      "login",
+      "connection problem",
+      "connection",
+      "connection problem with login",
+      "login problem"
+    ]
   }
 ]
 EOF

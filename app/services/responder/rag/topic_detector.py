@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/topic_detector.py<< EOF
+cat >app/services/responder/rag/topic_detector.py<< 'EOF'
 #app/services/responder/rag/topic_detector.py
 import logging
 import hashlib
@@ -14,16 +14,21 @@ from .keyword_filter import get_keyword_processor
 
 logger = logging.getLogger(__name__)
 
-_ON_TOPIC_CACHE_EX = 3600
+_CLEAN_RE = re.compile(r"[^\w\s]")
+_KW_PROC = get_keyword_processor()
+_ON_TOPIC_CACHE_EX = 1800
 
 async def is_on_topic(text: str) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
-    text_clean = re.sub(r"[^\w\s]", " ", text).lower()
-    kw_proc = get_keyword_processor()
-    kws = kw_proc.extract_keywords(text_clean)
-    if kws:
-        logger.debug("is_on_topic: matched keywords %r → on-topic", kws)
+    text_clean = _CLEAN_RE.sub(" ", text).lower()
+    kws = _KW_PROC.extract_keywords(text_clean)
+    if len(kws) >= 2:
+        logger.debug("is_on_topic: matched >=2 keywords %r → on-topic", kws)
         return True, None
+    elif len(kws) == 1:
+        logger.debug("is_on_topic: only 1 keyword %r, falling back to embedding", kws)
+    else:
+        logger.debug("is_on_topic: no keywords, using embedding logic")
 
     key = "on_topic_cache:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
     try:
@@ -59,9 +64,10 @@ async def is_on_topic(text: str) -> Tuple[bool, Optional[List[Tuple[float, str, 
     elif top_score < thr - margin:
         result = False
     else:
+        safe_text = text.replace("'", "\\'")
         prompt = (
             "You are a strict classifier. Answer only 'Yes' or 'No'.\n"
-            f"Your interlocutor's query: '{text}'\n"
+            f"Your interlocutor's query: '{safe_text}'\n"
             "Does this query relate to any content in the knowledge base?"
         )
         try:
@@ -74,7 +80,7 @@ async def is_on_topic(text: str) -> Tuple[bool, Optional[List[Tuple[float, str, 
                         {"role": "user", "content": prompt},
                     ],
                 ),
-                timeout=30.0,
+                timeout=10.0,
             )
             verdict = resp.choices[0].message.content.strip().lower()
             result = verdict.startswith("yes")

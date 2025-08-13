@@ -1,4 +1,4 @@
-cat >app/bot/utils/user_mode.py<< EOF
+cat >app/bot/utils/user_mode.py<< 'EOF'
 #app/bot/utils/user_mode.py
 from enum import Enum
 

@@ -1,4 +1,4 @@
-cat >app/bot/__init__.py<< EOF
+cat >app/bot/__init__.py<< 'EOF'
 #app/bot/__init__.py
 from .components.webhook import start_bot
 

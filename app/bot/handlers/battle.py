@@ -1,8 +1,10 @@
-cat > app/bot/handlers/battle.py << EOF
+cat > app/bot/handlers/battle.py << 'EOF'
 # app/bot/handlers/battle.py
 import logging
+import uuid
 
 from typing import Optional
+
 from aiogram import F
 from aiogram.enums import ChatType, MessageEntityType
 from aiogram.filters import Command, CommandObject
@@ -32,7 +34,6 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
     if message.reply_to_message and not message.reply_to_message.from_user.is_bot:
         opponent_id = str(message.reply_to_message.from_user.id)
     else:
-        invalid_username = False
         for ent in message.entities or []:
             if ent.type == MessageEntityType.TEXT_MENTION and ent.user:
                 opponent_id = str(ent.user.id)
@@ -44,16 +45,12 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
                     opponent_id = str(cached)
                     break
                 try:
-                    chat = await bot.get_chat(f"@{username}")
+                    chat = await bot.get_chat(username)
                     opponent_id = str(chat.id)
                     break
                 except TelegramBadRequest as e:
-                    if "chat not found" in str(e).lower():
-                        invalid_username = True
-                    else:
+                    if "chat not found" not in str(e).lower():
                         logger.exception("Unexpected Telegram error for @%s: %s", username, e)
-                except ValueError:
-                    invalid_username = True
 
         if not opponent_id:
             await message.reply(
@@ -75,7 +72,11 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
         await message.reply("🚫 You opted out of Battles. Use /battle_on to opt in.", quote=True)
         return
 
-    if await redis_client.get(f"active_game:{chat_id}"):
+    active_key = f"active_game:{chat_id}"
+    gid = str(uuid.uuid4())
+    ttl = int((battle_service.T_START + battle_service.SAFETY).total_seconds())
+    locked = await redis_client.set(active_key, gid, ex=ttl, nx=True)
+    if not locked:
         await message.reply("⚠️ A battle is already in progress. Please wait.", quote=True)
         return
 
@@ -86,12 +87,13 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
         except Exception:
             pass
     except Exception:
+        await redis_client.delete(active_key)
         logger.exception("launch_battle failed")
-        await redis_client.delete(f"active_game:{chat_id}")
         await message.reply(
             "❌ Failed to start the battle (opponent may have left or an internal error occurred).",
             quote=True,
         )
+        return
 
 
 @dp.message(

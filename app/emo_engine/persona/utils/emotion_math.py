@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/utils/emotion_math.py<< EOF
+cat >app/emo_engine/persona/utils/emotion_math.py<< 'EOF'
 #app/emo_engine/persona/utils/emotion_math.py
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from ..constants.emotions import (
     OPPOSITES,
 )
 
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -154,7 +155,7 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
     try:
         x = float(x)
     except Exception:
-        logging.warning("emotion_math._clamp: bad value %r, fallback=%s", x, lo)
+        logger.warning("emotion_math._clamp: bad value %r, fallback=%s", x, lo)
         x = lo
     return max(lo, min(hi, x))
 
@@ -162,7 +163,7 @@ def _clamp(x: float, lo: float = 0.0, hi: float = 1.0) -> float:
 def compute_dyad(e1: str, e2: str, state: Dict[str, float]) -> float:
 
     if e1 not in PRIMARY_COORDS or e2 not in PRIMARY_COORDS:
-        logging.warning("compute_dyad: unknown coords for %s/%s", e1, e2)
+        logger.warning("compute_dyad: unknown coords for %s/%s", e1, e2)
         return 0.0
 
     v1, v2 = max(0.0, state.get(e1, 0.0)), max(0.0, state.get(e2, 0.0))
@@ -194,7 +195,8 @@ def _compute_secondary(self) -> None:
 
     raw_sec: Dict[str, float] = {}
     for (e1, e2), dyad_name in VALID_DYADS.items():
-        v1, v2 = self.state[e1], self.state[e2]
+        v1 = self.state.get(e1, 0.0)
+        v2 = self.state.get(e2, 0.0)
         if v1 > dynamic_thresh and v2 > dynamic_thresh:
             base_val = compute_dyad(e1, e2, self.state)
             jitter   = self._rng.uniform(-0.01, 0.01)
@@ -237,9 +239,13 @@ def _compute_tertiary(self) -> None:
             raw_ter[ter] = self._clamp(val)
 
     for (e1, e2, e3), triad_name in VALID_TRIADS.items():
-        vs = [self.state[e] for e in (e1, e2, e3)]
-        if min(vs) > dynamic_t3:
-            val = sum(vs) / 3 + self._rng.uniform(-0.01, 0.01)
+        v1, v2, v3 = (
+            self.state.get(e1, 0.0),
+            self.state.get(e2, 0.0),
+            self.state.get(e3, 0.0),
+        )
+        if v1 > dynamic_t3 and v2 > dynamic_t3 and v3 > dynamic_t3:
+            val = (v1 + v2 + v3) / 3 + self._rng.uniform(-0.01, 0.01)
             raw_ter[triad_name] = self._clamp(val)
 
     for name, val in raw_ter.items():

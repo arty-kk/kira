@@ -1,4 +1,4 @@
-cat > app/bot/components/dispatcher.py << EOF
+cat > app/bot/components/dispatcher.py << 'EOF'
 # app/bot/components/dispatcher.py
 
 from aiogram import Dispatcher, F
