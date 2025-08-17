@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
+
 @dp.message(Command("start"), F.chat.type == ChatType.PRIVATE)
 async def cmd_start(message: Message) -> None:
 
@@ -162,7 +163,7 @@ async def on_private_message(message: Message) -> None:
             f"seen:{chat_id}:{message.message_id}",
             1,
             nx=True,
-            ex=3 * 86_400,
+            ex=86_400,
         )
         if not seen:
             logger.info("Drop duplicate delivery chat=%s msg_id=%s", chat_id, message.message_id)
@@ -342,7 +343,7 @@ async def on_private_voice(message: Message) -> None:
             f"seen:{chat_id}:{message.message_id}",
             1,
             nx=True,
-            ex=3 * 86_400,
+            ex=86_400,
         )
         if not seen:
             logger.info("Drop duplicate voice delivery chat=%s msg_id=%s", chat_id, message.message_id)

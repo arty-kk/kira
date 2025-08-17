@@ -9,7 +9,7 @@ import html
 import traceback
 import logging
 import os
-import weakref
+import re
 
 from contextlib import suppress
 from typing import Optional, Dict
@@ -45,7 +45,7 @@ BOT = get_bot()
 
 
 openai_sem = asyncio.Semaphore(settings.OPENAI_MAX_CONCURRENT_REQUESTS)
-chat_locks: "weakref.WeakValueDictionary[int, asyncio.Lock]" = weakref.WeakValueDictionary()
+chat_locks: dict[int, asyncio.Lock] = {}
 
 JOB_KEY_PREFIX = "q:job:"
 JOB_PROCESSING_TTL = int(getattr(settings, "JOB_PROCESSING_TTL", 300))
@@ -94,7 +94,35 @@ async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, inter
         pass
 
 
-async def _send_reply(chat_id: int, text: str, reply_to: Optional[int], msg_id: Optional[int]) -> None:
+def _allow_telegram_html(escaped: str) -> str:
+
+    simple_tags = ["b", "strong", "i", "em", "u", "s", "del", "code", "pre"]
+    for tag in simple_tags:
+        escaped = re.sub(fr"&lt;{tag}&gt;", f"<{tag}>", escaped, flags=re.IGNORECASE)
+        escaped = re.sub(fr"&lt;/{tag}&gt;", f"</{tag}>", escaped, flags=re.IGNORECASE)
+
+    def _unescape_a(m):
+        url = m.group(1)
+        if url.startswith("http://") or url.startswith("https://"):
+            return f'<a href="{url}">'
+        return m.group(0)
+
+    escaped = re.sub(
+        r"&lt;a href=&quot;([Hh][Tt][Tt][Pp][Ss]?://[^\"<>\s]{1,200})&quot;&gt;",
+        _unescape_a,
+        escaped,
+    )
+    escaped = re.sub(r"&lt;/a&gt;", "</a>", escaped, flags=re.IGNORECASE)
+    return escaped
+
+
+async def _send_reply(
+    chat_id: int,
+    text: str,
+    reply_to: Optional[int],
+    msg_id: Optional[int],
+    merged_ids: Optional[list[int]] = None,
+) -> None:
    
     try:
         if msg_id is not None:
@@ -115,6 +143,7 @@ async def _send_reply(chat_id: int, text: str, reply_to: Optional[int], msg_id: 
             text = text[: TG_TEXT_LIMIT - 10] + "…"
 
         text_safe = html.escape(text)
+        text_safe = _allow_telegram_html(text_safe)
 
         if len(text_safe) > TG_TEXT_LIMIT:
             text_safe = text_safe[: TG_TEXT_LIMIT - 1] + "…"
@@ -131,7 +160,26 @@ async def _send_reply(chat_id: int, text: str, reply_to: Optional[int], msg_id: 
             await BOT.send_message(parse_mode="HTML", **kwargs)
         except TelegramBadRequest as bad:
             logger.warning("HTML send failed: %s — retrying plain text", bad)
-            await BOT.send_message(**kwargs)
+            try:
+                await BOT.send_message(**kwargs)
+            except TelegramBadRequest as bad2:
+                if "reply" in str(bad2).lower():
+                    kwargs.pop("reply_to_message_id", None)
+                    await BOT.send_message(**kwargs)
+                else:
+                    raise
+        try:
+            for mid in (merged_ids or []):
+                if mid is None or mid == msg_id:
+                    continue
+                await REDIS_QUEUE.set(
+                    f"sent_reply:{chat_id}:{mid}",
+                    1,
+                    nx=True,
+                    ex=JOB_DONE_TTL,
+                )
+        except Exception as e:
+            logger.warning("failed to mark merged sent_reply keys: %s", e)
     except Exception as e:
         logger.error(
             "Failed to send message to chat_id=%s (reply_to=%s): %s",
@@ -139,7 +187,12 @@ async def _send_reply(chat_id: int, text: str, reply_to: Optional[int], msg_id: 
         )
         if msg_id is not None:
             try:
+                # снимаем отметки, если не удалось отправить
                 await REDIS_QUEUE.delete(f"sent_reply:{chat_id}:{msg_id}")
+                for mid in (merged_ids or []):
+                    if mid is None:
+                        continue
+                    await REDIS_QUEUE.delete(f"sent_reply:{chat_id}:{mid}")
             except Exception:
                 pass
         logger.debug(traceback.format_exc())
@@ -170,6 +223,7 @@ async def handle_job(raw: str, processing_key: str) -> None:
     chan_title = job.get("channel_title")
     msg_id     = job.get("msg_id")
     voice_in   = bool(job.get("voice_in"))
+    merged_ids = job.get("merged_msg_ids")
 
     try:
         msg_id = int(msg_id) if msg_id is not None else None
@@ -238,7 +292,7 @@ async def handle_job(raw: str, processing_key: str) -> None:
                     ),
                     timeout=180,
                 )
-                await _send_reply(chat_id, reply_text, reply_to, msg_id)
+                await _send_reply(chat_id, reply_text, reply_to, msg_id, merged_ids)
                 with suppress(Exception):
                     await REDIS_QUEUE.set(job_key, "done", ex=JOB_DONE_TTL)
             except Exception as e:
@@ -247,11 +301,11 @@ async def handle_job(raw: str, processing_key: str) -> None:
                     chat_id, user_id, e
                 )
                 reply_text = (
-                    "⏳ Sorry, I was thinking longer than usual."
+                    "⏳ Sorry, I was thinking longer than usual. "
                     "Try asking the question again."
                 )
                 try:
-                    await _send_reply(chat_id, reply_text, reply_to, msg_id)
+                    await _send_reply(chat_id, reply_text, reply_to, msg_id, merged_ids)
                     with suppress(Exception):
                         await REDIS_QUEUE.set(job_key, "done", ex=JOB_DONE_TTL)
                 except Exception:

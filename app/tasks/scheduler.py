@@ -252,7 +252,7 @@ def start_scheduler() -> None:
     if settings.SCHED_ENABLE_PRICES:
         _sched.add_job(
             prices_post, "interval",
-            hours=4,
+            hours=8,
             id="prices_post",
             max_instances=1,
             coalesce=True,

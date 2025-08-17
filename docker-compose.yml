@@ -12,6 +12,13 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - db_data:/var/lib/postgresql/data
+    command: [
+      "postgres",
+      "-c","statement_timeout=30s",
+      "-c","idle_in_transaction_session_timeout=60s"
+    ]
+    ports:
+      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD} pg_isready -h db -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -44,7 +51,7 @@ services:
         max-file: "5"
 
   pgadmin:
-    image: dpage/pgadmin4:latest
+    image: dpage/pgadmin4:9.6
     container_name: pgadmin
     restart: unless-stopped
     env_file: .env
@@ -65,6 +72,11 @@ services:
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CERTS_DIR: "/certs"
       USE_SELF_SIGNED_CERT: "true"
+      DB_POOL_CLASS: "QueuePool"
+      DB_POOL_SIZE: "5"
+      DB_MAX_OVERFLOW: "2"
+      DB_POOL_TIMEOUT: "10"
+      DB_POOL_RECYCLE: "1800"
     depends_on:
       redis:
         condition: service_healthy
@@ -96,6 +108,11 @@ services:
       ENABLE_SCHEDULER: "false"
       CELERY_BROKER_URL: "redis://redis:6379/0"
       CELERY_CONCURRENCY: "16"
+      DB_POOL_CLASS: "QueuePool"
+      DB_POOL_SIZE: "8"
+      DB_MAX_OVERFLOW: "2"
+      DB_POOL_TIMEOUT: "10"
+      DB_POOL_RECYCLE: "1800"
     depends_on:
       redis:
         condition: service_healthy
@@ -130,6 +147,11 @@ services:
     environment:
       REDIS_URL_QUEUE: "redis://redis:6379/0"
       QUEUE_KEY: "queue:chat"
+      DB_POOL_CLASS: "QueuePool"
+      DB_POOL_SIZE: "3"
+      DB_MAX_OVERFLOW: "1"
+      DB_POOL_TIMEOUT: "10"
+      DB_POOL_RECYCLE: "1800"
     depends_on:
       redis:
         condition: service_healthy
@@ -150,8 +172,4 @@ services:
 volumes:
   db_data:
   redis_data:
-
-networks:
-  default:
-    name: network
 EOF

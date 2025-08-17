@@ -108,20 +108,20 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
     dynamic_temperature = min(MAX_TEMPERATURE, max(MIN_TEMPERATURE, dynamic_temperature))
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
-    ctx_len = random.choice(range(5, 25, 2))
+    ctx_len = random.choice(range(6, 30, 2))
     max_tokens = 50
 
     if text:
         prompt = (
-            f"A new member just joined the chat and wrote: {text}. "
-            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length. "
+            f"A new member just joined the chat and wrote:\n{text}.\n\n"
+            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length.\n"
             "Do NOT include user's mention in your reply."
         )
         asyncio.create_task(persona.process_interaction(user.id, text))
     else:
         prompt = (
-            "A new member just joined the chat. "
-            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length. "
+            "A new member just joined the chat.\n"
+            f"Write him a punchy and creative welcome message on your own behalf of up to {ctx_len} tokens in length.\n"
             "Do NOT include user's mention in your reply."
         )
 

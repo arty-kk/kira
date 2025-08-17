@@ -209,9 +209,9 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     tone_items.sort(key=lambda t: t[1], reverse=True)
     top3 = tone_items[:3]
 
-    valence_mod = mods.get("valence_mod", 0.5)
+    valence_mod = mods.get("valence_mod", 0.0)
     arousal_mod = mods.get("arousal_mod", 0.5)
-    thr_tone = 0.75 - 0.1 * (1.0 - valence_mod) + 0.1 * (arousal_mod - 0.5)
+    thr_tone = 0.8 - 0.1 * (1.0 - valence_mod) + 0.1 * (arousal_mod - 0.5)
 
     selected = [tone.name for tone, val in top3 if val >= thr_tone]
     if selected:

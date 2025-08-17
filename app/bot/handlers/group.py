@@ -121,7 +121,7 @@ async def on_group_message(message: Message) -> None:
                 f"seen:{cid}:{message.message_id}",
                 1,
                 nx=True,
-                ex=3 * 86_400,
+                ex=43_200,
             )
             if not seen:
                 logger.info("Drop duplicate group delivery chat=%s msg_id=%s", cid, message.message_id)

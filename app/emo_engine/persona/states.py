@@ -33,11 +33,6 @@ from .constants.emotions import (
 logger = logging.getLogger(__name__)
 
 
-_BG_QUEUE: asyncio.Queue[tuple[str, Dict[str, float], bytes | None]] = asyncio.Queue(
-    maxsize=getattr(settings, "BG_QUEUE_MAX", 1000)
-)
-
-
 def _recompute_rates(self) -> None:
     
     total = sum(self.temperament.values()) or 1.0
@@ -285,10 +280,8 @@ async def process_interaction(
         except Exception:
             pass
 
-        if readings.get("arousal", 0.0) > settings.FATIGUE_AROUSAL_THRESHOLD \
-        or readings["energy"] > settings.FATIGUE_ENERGY_THRESHOLD:
-            delta_f = settings.FATIGUE_ACCUMULATE_RATE * \
-                    (readings["arousal"] + readings["energy"]) / 2
+        if readings.get("arousal", 0.0) > settings.FATIGUE_AROUSAL_THRESHOLD or readings["energy"] > settings.FATIGUE_ENERGY_THRESHOLD:
+            delta_f = settings.FATIGUE_ACCUMULATE_RATE * (readings["arousal"] + readings["energy"]) / 2
             self.state["fatigue"] = FAT_CLAMP(self.state.get("fatigue", 0.0) + delta_f)
             self._dirty_metrics.add("fatigue")
 
@@ -410,7 +403,7 @@ async def process_interaction(
 
         try:
             emb_ready = await get_embedding(text)
-            _BG_QUEUE.put_nowait((text, readings, emb_ready))
+            self._bg_queue.put_nowait((text, readings, emb_ready))
         except asyncio.QueueFull:
             logger.warning("BG-queue full → memory save skipped")
         finally:
@@ -421,7 +414,7 @@ async def _bg_worker(self) -> None:
 
     await self.enhanced_memory.ready()
     while True:
-        text, readings, emb_opt = await _BG_QUEUE.get()
+        text, readings, emb_opt = await self._bg_queue.get()
         try:
             emb = emb_opt or await asyncio.wait_for(get_embedding(text), timeout=15)
             state_slice = {
@@ -438,5 +431,5 @@ async def _bg_worker(self) -> None:
         except Exception:
             logger.exception("BG-worker: Error processing task")
         finally:
-            _BG_QUEUE.task_done()
+            self._bg_queue.task_done()
 EOF

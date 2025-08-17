@@ -74,7 +74,7 @@ async def get_embedding(text: str) -> bytes:
         arr = np.pad(arr, (0, settings.EMBED_DIM - arr.shape[0]))
     arr = arr.tobytes()
     try:
-        await rds.set(md5_key, base64.b64encode(arr), ex=86400)
+        await rds.set(md5_key, base64.b64encode(arr).decode("ascii"), ex=86400)
     except redis.exceptions.RedisError as e:
         logger.warning("get_embedding: Redis cache store failed: %s", e)
     return arr
@@ -98,24 +98,51 @@ class PersonaMemory:
             raise RuntimeError("EMBED_DIM must be positive; check settings")
         self._redis = get_redis()
         self._ready = asyncio.Event()
+        self._index_lock = asyncio.Lock()
         asyncio.create_task(self._initialize())
 
     async def _initialize(self):
 
         ts = time.time()
+        ok = False
         try:
             await self.init_index()
             logger.info("PersonaMemory.init_index END (t=%.3fs)", time.time() - ts)
-
             await self._ensure_index_dim()
             logger.info("PersonaMemory._ensure_index_dim END (t=%.3fs)", time.time() - ts)
+            await self._redis.ft(self.INDEX_NAME).info()
+            ok = True
         except asyncio.TimeoutError:
             logger.error("init_index/_ensure_index_dim timeout")
         except redis.exceptions.RedisError as e:
             logger.error("init/ensure failed due to Redis error: %s", e)
-        self._ready.set()
+        finally:
+            if not ok:
+                logger.warning("PersonaMemory: index not confirmed at init; will auto-heal on first query.")
+            self._ready.set()
 
         asyncio.create_task(self._periodic_maintenance())
+
+
+    async def _ensure_index_available(self) -> None:
+
+        try:
+            await self._redis.ft(self.INDEX_NAME).info()
+            return
+        except ResponseError as e:
+            if "no such index" not in str(e).lower():
+                raise
+        async with self._index_lock:
+            try:
+                await self._redis.ft(self.INDEX_NAME).info()
+                return
+            except ResponseError as e:
+                if "no such index" not in str(e).lower():
+                    raise
+            logger.warning("PersonaMemory: rebuilding missing index %s", self.INDEX_NAME)
+            await self.init_index()
+            await self._ensure_index_dim()
+            await self._redis.ft(self.INDEX_NAME).info()
 
 
     async def _ensure_index_dim(self) -> None:
@@ -265,6 +292,7 @@ class PersonaMemory:
         ts = time.time()
         
         await self._ready.wait()
+        await self._ensure_index_available()
         eid = await self._redis.incr("memory:next_id")
         key = f"memory:{eid}"
         try:
@@ -304,11 +332,24 @@ class PersonaMemory:
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME)
-                    .search(q, query_params={"vec": embedding}),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
                 timeout=tout,
             )
             logger.info("record: dedupe search END (t=%.3fs)", time.time() - ts)
+        except ResponseError as e:
+            if "no such index" in str(e).lower():
+                await self._ensure_index_available()
+                try:
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        timeout=tout,
+                    )
+                except Exception as e2:
+                    logger.warning("record: dedupe retry failed (%s), skipping deduplication", e2)
+                    res = None
+            else:
+                logger.warning("record: dedupe search failed (%s), skipping deduplication", e)
+                res = None
         except Exception as e:
             logger.warning("record: dedupe search failed (%s), skipping deduplication", e)
             res = None
@@ -355,6 +396,7 @@ class PersonaMemory:
         ts = time.time()
         
         await self._ready.wait()
+        await self._ensure_index_available()
         logger.debug("query: ready.wait END (t=%.3fs)", time.time() - ts)
 
         if topic_hint:
@@ -369,12 +411,24 @@ class PersonaMemory:
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME).search(
-                    q, query_params={"vec": embedding}
-                ),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
                 timeout=settings.REDISSEARCH_TIMEOUT
             )
             logger.info("query: search END (t=%.3fs)", time.time() - ts)
+        except ResponseError as e:
+            if "no such index" in str(e).lower():
+                await self._ensure_index_available()
+                try:
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        timeout=settings.REDISSEARCH_TIMEOUT
+                    )
+                except Exception as e2:
+                    logger.warning("PersonaMemory.query retry failed (%s)", e2)
+                    return []
+            else:
+                logger.warning("PersonaMemory.query failed (%s)", e)
+                return []
         except Exception as e:
             logger.warning("PersonaMemory.query failed (%s)", e)
             return []
@@ -394,6 +448,7 @@ class PersonaMemory:
         ts = time.time()
         
         await self._ready.wait()
+        await self._ensure_index_available()
         logger.debug("query_time: ready.wait END (t=%.3fs)", time.time() - ts)
         val = _tag_literal(event_type)
         q = (
@@ -406,12 +461,24 @@ class PersonaMemory:
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME).search(
-                    q, query_params={"vec": embedding}
-                ),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
                 timeout=settings.REDISSEARCH_TIMEOUT
             )
             logger.info("query_time: search END (t=%.3fs)", time.time() - ts)
+        except ResponseError as e:
+            if "no such index" in str(e).lower():
+                await self._ensure_index_available()
+                try:
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        timeout=settings.REDISSEARCH_TIMEOUT
+                    )
+                except Exception as e2:
+                    logger.warning("PersonaMemory.query_time retry failed (%s)", e2)
+                    return []
+            else:
+                logger.warning("PersonaMemory.query_time failed (%s)", e)
+                return []
         except Exception as e:
             logger.warning("PersonaMemory.query_time failed (%s)", e)
             return []

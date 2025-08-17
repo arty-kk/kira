@@ -5,7 +5,7 @@ from typing import Tuple, Set
 from dataclasses import dataclass, field
 
 BOT_SIGNATURES: Set[str] = set()
-GLOBAL_DEVICE_PROB_SCALE = 0.75
+GLOBAL_DEVICE_PROB_SCALE = 0.66
 
 @dataclass(frozen=True)
 class RhetoricalDevice:
@@ -67,6 +67,23 @@ BOT_SIGNATURES: Set[str] = {
 
     # Повторения и «заполнитель»
     "EmployRepetition",
+    "Storytelling",
+    "InsertAnecdote",
+    "PersonalAnecdote",
+    "SetScene",
+    "PaintPicture",
+    "UseSensoryDetails",
+    "UseVividLanguage",
+    "UseVividVerbs",
+    "DescribeTexture",
+    "ReferenceColor",
+    "UseAnalogies",
+    "UseAlliteration",
+    "UseParallelism",
+    "ChorusEffect",
+    "VaryPunctuation",
+    "UseEllipsis",
+    "InsertPause",
 }
 
 # -------------------------------------------------------------------

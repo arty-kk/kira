@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 import asyncio
-import hashlib
-import json
 import time
 import re
 import unicodedata
@@ -18,7 +16,7 @@ from app.config import settings
 from app.core.memory import (
     load_context, push_message,
     get_redis, get_cached_gender, cache_gender,
-    _k_g_sum,   
+    _k_g_sum,
 )
 from app.emo_engine import get_persona
 from app.core.db import AsyncSessionLocal
@@ -26,10 +24,7 @@ from app.core.models import User
 from .prompt_builder import build_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
-from .rag import (
-    get_relevant, _KB_ENTRIES, _init_kb, 
-    is_on_topic, relevant_enough
-)
+from .rag import _KB_ENTRIES, _init_kb, is_relevant
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +50,7 @@ DEFAULT_MODS = {
 REPEAT_DETECT_WINDOW_SEC = getattr(settings, "REPEAT_DETECT_WINDOW_SEC", 25)
 REPEAT_DETECT_TTL = getattr(settings, "REPEAT_DETECT_TTL", 120)
 
+
 async def respond_to_user(
     text: str,
     chat_id: int,
@@ -78,7 +74,7 @@ async def respond_to_user(
         persona = await get_persona(
             chat_id,
             user_id=user_id,
-            group_mode=group_mode or is_channel_post
+            group_mode=group_mode or is_channel_post,
         )
     except Exception:
         logger.exception("Failed to get_persona", exc_info=True)
@@ -106,8 +102,6 @@ async def respond_to_user(
     ):
         persona.state.setdefault(_m, _d)
 
-    orig_gender_global = getattr(persona, "user_gender", "unknown")
-
     gender = None
     async with AsyncSessionLocal() as db:
         user = await db.get(User, user_id)
@@ -127,7 +121,7 @@ async def respond_to_user(
             gender = await detect_gender(name, text) or "unknown"
             await cache_gender(user_id, gender)
 
-    local_gender = gender if gender in ("male","female") else "unknown"
+    local_gender = gender if gender in ("male", "female") else "unknown"
 
     try:
         await persona.process_interaction(user_id, text, user_gender=local_gender)
@@ -158,9 +152,9 @@ async def respond_to_user(
     except Exception:
         logger.exception("style_modifiers acquisition failed")
         style_mods = {}
-    
+
     mods = {k: style_mods.get(k, v) for k, v in DEFAULT_MODS.items()}
-        
+
     try:
         reasoning_model = settings.REASONING_MODEL
         if mods.get("technical_mod", 0) > 0.6:
@@ -174,7 +168,7 @@ async def respond_to_user(
                 model=reasoning_model,
                 messages=[
                     {"role": "system", "content": "You think out loud. Make a short plan of your answer in points."},
-                    {"role": "user",   "content": text},
+                    {"role": "user", "content": text},
                 ],
                 temperature=0.0,
                 max_completion_tokens=300,
@@ -187,14 +181,14 @@ async def respond_to_user(
 
     novelty = (
         0.4 * mods["creativity_mod"]
-      + 0.4 * mods["sarcasm_mod"]
-      + 0.2 * mods["enthusiasm_mod"]
+        + 0.4 * mods["sarcasm_mod"]
+        + 0.2 * mods["enthusiasm_mod"]
     )
     coherence = (
         0.5 * mods["confidence_mod"]
-      + 0.3 * mods["precision_mod"]
-      + 0.1 * (1 - mods["fatigue_mod"])
-      + 0.1 * (1 - mods["stress_mod"])
+        + 0.3 * mods["precision_mod"]
+        + 0.1 * (1 - mods["fatigue_mod"])
+        + 0.1 * (1 - mods["stress_mod"])
     )
     alpha = 1.8
     dynamic_temperature = MIN_TEMPERATURE + (MAX_TEMPERATURE - MIN_TEMPERATURE) * (novelty ** alpha)
@@ -203,11 +197,17 @@ async def respond_to_user(
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
 
     query = re.sub(r"@\w+\b", "", text).strip()
+    personal_msgs: List[Dict] = []
     try:
         summary = None
         if group_mode:
             g_sum = await redis.get(_k_g_sum(chat_id))
             if g_sum:
+                if isinstance(g_sum, (bytes, bytearray)):
+                    try:
+                        g_sum = g_sum.decode("utf-8", "ignore")
+                    except Exception:
+                        g_sum = str(g_sum)
                 summary = {"role": "system", "content": f"Summary: {g_sum}"}
 
         try:
@@ -219,7 +219,7 @@ async def respond_to_user(
         personal_msgs = [
             m for m in raw_personal
             if m.get("role") in ("system", "assistant")
-               or m.get("user_id") == user_id
+            or m.get("user_id") == user_id
         ]
         personal_msgs = sorted(personal_msgs, key=lambda m: m.get("ts", 0))[-PERSONAL_WINDOW:]
 
@@ -238,15 +238,20 @@ async def respond_to_user(
     if reply_to is not None:
         orig = await redis.get(f"msg:{chat_id}:{reply_to}")
         if orig:
+            if isinstance(orig, (bytes, bytearray)):
+                try:
+                    orig = orig.decode("utf-8", "ignore")
+                except Exception:
+                    orig = str(orig)
             history.append({
-                "role":    "system",
+                "role": "system",
                 "content": f"[ReplyContext] The user replied to: «{orig}». Keep this in mind when replying to their current message."
             })
 
     is_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match(query))
-    
+
     try:
-        need_coref_flag= await needs_coref(query)
+        need_coref_flag = await needs_coref(query)
     except Exception as e:
         logger.warning("needs_coref failed: %s", e)
         need_coref_flag = False
@@ -289,16 +294,29 @@ async def respond_to_user(
             except Exception:
                 pass
     finally:
-        history.append({"role": "user", "content": resolved})
+        def _n(s: str) -> str:
+            s = unicodedata.normalize("NFKC", s or "")
+            s = re.sub(r"\s+", " ", s).strip()
+            return s.casefold()
+
+        _scan_source = personal_msgs if personal_msgs else history
+        last_user_in_ctx = next(
+            (m for m in reversed(_scan_source) if m.get("role") == "user"),
+            None,
+        )
+        if not (
+            last_user_in_ctx and _n(last_user_in_ctx.get("content", "")) == _n(resolved)
+        ):
+            history.append({"role": "user", "content": resolved})
 
     if is_channel_post:
         channel_desc = f"the {channel_title} channel" if channel_title else "the linked channel"
         header = {
             "role": "system",
             "content": (
-                f"This message was forwarded from {channel_desc}. "
-                "It is purely informational and not a direct user message. "
-                "As a digital character in this project, write a brief, insightful, and concise comment in response. "
+                f"This message was forwarded from {channel_desc}.\n"
+                "It is purely informational and not a direct user message.\n"
+                "Write a brief, insightful, and concise comment.\n"
                 "Do not introduce speculation or unrelated details; stay focused on the content provided."
             ),
         }
@@ -307,35 +325,9 @@ async def respond_to_user(
     query_to_model = safe_resolved
     if draft_msg and is_channel_post:
         history.append({
-            "role":    "system",
+            "role": "system",
             "content": f"INTERNAL_PLAN: {draft_msg}"
         })
-
-    def _norm(s: str) -> str:
-        s = unicodedata.normalize("NFKD", s)
-        return re.sub(r"[\W\s]+", "", s.lower())
-
-    last_key = f"last_req:{chat_id}:{user_id}"
-    raw_prev = await redis.get(last_key)
-    prev_hash, prev_ts = None, 0.0
-    if raw_prev:
-        s = raw_prev.decode(errors="ignore") if isinstance(raw_prev, (bytes, bytearray)) else str(raw_prev)
-        try:
-            obj = json.loads(s)
-            prev_hash = obj.get("h")
-            prev_ts = float(obj.get("t", 0) or 0)
-        except Exception:
-            prev_hash = s
-            prev_ts = 0.0
-
-    cur_hash = hashlib.sha1(_norm(query_to_model).encode()).hexdigest()
-    now_ts = time.time()
-    is_repeat = bool(prev_hash == cur_hash and (now_ts - prev_ts) <= REPEAT_DETECT_WINDOW_SEC)
-
-    try:
-        await redis.set(last_key, json.dumps({"h": cur_hash, "t": now_ts}), ex=REPEAT_DETECT_TTL)
-    except Exception:
-        logger.warning("Failed to set last_req JSON value", exc_info=True)
 
     try:
         raw_mode = await redis.get(f"user_mode:{user_id}")
@@ -345,7 +337,10 @@ async def respond_to_user(
         mode_effective = "auto" if (group_mode or is_channel_post) else user_mode
 
         if mode_effective != "off_topic":
-            on_topic_flag, on_topic_hits = await is_on_topic(query_to_model)
+            on_topic_flag, on_topic_hits = await is_relevant(
+                query_to_model, model=settings.EMBEDDING_MODEL,
+                threshold=settings.RELEVANCE_THRESHOLD, return_hits=True
+            )
         else:
             on_topic_flag, on_topic_hits = False, None
     except Exception:
@@ -358,7 +353,7 @@ async def respond_to_user(
         guidelines,
         user_gender=local_gender,
     )
-    logger.info("↳ build_system_prompt END chat=%s user=%s (got %d chars)", chat_id, user_id, len(system_prompt.get("content","")))
+    logger.info("↳ build_system_prompt END chat=%s user=%s (got %d chars)", chat_id, user_id, len(system_prompt.get("content", "")))
 
     if on_topic_flag:
         emb_model = settings.EMBEDDING_MODEL
@@ -368,55 +363,37 @@ async def respond_to_user(
             except Exception:
                 logger.exception("Failed to init KB for %s", emb_model, exc_info=True)
 
-        if on_topic_hits is not None:
-            hits = on_topic_hits
+        hits = on_topic_hits or []
+
+        if not hits:
+            messages = [
+                {"role": "system", "content": system_prompt["content"]},
+                *history,
+            ]
+            temperature = dynamic_temperature
+            top_p = dynamic_top_p
+            max_tokens = ON_TOPIC_MAX_TOKENS
         else:
-            cache_key = "rag:" + hashlib.sha256(f"{emb_model}:{query_to_model}".encode()).hexdigest()
-            raw = await redis.get(cache_key) if redis else None
-            if raw:
-                hits = json.loads(raw)
-            else:
-                hits = await get_relevant(query_to_model, model_name=emb_model)
-                if redis:
-                    await redis.set(cache_key, json.dumps(hits), ex=3600)
+            chunks = [h[2] for h in hits][:settings.KNOWLEDGE_TOP_K]
+            snippets = "\n".join(f"{i+1}. {c}" for i, c in enumerate(chunks))
 
-        meta_entries = _KB_ENTRIES.get(emb_model, [])
-        meta_map = {e["id"]: e for e in meta_entries}
-        filtered_snippets: List[str] = []
-        q_lower = query_to_model.lower()
-        for score, did, chunk in hits:
-            entry = meta_map.get(did)
-            if entry and (
-                any(tag.lower() in q_lower for tag in entry.get("tags", []))
-                or entry.get("category", "").lower() in q_lower
-            ):
-                filtered_snippets.append(chunk)
-
-        chunks = (filtered_snippets or [h[2] for h in hits])[:settings.KNOWLEDGE_TOP_K]
-        snippets = "\n".join(f"{i+1}. {c}" for i, c in enumerate(chunks))
-
-        user_prompt = (
-            "Below are knowledge snippets relevant to the user's question. "
-            "Respond to the user only based on these knowledge snippets without adding false information. "
-            "If knowledge snippets are written in the first-person style, use them in your responses in the first person as if they were your biography.\n\n"
-            f"User question:\n{query_to_model}\n\n"
-            f"Snippets:\n{snippets}\n\n"
-            "Your answer:"
-        )
-        messages = [
-            {"role": "system", "content": system_prompt["content"]},
-            *history,
-            {"role": "system", "content": user_prompt},
-        ]
-        if is_repeat:
-            messages.append({
-                "role": "system",
-                "content": "Your interlocutor wrote the 100% same message as last time. Find a creative way to resolve the situation."
-            })
-        temperature = dynamic_temperature
-        top_p = dynamic_top_p
-        max_tokens = ON_TOPIC_MAX_TOKENS
-
+            user_prompt = (
+                "Below are knowledge snippets relevant to the user's question.\n"
+                "Respond to the user based on these knowledge snippets without adding false information.\n"
+                "If knowledge snippets are written in the first-person style, use them in your responses in the first person as if they were your biography.\n"
+                "______________\n"
+                f"Snippets:\n{snippets}\n"
+                "______________\n"
+                "Your answer:"
+            )
+            messages = [
+                {"role": "system", "content": system_prompt["content"]},
+                *history,
+                {"role": "system", "content": user_prompt},
+            ]
+            temperature = dynamic_temperature
+            top_p = dynamic_top_p
+            max_tokens = ON_TOPIC_MAX_TOKENS
 
     else:
         emb_model = settings.OFFTOPIC_EMBEDDING_MODEL
@@ -426,53 +403,32 @@ async def respond_to_user(
             except Exception:
                 logger.exception("Failed to init OFFTOPIC KB for %s", emb_model, exc_info=True)
 
-        cache_key = "rag_off:" + hashlib.sha256(f"{emb_model}:{query_to_model}".encode()).hexdigest()
-        raw = await redis.get(cache_key) if redis else None
-        if raw:
-            hits = json.loads(raw)
-        else:
-            hits = await get_relevant(query_to_model, model_name=emb_model)
-            if redis:
-                await redis.set(cache_key, json.dumps(hits), ex=3600)
-
-        logger.info("▶ Step: Перед relevant_enough")
-        use_rag_off = await relevant_enough(
+        logger.info("▶ Step: off-topic relevance gate")
+        use_rag_off, hits = await is_relevant(
             query_to_model,
-            settings.OFFTOPIC_EMBEDDING_MODEL,
-            settings.OFFTOPIC_RELEVANCE_THRESHOLD,
-            hits=hits,
+            model=settings.OFFTOPIC_EMBEDDING_MODEL,
+            threshold=settings.OFFTOPIC_RELEVANCE_THRESHOLD,
+            return_hits=True,
         )
-        if not use_rag_off:
+        if not use_rag_off or not hits:
             messages = [
                 {"role": "system", "content": system_prompt["content"]},
                 *history,
-                {"role": "user",   "content": query_to_model},
             ]
             temperature = dynamic_temperature
             top_p = dynamic_top_p
             max_tokens = OFF_TOPIC_MAX_TOKENS
         else:
-            meta_entries = _KB_ENTRIES.get(emb_model, [])
-            meta_map = {e["id"]: e for e in meta_entries}
-            filtered_snippets: List[str] = []
-            q_lower = query_to_model.lower()
-            for score, did, chunk in hits:
-                entry = meta_map.get(did)
-                if entry and (
-                    any(tag.lower() in q_lower for tag in entry.get("tags", []))
-                    or entry.get("category", "").lower() in q_lower
-                ):
-                    filtered_snippets.append(chunk)
-
-            chunks = (filtered_snippets or [h[2] for h in hits])[:settings.KNOWLEDGE_TOP_K]
+            chunks = [h[2] for h in hits][:settings.KNOWLEDGE_TOP_K]
             snippets = "\n".join(f"{i+1}. {c}" for i, c in enumerate(chunks))
 
             user_prompt = (
-                "Below are knowledge snippets relevant to the user's question. "
-                "Respond to the user based on these knowledge snippets without adding false information. "
-                "If knowledge snippets are written in the first-person style, use them in your responses in the first person as if they were your biography.\n\n"
-                f"User question:\n{query_to_model}\n\n"
+                "Below are knowledge snippets relevant to the user's question.\n"
+                "Respond to the user based on these knowledge snippets without adding false information.\n"
+                "If knowledge snippets are written in the first-person style, use them in your responses in the first person as if they were your biography.\n"
+                "______________\n"
                 f"Snippets:\n{snippets}\n\n"
+                "______________\n"
                 "Your answer:"
             )
             messages = [
@@ -480,18 +436,13 @@ async def respond_to_user(
                 *history,
                 {"role": "system", "content": user_prompt},
             ]
-            if is_repeat:
-                messages.append({
-                    "role": "system",
-                    "content": "Your interlocutor wrote the 100% same message as last time. Find a creative way to resolve the situation."
-                })
             temperature = dynamic_temperature
             top_p = dynamic_top_p
             max_tokens = OFF_TOPIC_MAX_TOKENS
 
     try:
         resp = await asyncio.wait_for(
-          _call_openai_with_retry(
+            _call_openai_with_retry(
                 model=settings.RESPONSE_MODEL,
                 messages=messages,
                 max_completion_tokens=max_tokens,
@@ -511,7 +462,9 @@ async def respond_to_user(
     else:
         logger.info("   ↳ OpenAI chat END (t=%.3fs)", time.time() - t0)
         reply = resp.choices[0].message.content.strip() if getattr(resp, "choices", None) else ""
-        reply = re.sub(r"\[[^\]\n]{0,60}(имя|name)[^\]]*\]", "", reply, flags=re.I).strip()
+        reply = re.sub(
+            r"(?m)^\s*\[(?:имя|name)\s*:[^\]]*\]\s*\n?",
+            "", reply, flags=re.I).strip()
 
     assistant_allowed = True
     assistant_guard_key = None

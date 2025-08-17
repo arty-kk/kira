@@ -1,14 +1,11 @@
 cat >app/services/responder/rag/__init__.py<< 'EOF'
 #app/services/responder/rag/__init__.py
-from .topic_detector import is_on_topic
-from .knowledge_proc import get_relevant, _init_kb, _KB_ENTRIES
-from .relevance import relevant_enough
+from .knowledge_proc import _init_kb, _KB_ENTRIES
+from .relevance import is_relevant
 
 __all__ = [
-    "is_on_topic",
-    "get_relevant",
+    "is_relevant",
     "_init_kb",
     "_KB_ENTRIES",
-    "relevant_enough",
 ]
 EOF

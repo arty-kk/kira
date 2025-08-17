@@ -182,7 +182,6 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     if not acquired:
         return
     try:
-        # atomic pick, bump score and set last_global_ping_ts via Lua
         max_score = now - settings.GROUP_PING_USER_COOLDOWN_SECONDS
         last_global_key = f"last_global_ping_ts:{chat_id}"
         ttl = int(adaptive * 2)
@@ -347,17 +346,17 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     system_msg = await build_system_prompt(persona, guidelines)
     if mem_ctx:
         prompt = (
-            "Below is a conversation history with this user in the group chat. "
-            "Do NOT quote it; read it only to recall where the talk stopped.\n\n"
-            f"{mem_ctx}\n\n"
-            "Figure out roughly where the talk stopped, then write one punchy line "
-            "(max 2 sentences, 35 words) in your own voice that nudges the user to reply."
+            f"Below is a conversation history with the user within a global group chat:\n{mem_ctx}\n"
+            "____________\n"
+            "Do NOT quote it; learn it only to think why the talk stopped.\n"
+            "Now, based on your internal reasoning, write the user a short message (maximum 2 sentences, up to 35 words) on your behalf that will naturally re-engage them in the conversation.\n"
+            "Don't add any comments, placeholders, or internal reasoning in the final message."
         )
     else:
         prompt = (
-            "The group chat has been quiet for a while. "
-            "Write one punchy line from yourself (max 2 sentences, 35 words) "
-            "to restart the conversation with the user and make them want to reply."
+            "The group chat has been quiet for a while.\n"
+            "Write to the user a creative message (max 2 sentences, up to 35 words) on your own behalf to make them want to reply.\n"
+            "Don't add any comments, placeholders, or internal reasoning in the final message."
         )
 
     try:

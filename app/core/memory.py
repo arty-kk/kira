@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import contextvars
 import json
+import re
 import logging
 import asyncio
+import unicodedata
 import time as time_module
 
 from typing import Any, Dict, List, Optional
@@ -255,7 +257,24 @@ async def load_context(
         except json.JSONDecodeError:
             logger.warning("Bad JSON in memory chat=%s: %s", chat_id, r)
 
-    return ctx
+    def _n(s: str) -> str:
+        s = unicodedata.normalize("NFKC", s or "")
+        s = re.sub(r"\s+", " ", s).strip()
+        return s.casefold()
+
+    dedup: List[Dict[str, Any]] = []
+    prev_user_text: str | None = None
+
+    for m in ctx:
+        if m.get("role") == "user":
+            cur = _n(m.get("content", ""))
+            if prev_user_text is not None and cur == prev_user_text:
+                continue
+            prev_user_text = cur
+        else:
+            prev_user_text = None
+        dedup.append(m)
+    return dedup
 
 
 async def inc_msg_count(chat_id: int) -> None:

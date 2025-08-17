@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 _COREF_TIMEOUT = getattr(settings, "COREF_TIMEOUT", 10.0)
 
-_COREF_PROMPT = """You are a classifier that decides whether a user message contains any third-person or demonstrative pronouns referring to entities other than the assistant, thus requiring coreference resolution.
+_COREF_PROMPT = """You are a multilingual classifier that decides whether a user message contains any second-person, third-person, or demonstrative pronouns.
 
 Rules:
 - Return exactly one uppercase word: YES or NO (no punctuation, quotes, extra text, or newlines).
-- Consider only pronouns that refer to entities not related to the assistant and/or user.
-- Ignore any pronoun (first‑ or second‑person) whose antecedent is related to the assistant and/or user (I, me, we, us, you, your, твой, 您, etc.).
-- If any sentence in the text contains a pronoun that refers to some third‑party entity, return YES.
-- Otherwise, return NO.
+- Consider in classification only those pronouns that refer to entities, events, persons, or objects NOT related to the assistant itself and/or the user who wrote the query.
+- Ignore any pronouns that refer to the assistant itself and/or the user who wrote the query (I, we, us, you, your, my, me).
+- If any pronouns are contained in the user query that refer to some entities, events, persons, or objects from the snippet, return YES. Otherwise, return NO.
+- Output final reply only in English.
 
 Examples:
 Text: "John went to the park, and then he sat on a bench."
@@ -28,7 +28,10 @@ Text: "I am tired."
 Reply: NO
 
 Text: "Could you pass me that book?"
-Reply: NO
+Reply: YES
+
+Text: "Do you know who he is?"
+Reply: YES
 
 Your Reply:
 \"\"\"{text}\"\"\""""

@@ -22,9 +22,7 @@ get_targets = lambda: ([settings.MODERATOR_NOTIFICATION_CHAT_ID]
 
 
 async def _broadcast_alert(targets: list[int], text: str) -> None:
-    """
-    Send the given alert text to all moderator targets asynchronously.
-    """
+
     if not targets:
         logger.warning("No moderator targets configured; skipping alert")
         return

@@ -44,6 +44,11 @@ async def schedule_response(key: str):
         payload = last.copy()
         payload["text"] = "\n".join(m["text"] for m in msgs)
 
+
+        payload["merged_msg_ids"] = [m.get("msg_id") for m in msgs if m.get("msg_id") is not None]
+        first_reply_to = next((m.get("reply_to") for m in msgs if m.get("reply_to")), None)
+        if first_reply_to and not payload.get("reply_to"):
+            payload["reply_to"] = first_reply_to
         try:
             await redis_client.lpush(settings.QUEUE_KEY, json.dumps(payload))
         except Exception as e:

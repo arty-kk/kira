@@ -120,7 +120,7 @@ def _compute_style_modifiers_sync(
         noise = rng.gauss(0.0, _sigma_for(emo) * NOISE_SCALE_PRIMARY)
         raw = base + noise
         if key in prev:
-            raw = 0.2 * prev[key] + 0.8 * raw
+            raw = 0.65 * prev[key] + 0.35 * raw
         modified[key] = _clamp(raw)
 
     # Energy with circadian
@@ -129,7 +129,7 @@ def _compute_style_modifiers_sync(
     noise = rng.gauss(0.0, _sigma_for("energy") * NOISE_SCALE_PRIMARY)
     raw_e = base + noise
     if key in prev:
-        raw_e = 0.2 * prev[key] + 0.8 * raw_e
+        raw_e = 0.7 * prev[key] + 0.3 * raw_e
     fatigue_penalty = 0.4 * state.get("fatigue", 0.0)
     now = datetime.now()
     hour = now.hour + now.minute / 60.0
@@ -142,7 +142,7 @@ def _compute_style_modifiers_sync(
     noise = rng.gauss(0.0, _sigma_for("fatigue") * NOISE_SCALE_PRIMARY)
     raw_f = base + noise
     if key in prev:
-        raw_f = 0.2 * prev[key] + 0.8 * raw_f
+        raw_f = 0.7 * prev[key] + 0.3 * raw_f
     modified[key] = _clamp(raw_f)
 
     # Secondary emotions
@@ -153,7 +153,7 @@ def _compute_style_modifiers_sync(
             noise = rng.gauss(0.0, _sigma_for(sec) * NOISE_SCALE_SECONDARY)
             raw = base + noise
             if key in prev:
-                raw = 0.2 * prev[key] + 0.8 * raw
+                raw = 0.7 * prev[key] + 0.3 * raw
             modified[key] = _clamp(raw)
 
     # Tertiary emotions
@@ -164,7 +164,7 @@ def _compute_style_modifiers_sync(
             noise = rng.gauss(0.0, _sigma_for(ter) * NOISE_SCALE_TERTIARY)
             raw = base + noise
             if key in prev:
-                raw = 0.2 * prev[key] + 0.8 * raw
+                raw = 0.75 * prev[key] + 0.25 * raw
             modified[key] = _clamp(raw)
 
     # Dyads & Triads
@@ -176,7 +176,7 @@ def _compute_style_modifiers_sync(
         noise = rng.gauss(0.0, _sigma_for(emo_name) * NOISE_SCALE_DYADS_TRIADS)
         raw = base + noise
         if key in prev:
-            raw = 0.2 * prev[key] + 0.8 * raw
+            raw = 0.8 * prev[key] + 0.2 * raw
         modified[key] = _clamp(raw)
 
     # Drive, social & extra-trigger metrics
@@ -265,7 +265,7 @@ def _compute_style_modifiers_sync(
         noise = rng.gauss(0.0, _sigma_for(metric) * NOISE_SCALE_DRIVE_SOCIAL)
         raw   = raw + noise
         if key in prev:
-            smoothed = 0.2 * prev[key] + 0.8 * raw
+            smoothed = 0.45 * prev[key] + 0.55 * raw
             max_step = 0.12 + 0.18 * (a_norm - 0.5) - 0.10 * fatigue
             max_step = max(0.08, min(0.20, max_step))
             delta = smoothed - prev[key]
@@ -380,7 +380,7 @@ def _compute_style_modifiers_sync(
             scale = NOISE_SCALE_COGNITIVE_STYLE * (0.9 if metric in ("aggressiveness","profanity") else 1.2)
             raw += rng.gauss(0.0, _sigma_for(metric) * scale)
         if key in prev:
-            smoothed = 0.2 * prev[key] + 0.8 * raw
+            smoothed = 0.4 * prev[key] + 0.6 * raw
             max_step = 0.22 + 0.25 * (a_norm - 0.5) - 0.15 * fatigue
             max_step = max(0.10, min(0.35, max_step))
             delta = smoothed - prev[key]

@@ -7,19 +7,10 @@ import logging
 import signal
 import sys
 
-from app.core.logging_config import setup_logging
-from app import engine, Base, close_redis_pools, _get_env
+from app import engine, close_redis_pools, _get_env, setup_logging
 from app.tasks.scheduler import start_scheduler, get_scheduler
 from app.emo_engine.persona.memory import PersonaMemory
 from app.bot import start_bot
-
-
-def _init_database() -> None:
-    async def _inner():
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logging.info("✅ Database tables ready")
-    return asyncio.create_task(_inner())
 
 
 async def _preinit_persona_memory() -> PersonaMemory:
@@ -33,26 +24,17 @@ async def main() -> None:
     setup_logging()
     logging.info("🚀 Starting application")
 
-    db_task = _init_database()
-
     scheduler_enabled = _get_env("ENABLE_SCHEDULER", "false").lower() == "true"
     if scheduler_enabled:
-        logging.info("⏱️ Starting scheduler")
         start_scheduler()
     else:
         logging.info("⏱️ Scheduler disabled")
 
     try:
-        logging.info("⏳ Pre-initializing PersonaMemory")
-        pm = await _preinit_persona_memory()
+
+        await _preinit_persona_memory()
     except Exception:
         logging.exception("⚠️ PersonaMemory initialization failed")
-
-    try:
-        await db_task
-    except Exception:
-        logging.exception("❌ Database init failed")
-        return
 
     logging.info("🤖 Launching bot")
     bot_task = asyncio.create_task(start_bot())

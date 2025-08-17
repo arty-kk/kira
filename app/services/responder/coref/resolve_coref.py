@@ -10,30 +10,46 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_COT_PROMPT = """You are a coreference-resolution assistant.
+_COT_PROMPT = """You are a coreference-/deixis-resolution assistant.
 
 Instructions (CoT Phase):
-1. Identify all pronouns in the user's new query that refer to entities not related to the assistant and/or user.
-2. Ignore any pronoun (first- or second-person) whose antecedent is related to the assistant and/or user (I, me, we, us, you, your, твой, 您, etc.).
+1. Identify all pronouns in the user query that refer to entities, events, persons, or objects NOT to the assistant itself and/or the user who wrote the query.
+2. Ignore in coreference-/deixis-resolution any pronouns that refer to the assistant itself and/or the user who wrote the query (I, we, us, you, your, my, me).
 3. For each pronoun (not related to the assistant and/or user) locate its antecedent in the provided conversation snippet.
-4. Return **only** a numbered list like:
+4. If any pronouns that do NOT refer to the assistant and/or user do not have a clear logical antecedent, do not consider those pronouns in coreference resolution.
+5. Return **only** a numbered list like:
    1. pronoun → antecedent
    2. pronoun → antecedent
-5. If no pronouns require resolution, reply exactly: No pronouns to resolve.
+6. If no pronouns require resolution, reply exactly: No pronouns to resolve.
 
-Example:
+Example 1:
 Snippet:
   Alice went home. She was tired.
 Query:
   "Can you tell me if she locked the door?"
 Reply:
   1. she → Alice
+
+Example 2:
+Snippet:
+  Sam has read an interesting book.
+Query:
+  "What was the title of the book he read?"
+Reply:
+  1. he → Sam
+
+Example 2:
+Snippet:
+  Alice has read an interesting book.
+Query:
+  "What was the title of this book?"
+Reply: No pronouns to resolve.
 """
 
 _FINAL_PROMPT = """Now rewrite the user's query using the resolved antecedents.
 
 Rules (Rewrite Phase):
-1. Replace each pronoun (not related to the assistant and/or user) with its specific antecedent.
+1. Replace each pronoun (not related to the assistant itself and/or the user who wrote the query) with its specific antecedent.
 2. Preserve the original meaning and conversational context.
 3. **Return exactly** the rewritten query string, with no numbering, quotes, or extra text.
 
@@ -47,7 +63,19 @@ FINAL_TIMEOUT = 15
 
 async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
 
-    snippet = history[-10:]
+    snippet = [m for m in (history or []) if m.get("role") in ("user", "assistant")][-10:]
+
+    def _clean_rewrite(s: str, original: str) -> str:
+        s = (s or "").strip()
+        s = re.sub(r"^```(?:\w+)?\s*|\s*```$", "", s, flags=re.IGNORECASE).strip()
+        s = re.sub(r"^(rewritten|rewrite|final)\s*:\s*", "", s, flags=re.IGNORECASE).strip()
+        s = s.strip('"\u00ab\u00bb“”‘’')
+        s = " ".join(s.split())
+        if not s or s.lower() in {"no pronouns to resolve", "none", "n/a"}:
+            return original
+        if len(s) > 4 * max(10, len(original)):
+            return original
+        return s
 
     cot_messages = [
         {
@@ -57,7 +85,7 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         *snippet,
         {
             "role": "user",
-            "content": f"Identify the antecedents for each pronoun in this user query:\n\"{text}\""
+            "content": f"Identify the antecedents for each referring expression in this user query:\n\"{text}\""
         },
     ]
     try:
@@ -112,7 +140,8 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         )
         if not final_resp.choices:
             raise ValueError("empty choices in final response")
-        rewritten = final_resp.choices[0].message.content.strip()
+        rewritten_raw = final_resp.choices[0].message.content
+        rewritten = _clean_rewrite(rewritten_raw, text)
         logger.debug("Final rewrite completed in %.2fs", asyncio.get_running_loop().time() - start)
         return rewritten
     except asyncio.TimeoutError:

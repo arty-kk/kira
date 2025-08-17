@@ -1,104 +1,115 @@
 cat >app/services/responder/rag/relevance.py<< 'EOF'
-#app/services/responder/rag/relevance.py
+# app/services/responder/rag/relevance.py
 import logging
-import hashlib
 import asyncio
 import re
+from typing import List, Tuple, Optional
 
-from typing import List, Tuple
-
-from .keyword_filter import get_keyword_processor
-from .knowledge_proc import get_relevant
 from app.config import settings
 from app.clients.openai_client import _call_openai_with_retry
-from app.core.memory import get_redis
+from .knowledge_proc import get_relevant
+from .keyword_filter import get_keyword_processor
 
 logger = logging.getLogger(__name__)
 
-_RELEVANCE_CACHE_EX = 3600
+_CLEAN = re.compile(r"[^\w\s]")
 
-async def relevant_enough(
-    text: str, 
-    model: str, 
-    threshold: float, 
-    hits: List[Tuple[float, str, str]] | None = None
-) -> bool:
 
-    text_clean = re.sub(r"[^\w\s]", " ", text).lower()
-    kw_proc = get_keyword_processor()
-    kws = [kw for kw in kw_proc.extract_keywords(text_clean) if len(kw) >= 4]
-    if len(kws) >= 2:
-        logger.debug("relevance: %d keywords %r → force on-topic", len(kws), kws)
-        return True
-    if len(kws) == 1:
-        logger.debug("relevance: single keyword %r → defer to embeddings", kws)
+async def _llm_yesno(query: str, snippets: List[str]) -> bool:
+    if not snippets:
+        return False
 
-    cache_key = "relcache:" + hashlib.sha256(f"{model}:{text}".encode()).hexdigest()
+    joined = "\n".join(f"{i+1}) {s}" for i, s in enumerate(snippets))
+
     try:
-        redis = get_redis()
-        cached = await redis.get(cache_key)
+        resp = await asyncio.wait_for(
+            _call_openai_with_retry(
+                model=settings.BASE_MODEL,
+                temperature=0.0,
+                max_completion_tokens=4,
+                messages=[
+                    {"role": "system", "content": "Answer ONLY 'Yes' or 'No'."},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Decide if the user's message explicitly requests information present in the snippets.\n"
+                            "Say 'Yes' ONLY if at least one snippet clearly matches the user's intent/content;\n"
+                            "Say 'No' for greetings, small talk, generic chit-chat, role-play hooks, or unrelated text.\n\n"
+                            f"User message:\n{query}\n\nSnippets:\n{joined}"
+                        ),
+                    },
+                ],
+            ),
+            timeout=10.0,
+        )
+        ans = (resp.choices[0].message.content or "").strip().lower()
+        ok = ans.startswith("y")
+        logger.debug("gate: llm_yesno verdict=%s", ok)
+        return ok
     except Exception:
-        cached = None
-    if cached is not None:
-        if isinstance(cached, (bytes, bytearray)):
-            cached = cached.decode()
-        return cached.strip() == "1"
+        logger.exception("gate: LLM yes/no failed")
+        return False
 
-    if hits is None:
+
+async def is_relevant(
+    text: str, *, model: str, threshold: float, return_hits: bool
+) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
+
+    clean = _CLEAN.sub(" ", text).lower()
+    hits: List[Tuple[float, str, str]] = []
+
+    kw_proc = get_keyword_processor(model=model)
+    kws = [kw for kw in kw_proc.extract_keywords(clean) if len(kw) >= 4]
+
+    if len(kws) >= 1:
         try:
             hits = await get_relevant(text, model_name=model)
         except Exception:
-            logger.exception("get_relevant failed in relevant_enough")
+            logger.exception("gate: get_relevant failed on keyword path")
             hits = []
 
-    if not hits:
-        logger.debug("relevance: no hits → off-topic")
-        try:
-            await redis.set(cache_key, "0", ex=_RELEVANCE_CACHE_EX)
-        except Exception as e:
-            logger.debug("Redis set failed: %s", e)
-        return False
-
-    top_score = hits[0][0] if hits else 0.0
-
-    margin = settings.RELEVANCE_MARGIN
-    logger.debug("relevance: top_score=%.4f, threshold=%.4f, margin=%.4f",
-                 top_score, threshold, margin)
-                 
-    if top_score >= threshold + margin:
-        result = True
-    elif top_score < threshold - margin:
-        result = False
-    else:
-        safe_text = text.replace("'", "\\'")
-        prompt = (
-            "You are a strict classifier. Answer only 'Yes' or 'No'.\n"
-            f"Your interlocutor's query: '{safe_text}'\n"
-            "Does this query relate to any content in the knowledge base?"
-        )
-        try:
-            resp = await asyncio.wait_for(
-                _call_openai_with_retry(
-                    model=settings.BASE_MODEL,
-                    temperature=0.0,
-                    messages=[
-                        {"role": "system", "content": "Answer ONLY Yes or No."},
-                        {"role": "user", "content": prompt},
-                    ],
-                ),
-                timeout=10.0,
+        if not hits:
+            logger.info(
+                "gate: model=%s ok=%s kws=%d hits=%d (keyword-path no hits)",
+                model, False, len(kws), 0
             )
-            verdict = resp.choices[0].message.content.strip().lower()
-            result = verdict.startswith("yes")
-        except Exception:
-            logger.exception("GPT fallback failed in relevant_enough")
-            result = top_score >= threshold
-    
+            return False, None
+
+        snippets = [h[2] for h in hits[: min(3, settings.KNOWLEDGE_TOP_K)]]
+        ok = await _llm_yesno(text, snippets)
+        logger.info(
+            "gate: model=%s ok=%s kws=%d top=%.3f hits=%d (keyword-path)",
+            model, ok, len(kws), (hits[0][0] if hits else -1.0), len(hits)
+        )
+        return (ok, hits if (ok and return_hits) else None)
+
     try:
-        await redis.set(cache_key, "1" if result else "0", ex=_RELEVANCE_CACHE_EX)
-    except Exception as e:
-        logger.debug("Redis set failed: %s", e)
-    logger.info("relevant_enough: top_score=%.4f threshold=%.4f → %s", 
-                top_score, threshold, result)
-    return result
+        hits = await get_relevant(text, model_name=model)
+    except Exception:
+        logger.exception("gate: get_relevant failed")
+        return False, None
+
+    if not hits:
+        logger.info(
+            "gate: model=%s ok=%s kws=%d top=%.3f hits=%d (no-hits)",
+            model, False, len(kws), -1.0, 0
+        )
+        return False, (hits if return_hits else None)
+
+    top = hits[0][0]
+    margin = settings.RELEVANCE_MARGIN
+    if top < threshold - margin:
+        logger.info(
+            "gate: model=%s ok=%s kws=%d top=%.3f thr=%.3f hits=%d (below-thr)",
+            model, False, len(kws), top, threshold, len(hits)
+        )
+        return False, (hits if return_hits else None)
+
+    snippets = [h[2] for h in hits[: min(3, settings.KNOWLEDGE_TOP_K)]]
+    ok = await _llm_yesno(text, snippets)
+    logger.info(
+        "gate: model=%s ok=%s kws=%d top=%.3f thr=%.3f hits=%d",
+        model, ok, len(kws), top, threshold, len(hits)
+    )
+    return (ok, hits if (ok and return_hits) else None)
 EOF

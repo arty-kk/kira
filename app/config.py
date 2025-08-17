@@ -104,8 +104,11 @@ class Settings:
     
     # ─── Database ────────────────────────────────────────────────
     DATABASE_URL: str = field(default_factory=lambda: _get_env("DATABASE_URL", required=True))
-    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "100", conv=int))
-    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "50", conv=int))
+    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "10", conv=int))
+    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "5", conv=int))
+    DB_POOL_CLASS: str = field(default_factory=lambda: _get_env("DB_POOL_CLASS", "QueuePool", conv=str))
+    DB_POOL_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_POOL_TIMEOUT", "10", conv=int))
+    DB_POOL_RECYCLE: int = field(default_factory=lambda: _get_env("DB_POOL_RECYCLE", "1800", conv=int))
 
     # ─── RedisMemory / RediSearch settings ─────────────────────────
     REDIS_URL: str = field(default_factory=lambda: _get_env("REDIS_URL", required=True))
@@ -165,13 +168,13 @@ class Settings:
     BOT_PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("BOT_PERSONA_ZODIAC", "Scorpio"))
     BOT_PERSONA_TEMPERAMENT: str = field(default_factory=lambda: _get_env(
             "PERSONA_TEMPERAMENT",
-            '{"sanguine":0.25,"choleric":0.20,"phlegmatic":0.30,"melancholic":0.25}',
+            '{"sanguine":0.35,"choleric":0.15,"phlegmatic":0.25,"melancholic":0.25}',
         )
     )
 
     # ─── Persona behavioural thresholds ─────────────────────────
     PERSONA_WEIGHT_HALFLIFE: int = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_HALFLIFE", "600", conv=int))
-    PERSONA_WEIGHT_STEP: float = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_STEP", "0.12", conv=float))
+    PERSONA_WEIGHT_STEP: float = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_STEP", "0.1", conv=float))
     PERSONA_BLEND_FACTOR: float = field(default_factory=lambda: _get_env("PERSONA_BLEND_FACTOR", "0.8", conv=float))
     APPRAISAL_IMPORTANCE_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_IMPORTANCE_FACTOR", "1.3", conv=float))
     APPRAISAL_EXPECTATION_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_EXPECTATION_FACTOR", "1.25", conv=float))
@@ -182,7 +185,7 @@ class Settings:
     EMO_EMA_ALPHA: float = field(default_factory=lambda: _get_env("EMO_EMA_ALPHA", "0.45", conv=float))
     SECONDARY_EMO_BETA: float = field(default_factory=lambda: _get_env("SECONDARY_EMO_BETA", "0.5", conv=float))
     SECONDARY_THRESH: float = field(default_factory=lambda: _get_env("SECONDARY_THRESH", "0.1", conv=float))
-    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.5", conv=float))
+    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.6", conv=float))
     TERTIARY_THRESH: float = field(default_factory=lambda: _get_env("TERTIARY_THRESH", "0.15", conv=float))
     EMO_MIN_DOMINANT_DIFF: float = field(default_factory=lambda: _get_env("EMO_MIN_DOMINANT_DIFF", "0.05", conv=float))
     EMO_PASSIVE_DECAY: float = field(default_factory=lambda: _get_env("EMO_PASSIVE_DECAY", "0.985", conv=float))
@@ -219,8 +222,8 @@ class Settings:
 
     # ─── Hybrid Fallback Parameters ──────────────────────────────
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
-    RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.3", conv=float))
-    OFFTOPIC_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("OFFTOPIC_RELEVANCE_THRESHOLD", "0.3", conv=float))
+    RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.4", conv=float))
+    OFFTOPIC_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("OFFTOPIC_RELEVANCE_THRESHOLD", "0.4", conv=float))
     RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
     KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "3", conv=int))
 
@@ -230,7 +233,7 @@ class Settings:
     MEMORY_TTL_DAYS: int = field(default_factory=lambda: _get_env("MEMORY_TTL_DAYS", "7", conv=int))
 
     # ─── Group Ping Settings ────────────────────────────────────
-    GROUP_PING_INTERVAL_MINUTES: int = field(default_factory=lambda: _get_env("GROUP_PING_INTERVAL_MINUTES", "15", conv=int))
+    GROUP_PING_INTERVAL_MINUTES: int = field(default_factory=lambda: _get_env("GROUP_PING_INTERVAL_MINUTES", "30", conv=int))
     GROUP_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("GROUP_PING_HISTORY_COUNT", "10", conv=int))
     GROUP_PING_IDLE_THRESHOLD_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_IDLE_THRESHOLD_SECONDS", "1200", conv=int))
     GROUP_PING_ADAPTIVE_IDLE_MULTIPLIER: float = field(default_factory=lambda: _get_env("GROUP_PING_ADAPTIVE_IDLE_MULTIPLIER", "1.5", conv=float))
@@ -241,16 +244,16 @@ class Settings:
     GROUP_PING_MAX_AROUSAL: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_AROUSAL", "0.85", conv=float))
 
     # ─── Personal Ping Settings ─────────────────────────────────
-    PERSONAL_PING_INTERVAL_MIN: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_MIN", "60", conv=int))
-    PERSONAL_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("PERSONAL_PING_HISTORY_COUNT", "8", conv=int))
+    PERSONAL_PING_INTERVAL_MIN: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_MIN", "543", conv=int))
+    PERSONAL_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("PERSONAL_PING_HISTORY_COUNT", "10", conv=int))
     PERSONAL_PING_IDLE_THRESHOLD_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_IDLE_THRESHOLD_SECONDS", "12345", conv=int))
     PERSONAL_PING_ADAPTIVE_MULTIPLIER: float = field(default_factory=lambda: _get_env("PERSONAL_PING_ADAPTIVE_MULTIPLIER", "1.2", conv=float))
     PERSONAL_PING_RETENTION_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_RETENTION_SECONDS", "604800", conv=int))
     PERSONAL_PING_BATCH_SIZE: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BATCH_SIZE", "20", conv=int))
-    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.5", conv=float))
+    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.65", conv=float))
     PERSONAL_PING_BIORHYTHM_WEIGHT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BIORHYTHM_WEIGHT", "0.4", conv=float))
     PERSONAL_PING_START_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_START_HOUR", "9", conv=int))
-    PERSONAL_PING_END_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_END_HOUR",   "21", conv=int))
+    PERSONAL_PING_END_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_END_HOUR", "21", conv=int))
 
     # ─── New User Greeting Settings ─────────────────────────────
     NEW_USER_TTL_SECONDS: int = field(default_factory=lambda: _get_env("NEW_USER_TTL_SECONDS", "86400", conv=int))

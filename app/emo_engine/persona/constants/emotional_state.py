@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple, List
 from .tone_map import TONE_MAP, Tone
 
 
-MIN_GLOBAL_THR = 0.20
+MIN_GLOBAL_THR = 0.25
 TOP_K = 3
 
 
@@ -23,7 +23,7 @@ def compute_emotional_state(
 
     v = float(state.get("valence", 0.0))
     a = float(state.get("arousal", 0.5))
-    if abs(v) < 0.12 and a < 0.35:
+    if abs(v) < 0.25 and a < 0.5:
         return "Neutral"
 
     scores: List[Tuple[Tone, float]] = []

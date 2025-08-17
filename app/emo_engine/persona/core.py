@@ -98,6 +98,7 @@ class Persona:
 
     def __post_init__(self) -> None:
         self._lock = asyncio.Lock()
+        self._bg_queue = asyncio.Queue(maxsize=getattr(settings, "BG_QUEUE_MAX", 1000))
         self._mods_lock = asyncio.Lock()
         self._proc_sem = asyncio.Semaphore(1)
         self._rng = random.Random(self.chat_id)
@@ -227,18 +228,20 @@ class Persona:
             return self._prompt_cache
         want_mem_followup = "MemoryFollowUp" in norm_guides
 
-        metrics_str = "; ".join(f"{k}={s.get(k, 0.0):.2f}" for k in all_key_mods)
+        #metrics_str = "; ".join(f"{k}={s.get(k, 0.0):.2f}" for k in all_key_mods)
 
-        logger.info("   ↳ style_modifiers START")
-        mods = await self.style_modifiers()
-        logger.info("   ↳ style_modifiers END (t=%.3fs)", time.time() - start_ts)
-        mods_str = "; ".join(f"{k}={v:.2f}" for k, v in (mods or {}).items())
-        cr_str = "; ".join(f"{m}={self.change_rates.get(m,0.0):.2f}" for m in ("valence", "arousal", "stress", "anxiety"))
+        #logger.info("   ↳ style_modifiers START")
+        #mods = await self.style_modifiers()
+        #logger.info("   ↳ style_modifiers END (t=%.3fs)", time.time() - start_ts)
+        #mods_str = "; ".join(f"{k}={v:.2f}" for k, v in (mods or {}).items())
+        #cr_str = "; ".join(f"{m}={self.change_rates.get(m,0.0):.2f}" for m in ("valence", "arousal", "stress", "anxiety"))
         guide_str = ", ".join(norm_guides)
 
         sections: List[str] = [
             f"Your Name: {self.name}.",
             f"Your Gender: {self.gender}.",
+            f"Your Zodiac: {self.zodiac}.",
+            f"Your Temperament: {self.temperament}.",
             #f"Origin & Background: {self.origin}.",
             #f"Mood State: {self.mood}",
             #f"Internal Metrics: {metrics_str}",

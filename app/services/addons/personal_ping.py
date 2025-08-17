@@ -297,15 +297,18 @@ async def _send_contextual_ping(chat_id: int, user_id: int) -> None:
 
     if mem_ctx:
         prompt = (
-            f"Below is a conversation history with your interlocutor:\n{mem_ctx}\n\n"
+            f"Below is a conversation history with your interlocutor:\n{mem_ctx}\n"
+            "____________\n"
             "The conversation was interrupted for some reason, and some time has passed.\n"
-            "Try to grasp the logic during the previous conversation and, based on that, find the best natural motive to continue the conversation.\n"
-            "Based on internal reasoning, write a message on your behalf to renew the conversation with your interlocutor."
+            "Try to grasp the logic during the previous conversation and, based on that, find the best motive to continue the conversation.\n"
+            "Now, based on your own internal reasoning and emotional state, write your interlocutor a short message (maximum 2 sentences, up to 35 words) on your behalf that will naturally re-engage them in the conversation.\n"
+            "Don't add any comments, placeholders, or internal reasoning in the final message."
         )
     else:
         prompt = (
-            "It's been quiet in the private chat for a while. "
-            "Write one brief message (max 2 sentences, ≤ 35 words) on your own behalf to renew the conversation with your interlocutor."
+            "It's been quiet in the private chat for a while.\n"
+            "Write to the user a creative message (max 2 sentences, up to 35 words) on your own behalf to make them want to reply.\n"
+            "Don't add any comments, placeholders, or internal reasoning in the final message."
         )
 
     try:
