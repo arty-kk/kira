@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/stylers/modifiers.py<< EOF
+cat >app/emo_engine/persona/stylers/modifiers.py<< 'EOF'
 #app/emo_engine/persona/stylers/modifiers.py
 import math
 import asyncio

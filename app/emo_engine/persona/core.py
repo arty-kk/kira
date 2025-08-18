@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/core.py<< EOF
+cat >app/emo_engine/persona/core.py<< 'EOF'
 #app/emo_engine/persona/core.py
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from .states import (
     _recompute_rates, process_interaction as _process_interaction_impl,
     _blend_metric, _update_mood_label, _bg_worker,
     _decayed_weight, _compute_salience, _update_weight,
+    _update_attachment, _ensure_attachment_defaults,
 )
 from .utils.emotion_math import (
     _compute_secondary, _clamp as _global_clamp,
@@ -49,7 +50,7 @@ class Persona:
     name: str = settings.BOT_PERSONA_NAME
     gender: str = settings.BOT_PERSONA_GENDER
     age: int = settings.BOT_PERSONA_AGE
-    origin: str = settings.BOT_PERSONA_ORIGIN
+    bio: str = settings.BOT_PERSONA_BIO
     zodiac: str = settings.BOT_PERSONA_ZODIAC
     temperament: Dict[str, float] = field(
         default_factory=lambda: json.loads(settings.BOT_PERSONA_TEMPERAMENT)
@@ -80,6 +81,8 @@ class Persona:
     flowstate: float = field(init=False, default=0.0)
     _style_mods_version: int = field(init=False, default=-1)
     _last_user_msg: str = field(init=False, default="")
+    attachments: Dict[int, dict] = field(init=False, default_factory=dict)
+    _rds: object = field(init=False, repr=False, compare=False, default=None)
     _recompute_rates = _recompute_rates
     _blend_metric = _blend_metric
     _update_mood_label = _update_mood_label
@@ -110,6 +113,7 @@ class Persona:
             _recompute_rates, _blend_metric, _update_mood_label,
             _compute_secondary, _compute_tertiary, _bg_worker,
             _decayed_weight, _compute_salience, _update_weight,
+            _update_attachment, _ensure_attachment_defaults,
         ):
             setattr(self, fn.__name__, MethodType(fn, self))
 
@@ -173,11 +177,17 @@ class Persona:
         self._last_uid = None
         self.flowstate = 0.0
         self.enhanced_memory = PersonaMemory()
-        asyncio.create_task(self._start_bg_worker())
-        asyncio.create_task(self._notify_ready())
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._start_bg_worker())
+            loop.create_task(self._notify_ready())
+        except RuntimeError:
+            logger.warning("Persona init: no running event loop detected; background tasks will be started later.")
         self._last_mood_change_ts = time.time()
         self._prev_mood = self.mood
         self._text_analyzer = TextAnalyzer()
+        self.attachments = {}
+        self._rds = None
 
 
     async def analyze_text(self, text: str) -> Dict[str, float]:
@@ -197,8 +207,9 @@ class Persona:
     def tweak(self, knob: str, delta: float) -> None:
         if knob not in COGNITIVE_METRICS:
             raise ValueError(f"Unknown knob: {knob}")
+        cur = self.state.get(knob, 0.5)
         self.state[knob] = self._clamp(
-            self.state[knob] + delta,
+            cur + delta,
             0.0,
             1.0,
         )
@@ -240,9 +251,9 @@ class Persona:
         sections: List[str] = [
             f"Your Name: {self.name}.",
             f"Your Gender: {self.gender}.",
-            f"Your Zodiac: {self.zodiac}.",
+            f"Your Zodiac Sign: {self.zodiac}.",
             f"Your Temperament: {self.temperament}.",
-            #f"Origin & Background: {self.origin}.",
+            #f"Origin & Background: {self.bio}.",
             #f"Mood State: {self.mood}",
             #f"Internal Metrics: {metrics_str}",
             #f"ChangeRates: {cr_str}",
@@ -364,6 +375,110 @@ class Persona:
         return result
 
 
+    async def _ensure_rds(self):
+        if self._rds is None:
+            try:
+                from app.core.memory import get_redis
+                self._rds = get_redis()
+            except Exception:
+                self._rds = None
+        return self._rds
+
+    async def _persist_attachment(self, uid: int) -> None:
+        if not getattr(settings, "ATTACHMENT_PERSIST", False):
+            return
+        rds = await self._ensure_rds()
+        if not rds:
+            return
+        rec = self.attachments.get(uid)
+        if not rec:
+            return
+        key = f"attach:{self.chat_id}:{uid}"
+        try:
+            last_ts = float(rec.get("_persist_ts", 0.0))
+        except Exception:
+            last_ts = 0.0
+        min_period = float(getattr(settings, "ATTACHMENT_PERSIST_MIN_PERIOD", 15.0))
+        min_delta  = float(getattr(settings, "ATTACHMENT_PERSIST_MIN_DELTA", 0.01))
+        if (time.time() - last_ts) < min_period and abs(rec.get("value", 0.0) - rec.get("_persist_value", 0.0)) < min_delta:
+            return
+        try:
+            await rds.hset(key, mapping={
+                "value": rec.get("value", 0.0),
+                "vel": rec.get("vel", 0.0),
+                "ts": rec.get("ts", 0.0),
+                "rupture": rec.get("rupture", 0),
+                "recovery": rec.get("recovery", 0.0),
+                "rupture_until": rec.get("rupture_until", 0.0),
+                "stage": rec.get("stage", ""),
+                "born_ts": rec.get("born_ts", 0.0),
+                "trust_ema": rec.get("trust_ema", 0.5),
+                "style": rec.get("style", "secure"),
+                "style_conf": rec.get("style_conf", 0.0),
+                "pos_accum": rec.get("pos_accum", 0.0),
+                "signals": json.dumps(rec.get("signals", {})),
+            })
+            rec["_persist_ts"] = time.time()
+            rec["_persist_value"] = rec.get("value", 0.0)
+        except Exception:
+            logger.debug("persist_attachment failed", exc_info=True)
+
+
+    async def _load_attachment(self, uid: int) -> None:
+        if not getattr(settings, "ATTACHMENT_PERSIST", False):
+            return
+        if uid in self.attachments:
+            return
+        rds = await self._ensure_rds()
+        if not rds:
+            return
+        key = f"attach:{self.chat_id}:{uid}"
+        try:
+            data = await rds.hgetall(key)
+            if data:
+                def _num(x, default=0.0):
+                    try:
+                        return float(x.decode() if isinstance(x, (bytes, bytearray)) else x)
+                    except Exception:
+                        return default
+                rec = {
+                    "value": _num(data.get(b"value", 0.0)),
+                    "vel": _num(data.get(b"vel", 0.0)),
+                    "ts": _num(data.get(b"ts", 0.0)),
+                    "rupture": int(_num(data.get(b"rupture", 0.0))),
+                    "recovery": _num(data.get(b"recovery", 0.0)),
+                    "rupture_until": _num(data.get(b"rupture_until", 0.0)),
+                    "born_ts": _num(data.get(b"born_ts", 0.0)),
+                    "trust_ema": _num(data.get(b"trust_ema", 0.5)),
+                    "style_conf": _num(data.get(b"style_conf", 0.0)),
+                    "pos_accum": _num(data.get(b"pos_accum", 0.0)),
+                }
+                try:
+                    rec["stage"] = (
+                        data.get(b"stage", b"").decode() if isinstance(data.get(b"stage"), (bytes, bytearray))
+                        else (data.get("stage") or "")
+                    )
+                except Exception:
+                    rec["stage"] = ""
+                try:
+                    rec["style"] = (
+                        data.get(b"style", b"secure").decode()
+                        if isinstance(data.get(b"style"), (bytes, bytearray)) else (data.get("style") or "secure")
+                    )
+                except Exception:
+                    rec["style"] = "secure"
+                try:
+                    sig_raw = data.get(b"signals")
+                    if sig_raw:
+                        rec["signals"] = json.loads(sig_raw.decode() if isinstance(sig_raw, (bytes, bytearray)) else sig_raw)
+                except Exception:
+                    rec["signals"] = {"samples":0,"q":0,"apol":0,"clingy":0,"boundary":0}
+                rec = self._ensure_attachment_defaults(rec, time.time())
+                self.attachments[uid] = rec
+        except Exception:
+            logger.debug("load_attachment failed", exc_info=True)
+
+
     async def select_relevant_memories(
         self,
         now: str,
@@ -372,43 +487,96 @@ class Persona:
     ) -> Dict[str, List[str]]:
 
         sys_msg = (
-            f"You are a memory manager. Current time: {now}.\n"
-            f"Conversation context: \"{context}\"\n"
-            "Below are lists of candidate user events by category:\n"
+            "You are a memory selector.\n"
+            "- Understand ANY language in the items below.\n"
+            "- DO NOT translate or paraphrase anything.\n"
+            "- Each category lists items as [index] text.\n"
+            "- Select up to 2 indices per category that are most relevant right now.\n"
+            "OUTPUT POLICY:\n"
+            "- Return ONLY one minified JSON object with EXACT lowercase ASCII keys: past, present, future.\n"
+            "- Each value must be an array of INTEGER indices. Use an empty array if none.\n"
+            "- NO code fences, NO comments, NO prose.\n"
+            "Example: {\"past\":[0,2],\"present\":[],\"future\":[1]}"
+            f"\nCurrent time: {now}.\n"
+            f"Conversation context: \"{context}\""
         )
         for cat, items in candidates.items():
-            joined = "\n  - ".join(items) if items else "(none)"
-            sys_msg += f"{cat.capitalize()}:\n  - {joined}\n"
-        sys_msg += (
-            "\nSelect up to 2 items per category that are most relevant to mention right now.\n"
-            "Output JSON of the form:\n"
-            '{"past": ["...","..."], "present": ["..."], "future": ["..."]}'
-        )
+            if items:
+                listing = "\n".join(f"[{i}] {t}" for i, t in enumerate(items))
+            else:
+                listing = "(none)"
+            sys_msg += f"\n{cat.capitalize()} (choose by index):\n{listing}\n"
         logger.info("   ↳ select_relevant_memories → OpenAI call")
-        resp = await asyncio.wait_for(
-            _call_openai_with_retry(
-                model=settings.REASONING_MODEL,
-                messages=[
-                    {"role": "system",  "content": sys_msg},
-                    {"role": "user",    "content": "Please respond with the JSON selection only."},
-                ],
-                max_completion_tokens=300,
-                temperature=0.0,
-            ),
-            timeout=30.0,
-        )
-        content = resp.choices[0].message.content.strip()
-        logger.info("   ↳ select_relevant_memories response received (chars=%d)", len(content))
         try:
-            sel: Dict[str, List[str]] = json.loads(content)
+            resp = await asyncio.wait_for(
+                _call_openai_with_retry(
+                    model=settings.BASE_MODEL,
+                    messages=[
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": "Please respond with the JSON selection only."},
+                    ],
+                    max_completion_tokens=300,
+                    temperature=0.0,
+                    response_format={"type": "json_object"},
+                ),
+                timeout=30.0,
+            )
         except Exception:
-            logger.warning("Memory selection JSON parse failed, fallback to top-2 each")
-            sel = {
-                "past":    candidates["past"][:2],
-                "present": candidates["present"][:2],
-                "future":  candidates["future"][:2],
-            }
-        return sel
+            resp = await asyncio.wait_for(
+                _call_openai_with_retry(
+                    model=settings.BASE_MODEL,
+                    messages=[
+                        {"role": "system", "content": sys_msg},
+                        {"role": "user", "content": "Please respond with the JSON selection only."},
+                    ],
+                    max_completion_tokens=300,
+                    temperature=0.0,
+                ),
+                timeout=30.0,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            logger.info("   ↳ select_relevant_memories response received (chars=%d)", len(content))
+            try:
+                if content.startswith("```"):
+                    content = content.strip("`")
+                    if "\n" in content:
+                        content = content.split("\n", 1)[1]
+                content = content.lstrip("\ufeff")
+                if "{" in content and "}" in content:
+                    content = content[content.find("{"): content.rfind("}") + 1]
+                sel_raw = json.loads(content)
+
+                def _as_idx_list(x, n):
+                    seen = set(); out = []
+                    if isinstance(x, list):
+                        for it in x:
+                            try:
+                                idx = int(it)
+                            except Exception:
+                                continue
+                            if 0 <= idx < n and idx not in seen:
+                                seen.add(idx)
+                                out.append(idx)
+                            if len(out) == 2:
+                                break
+                    return out
+
+                past_idx    = _as_idx_list(sel_raw.get("past"),    len(candidates.get("past", [])))
+                present_idx = _as_idx_list(sel_raw.get("present"), len(candidates.get("present", [])))
+                future_idx  = _as_idx_list(sel_raw.get("future"),  len(candidates.get("future", [])))
+                sel: Dict[str, List[str]] = {
+                    "past":    [candidates["past"][i]    for i in past_idx]    if candidates.get("past")    else [],
+                    "present": [candidates["present"][i] for i in present_idx] if candidates.get("present") else [],
+                    "future":  [candidates["future"][i]  for i in future_idx]  if candidates.get("future")  else [],
+                }
+            except Exception:
+                logger.warning("Memory selection JSON parse failed, fallback to top-2 each")
+                sel = {
+                    "past":    candidates["past"][:2],
+                    "present": candidates["present"][:2],
+                    "future":  candidates["future"][:2],
+                }
+            return sel
 
 
     async def summary(self) -> str:
@@ -421,6 +589,16 @@ class Persona:
             if last_uid is not None
             else "N/A"
         )
+        if last_uid is not None and last_uid in self.attachments:
+            att_v = self.attachments[last_uid].get("value", 0.0)
+            try:
+                from .states import _attachment_label
+                att_label = _attachment_label(att_v)
+            except Exception:
+                att_label = "N/A"
+            attach_str = f"{att_label}:{att_v:.2f}"
+        else:
+            attach_str = "N/A"
         mem_count = await self.enhanced_memory.count_entries()
         return (
             f"{self.name} | Mood={self.mood} | V={self.state.get('valence', 0.0):.2f} "
@@ -430,7 +608,7 @@ class Persona:
             f"Sa{t['sanguine']*100:.0f}% Ch{t['choleric']*100:.0f}% "
             f"Ph{t['phlegmatic']*100:.0f}% Me{t['melancholic']*100:.0f}% | "
             f"TopTemp={top_temp}:{t[top_temp]:.2f} LowTemp={low_temp}:{t[low_temp]:.2f} | "
-            f"Weight={weight_pct} | MemEntries={mem_count}"
+            f"Weight={weight_pct} | Attach={attach_str} | MemEntries={mem_count}"
         )
     
 

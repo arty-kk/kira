@@ -2,6 +2,7 @@ cat >app/services/responder/coref/resolve_coref.py<< 'EOF'
 #app/services/responder/coref/resolve_coref.py
 import logging
 import asyncio
+import re
 
 from typing import List, Dict
 

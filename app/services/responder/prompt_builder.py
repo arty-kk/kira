@@ -32,6 +32,7 @@ HUMAN_TONE_PROMPT = (
 )
 
 EMOTION_PROMPT = """
+The following DSL tags are INTERNAL style controls — use them only to steer your writing; NEVER print them.
 Use DSL tags with flexibility to convey your authentic personality and emotionality:
 - EmotionalState: your current dominant emotional state (Format: Joy:60+Surprise:25+Hope:15 (percentages of top ≤ 3 tones))
 - EmotionalIntensity: level of your emotional expressiveness (Very Low:0-24, Low:25-46, Normal:47-63, Moderate:63-73, High:74-84, Very High:85-93, Extreme:94-100)
@@ -58,26 +59,37 @@ async def build_system_prompt(
     local_user_gender = user_gender if user_gender is not None else getattr(persona, "user_gender", None)
 
     str_guides = [getattr(g, "name", g) for g in guidelines]
-    logger.info("build_system_prompt ▶ start chat=%s user_gender=%s guidelines=%r",
-                persona.chat_id, local_user_gender, str_guides)
     guide_key = ",".join(str_guides)
-    logger.info("   ↳ guide_key=%r", guide_key)
 
-    tag_line = "Style tags: " + ", ".join(str_guides)
+    tag_line = "Style tags (internal): " + ", ".join(str_guides)
     user_gender_line = (
         f"User gender: {local_user_gender}."
         if local_user_gender in ("male", "female")
         else ""
     )
 
-    logger.info("   ↳ calling persona.to_prompt chat=%s", persona.chat_id)
     system_body = await persona.to_prompt(str_guides)
-    logger.info("   ↳ persona.to_prompt DONE chat=%s", persona.chat_id)
+
+    relationship_line = ""
+    try:
+        uid = getattr(persona, "_last_uid", None)
+        recs = getattr(persona, "attachments", None)
+        if uid is not None and recs and uid in recs:
+            att = float(recs[uid].get("value", 0.0))
+            try:
+                from app.emo_engine.persona.states import _attachment_label
+                stage = _attachment_label(att)
+            except Exception:
+                stage = "Unknown"
+            relationship_line = f"RelationshipStage: {stage}. AttachmentScore: {att:.2f}."
+    except Exception:
+        logger.debug("relationship_line build failed", exc_info=True)
 
     try:
         full_prompt = "\n".join(filter(None, [
             user_gender_line,
             system_body,
+            relationship_line,
             tag_line,
             EMOTION_PROMPT,
             BOT_GENDER_PROMPT,

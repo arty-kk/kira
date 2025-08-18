@@ -1,4 +1,4 @@
-cat >app/services/responder/core.py<< EOF
+cat >app/services/responder/core.py<< 'EOF'
 #app/services/responder/core.py
 from __future__ import annotations
 

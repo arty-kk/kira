@@ -6,6 +6,7 @@ import math
 import base64
 import hashlib
 import yake
+import re
 import asyncio
 import logging
 import numpy as np
@@ -31,11 +32,26 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
-_EMOTION_WEIGHT = getattr(settings, "EMOTION_WEIGHT", 0.6)
-_RECENCY_WEIGHT = getattr(settings, "RECENCY_WEIGHT", 0.4)
+_EMOTION_WEIGHT = getattr(settings, "EMOTION_WEIGHT", 0.65)
+_RECENCY_WEIGHT = getattr(settings, "RECENCY_WEIGHT", 0.35)
 _DUP_DIST_MAX = settings.DUPLICATE_DISTANCE_MAX
 _MIN_SIMILARITY = settings.MIN_MEMORY_SIMILARITY
 _DP_EXECUTOR = ThreadPoolExecutor(max_workers=8)
+
+
+def _is_missing_index_error(exc: Exception) -> bool:
+
+    msg = str(exc).lower()
+    return any(
+        s in msg
+        for s in (
+            "no such index",
+            "unknown index",
+            "unknown index name",
+            "index does not exist",
+            "index not found"
+        )
+    )
 
 
 def _tag_literal(s: str) -> str:
@@ -51,14 +67,24 @@ def _tag_literal(s: str) -> str:
 async def get_embedding(text: str) -> bytes:
     
     rds = get_redis()
-    md5_key = "emb:" + hashlib.md5(text.encode("utf-8")).hexdigest()
+    md5_key = (
+        f"emb:{settings.EMBEDDING_MODEL}:{settings.EMBED_DIM}:"
+        + hashlib.md5(text.encode("utf-8")).hexdigest()
+    )
     if cached := await rds.get(md5_key):
-        return base64.b64decode(cached)
+        raw = base64.b64decode(cached)
+        if len(raw) == settings.EMBED_DIM * 4:
+            return raw
+        else:
+            logger.warning(
+                "get_embedding: cached vector size mismatch (%d != %d*4). Recomputing.",
+                len(raw), settings.EMBED_DIM
+            )
 
     try:
         resp = await _call_openai_with_retry(
             endpoint="embeddings.create",
-            kwargs={"input": text, "model": settings.EMBEDDING_MODEL},
+            kwargs={"input": text, "model": settings.EMBEDDING_MODEL, "encoding_format": "float"},
             timeout=settings.EMBEDDING_TIMEOUT,
         )
     except Exception as e:
@@ -67,11 +93,26 @@ async def get_embedding(text: str) -> bytes:
         return empty
 
     vec = resp.data[0].embedding
-    if len(vec) != settings.EMBED_DIM:
-        logger.warning("get_embedding: dim mismatch %d vs %d", len(vec), settings.EMBED_DIM)
-    arr = np.asarray(vec[:settings.EMBED_DIM], dtype=np.float32)
-    if arr.shape[0] < settings.EMBED_DIM:
-        arr = np.pad(arr, (0, settings.EMBED_DIM - arr.shape[0]))
+    if isinstance(vec, str):
+        try:
+            raw = base64.b64decode(vec)
+            arr = np.frombuffer(raw, dtype=np.float32)
+        except Exception as de:
+            logger.warning("get_embedding: got base64 embedding, decode failed: %s", de)
+            arr = np.zeros(settings.EMBED_DIM, dtype=np.float32)
+    else:
+        try:
+            arr = np.asarray(vec, dtype=np.float32)
+        except Exception as ce:
+            logger.warning("get_embedding: cast to float32 failed: %s", ce)
+            arr = np.zeros(settings.EMBED_DIM, dtype=np.float32)
+
+    if arr.shape[0] != settings.EMBED_DIM:
+        logger.warning("get_embedding: dim mismatch %d vs %d", arr.shape[0], settings.EMBED_DIM)
+        if arr.shape[0] > settings.EMBED_DIM:
+            arr = arr[:settings.EMBED_DIM]
+        else:
+            arr = np.pad(arr, (0, settings.EMBED_DIM - arr.shape[0]))
     arr = arr.tobytes()
     try:
         await rds.set(md5_key, base64.b64encode(arr).decode("ascii"), ex=86400)
@@ -84,6 +125,29 @@ def _dist_to_sim(d: float) -> float:
     return max(0.0, 1.0 - d)
 
 
+def _build_index_fields(initial_cap: int):
+
+    vec_opts = {
+        "TYPE":            "FLOAT32",
+        "DIM":             settings.EMBED_DIM,
+        "DISTANCE_METRIC": "COSINE",
+        "INITIAL_CAP":     int(initial_cap),
+        "M":               getattr(settings, "HNSW_M", 24),
+        "EF_CONSTRUCTION": getattr(settings, "HNSW_EF_CONSTRUCTION", 400),
+    }
+
+    return [
+        TextField("text"),
+        NumericField("ts", sortable=True),
+        NumericField("event_time", sortable=True),
+        TagField("event_type"),
+        TagField("topic"),
+        TextField("emotions"),
+        VectorField("embedding", "HNSW", vec_opts),
+    ]
+
+
+
 class PersonaMemory:
     INDEX_NAME = "idx:memory"
     ZSET_IDS = "memory:ids"
@@ -93,12 +157,13 @@ class PersonaMemory:
     MAINT_INTERVAL = settings.MEMORY_MAINTENANCE_INTERVAL
     EMBED_DIM = settings.EMBED_DIM
 
-    def __init__(self):
+    def __init__(self, *, start_maintenance: bool = True):
         if settings.EMBED_DIM <= 0:
             raise RuntimeError("EMBED_DIM must be positive; check settings")
         self._redis = get_redis()
         self._ready = asyncio.Event()
         self._index_lock = asyncio.Lock()
+        self._start_maintenance = start_maintenance
         asyncio.create_task(self._initialize())
 
     async def _initialize(self):
@@ -121,7 +186,8 @@ class PersonaMemory:
                 logger.warning("PersonaMemory: index not confirmed at init; will auto-heal on first query.")
             self._ready.set()
 
-        asyncio.create_task(self._periodic_maintenance())
+        if self._start_maintenance:
+            asyncio.create_task(self._periodic_maintenance())
 
 
     async def _ensure_index_available(self) -> None:
@@ -130,14 +196,14 @@ class PersonaMemory:
             await self._redis.ft(self.INDEX_NAME).info()
             return
         except ResponseError as e:
-            if "no such index" not in str(e).lower():
+            if not _is_missing_index_error(e):
                 raise
         async with self._index_lock:
             try:
                 await self._redis.ft(self.INDEX_NAME).info()
                 return
             except ResponseError as e:
-                if "no such index" not in str(e).lower():
+                if not _is_missing_index_error(e):
                     raise
             logger.warning("PersonaMemory: rebuilding missing index %s", self.INDEX_NAME)
             await self.init_index()
@@ -230,35 +296,33 @@ class PersonaMemory:
             logger.error("init_index skipped due to Redis error: %s", e)
             return
 
-        fields = [
-            TextField("text"),
-            NumericField("ts", sortable=True),
-            NumericField("event_time", sortable=True),
-            TagField("event_type"),
-            TagField("topic"),
-            TextField("emotions"),
-            VectorField(
-                "embedding",
-                "HNSW",
-                {
-                    "TYPE":            "FLOAT32",
-                    "DIM":             settings.EMBED_DIM,
-                    "DISTANCE_METRIC": "COSINE",
-                    "INITIAL_CAP":     settings.EMBED_INITIAL_CAP,
-                    "M":                getattr(settings, "HNSW_M", 16),
-                    "EF_CONSTRUCTION":  getattr(settings, "HNSW_EF_CONSTRUCTION", 200),
-                },
-            ),
-        ]
+        desired_cap = max(settings.MEMORY_MAX_ENTRIES * 2, 2048)
+        desired_cap = min(desired_cap, int(settings.EMBED_INITIAL_CAP))
+        fields = _build_index_fields(desired_cap)
         definition = IndexDefinition(prefix=["memory:"], index_type=IndexType.HASH)
         try:
             await self._redis.ft(self.INDEX_NAME).create_index(fields, definition=definition)
         except ResponseError as e:
-            if "Index already exists" in str(e) or "already exists" in str(e):
+            msg = str(e)
+            if "Index already exists" in msg or "already exists" in msg:
                 logger.warning(
                     "RedisSearch index %s already exists, skipping create_index", 
                     self.INDEX_NAME
                 )
+                return
+            low = msg.lower()
+            if "initial capacity" in low and "server limit" in low:
+                m = re.search(r"\((\d+)\s+with the given parameters\)", msg)
+                server_limit = int(m.group(1)) if m else None
+                new_cap = max(settings.MEMORY_MAX_ENTRIES * 2, 2048)
+                if server_limit:
+                    new_cap = min(new_cap, server_limit)
+                logger.warning(
+                    "init_index: reducing INITIAL_CAP from %s to %s due to server limit (%s).",
+                    desired_cap, new_cap, server_limit if server_limit is not None else "unknown"
+                )
+                fields_retry = _build_index_fields(new_cap)
+                await self._redis.ft(self.INDEX_NAME).create_index(fields_retry, definition=definition)
                 return
             raise
         
@@ -321,27 +385,69 @@ class PersonaMemory:
         else:
             etype = "future"
 
-        k    = settings.REDISSEARCH_KNN_K
+        try:
+            k = int(settings.REDISSEARCH_KNN_K)
+        except Exception:
+            k = 5
+        if k < 1:
+            k = 1
         tout = settings.REDISSEARCH_TIMEOUT
 
+        ef_rt = 0
+        try:
+            ef_rt = int(getattr(settings, "HNSW_EF_RUNTIME", 0) or 0)
+        except Exception:
+            ef_rt = 0
+        if ef_rt > 0:
+            knn_clause = f"[KNN {k} @embedding $vec AS vector_score EF_RUNTIME $ef]"
+            params = {"vec": embedding, "ef": ef_rt}
+        else:
+            knn_clause = f"[KNN {k} @embedding $vec AS vector_score]"
+            params = {"vec": embedding}
         q = (
-            Query(f"(*)=>[KNN {k} @embedding $vec AS vector_score]")
+            Query(f"(*)=>{knn_clause}")
             .sort_by("vector_score")
             .return_fields("vector_score")
             .dialect(2)
+            .paging(0, k)
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                 timeout=tout,
             )
             logger.info("record: dedupe search END (t=%.3fs)", time.time() - ts)
         except ResponseError as e:
-            if "no such index" in str(e).lower():
+            if ef_rt > 0:
+                try:
+                    q_fallback = (
+                        Query(f"(*)=>[KNN {k} @embedding $vec AS vector_score]")
+                        .sort_by("vector_score").return_fields("vector_score")
+                        .dialect(2).paging(0, k)
+                    )
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                        timeout=tout,
+                    )
+                except ResponseError as e_fb:
+                    if _is_missing_index_error(e_fb):
+                        await self._ensure_index_available()
+                        try:
+                            res = await asyncio.wait_for(
+                                self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                                timeout=tout,
+                            )
+                        except Exception as e2:
+                            logger.warning("record: dedupe retry after ensure failed (%s), skipping", e2)
+                            res = None
+                    else:
+                        logger.warning("record: dedupe fallback failed (%s), skipping", e_fb)
+                        res = None
+            elif _is_missing_index_error(e):
                 await self._ensure_index_available()
                 try:
                     res = await asyncio.wait_for(
-                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                         timeout=tout,
                     )
                 except Exception as e2:
@@ -350,9 +456,6 @@ class PersonaMemory:
             else:
                 logger.warning("record: dedupe search failed (%s), skipping deduplication", e)
                 res = None
-        except Exception as e:
-            logger.warning("record: dedupe search failed (%s), skipping deduplication", e)
-            res = None
 
         pipe = self._redis.pipeline(transaction=True)
         if res:
@@ -371,7 +474,10 @@ class PersonaMemory:
                     pipe.zrem(self.ZSET_IDS, old)
 
         topics_raw = self._extract_topics(text)
-        topics = [ (w or "").replace(",", " ").replace('"', " ").replace("|", " ").strip() for w in topics_raw if w ]
+        topics = [
+            (w or "").lower().replace(",", " ").replace('"', " ").replace("|", " ").strip()
+            for w in topics_raw if w
+        ]
         data = {
             "text":       text,
             "ts":         time.time(),
@@ -400,27 +506,73 @@ class PersonaMemory:
         logger.debug("query: ready.wait END (t=%.3fs)", time.time() - ts)
 
         if topic_hint:
+            topic_hint = topic_hint.lower()
             qbase = f'(@topic:{{{_tag_literal(topic_hint)}}})'
         else:
             qbase = "(*)"
+
+        try:
+            top_k = int(top_k)
+        except Exception:
+            top_k = 5
+        if top_k < 1:
+            top_k = 1
+
+        ef_rt = 0
+        try:
+            ef_rt = int(getattr(settings, "HNSW_EF_RUNTIME", 0) or 0)
+        except Exception:
+            ef_rt = 0
+        if ef_rt > 0:
+            knn_clause = f"[KNN {top_k} @embedding $vec AS vector_score EF_RUNTIME $ef]"
+            params = {"vec": embedding, "ef": ef_rt}
+        else:
+            knn_clause = f"[KNN {top_k} @embedding $vec AS vector_score]"
+            params = {"vec": embedding}
         q = (
-            Query(f"{qbase}=>[KNN {top_k} @embedding $vec AS vector_score]")
+            Query(f"{qbase}=>{knn_clause}")
             .sort_by("vector_score")
             .return_fields("vector_score", "text")
             .dialect(2)
+            .paging(0, top_k)
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                 timeout=settings.REDISSEARCH_TIMEOUT
             )
             logger.info("query: search END (t=%.3fs)", time.time() - ts)
         except ResponseError as e:
-            if "no such index" in str(e).lower():
+            if ef_rt > 0:
+                try:
+                    q_fallback = (
+                        Query(f"{qbase}=>[KNN {top_k} @embedding $vec AS vector_score]")
+                        .sort_by("vector_score").return_fields("vector_score", "text")
+                        .dialect(2).paging(0, top_k)
+                    )
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                        timeout=settings.REDISSEARCH_TIMEOUT
+                    )
+                except ResponseError as e_fb:
+                    if _is_missing_index_error(e_fb):
+                        await self._ensure_index_available()
+                        try:
+                            res = await asyncio.wait_for(
+                                self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                                timeout=settings.REDISSEARCH_TIMEOUT
+                            )
+                        except Exception as e2:
+                            logger.warning("PersonaMemory.query retry after ensure failed (%s)", e2)
+                            return []
+                    else:
+                        logger.warning("PersonaMemory.query fallback failed (%s)", e_fb)
+                        return []
+            elif _is_missing_index_error(e):
                 await self._ensure_index_available()
                 try:
                     res = await asyncio.wait_for(
-                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                         timeout=settings.REDISSEARCH_TIMEOUT
                     )
                 except Exception as e2:
@@ -429,9 +581,7 @@ class PersonaMemory:
             else:
                 logger.warning("PersonaMemory.query failed (%s)", e)
                 return []
-        except Exception as e:
-            logger.warning("PersonaMemory.query failed (%s)", e)
-            return []
+
         out: List[Tuple[str, float]] = []
         for doc in res.docs:
             sim = _dist_to_sim(float(doc.vector_score))
@@ -450,27 +600,71 @@ class PersonaMemory:
         await self._ready.wait()
         await self._ensure_index_available()
         logger.debug("query_time: ready.wait END (t=%.3fs)", time.time() - ts)
+
         val = _tag_literal(event_type)
+
+        try:
+            top_k = int(top_k)
+        except Exception:
+            top_k = 5
+        if top_k < 1:
+            top_k = 1
+
+        ef_rt = 0
+        try:
+            ef_rt = int(getattr(settings, "HNSW_EF_RUNTIME", 0) or 0)
+        except Exception:
+            ef_rt = 0
+        if ef_rt > 0:
+            knn_clause = f"[KNN {top_k} @embedding $vec AS vector_score EF_RUNTIME $ef]"
+            params = {"vec": embedding, "ef": ef_rt}
+        else:
+            knn_clause = f"[KNN {top_k} @embedding $vec AS vector_score]"
+            params = {"vec": embedding}
         q = (
-            Query(
-                f'(@event_type:{{{val}}})=>[KNN {top_k} @embedding $vec AS vector_score]'
-            )
+            Query(f'(@event_type:{{{val}}})=>{knn_clause}')
             .sort_by("vector_score")
             .return_fields("vector_score", "text")
             .dialect(2)
+            .paging(0, top_k)
         )
         try:
             res = await asyncio.wait_for(
-                self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                 timeout=settings.REDISSEARCH_TIMEOUT
             )
             logger.info("query_time: search END (t=%.3fs)", time.time() - ts)
         except ResponseError as e:
-            if "no such index" in str(e).lower():
+            if ef_rt > 0:
+                try:
+                    q_fallback = (
+                        Query(f'(@event_type:{{{val}}})=>[KNN {top_k} @embedding $vec AS vector_score]')
+                        .sort_by("vector_score").return_fields("vector_score", "text")
+                        .dialect(2).paging(0, top_k)
+                    )
+                    res = await asyncio.wait_for(
+                        self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                        timeout=settings.REDISSEARCH_TIMEOUT
+                    )
+                except ResponseError as e_fb:
+                    if _is_missing_index_error(e_fb):
+                        await self._ensure_index_available()
+                        try:
+                            res = await asyncio.wait_for(
+                                self._redis.ft(self.INDEX_NAME).search(q_fallback, query_params={"vec": embedding}),
+                                timeout=settings.REDISSEARCH_TIMEOUT
+                            )
+                        except Exception as e2:
+                            logger.warning("PersonaMemory.query_time retry after ensure failed (%s)", e2)
+                            return []
+                    else:
+                        logger.warning("PersonaMemory.query_time fallback failed (%s)", e_fb)
+                        return []
+            elif _is_missing_index_error(e):
                 await self._ensure_index_available()
                 try:
                     res = await asyncio.wait_for(
-                        self._redis.ft(self.INDEX_NAME).search(q, query_params={"vec": embedding}),
+                        self._redis.ft(self.INDEX_NAME).search(q, query_params=params),
                         timeout=settings.REDISSEARCH_TIMEOUT
                     )
                 except Exception as e2:
@@ -479,9 +673,7 @@ class PersonaMemory:
             else:
                 logger.warning("PersonaMemory.query_time failed (%s)", e)
                 return []
-        except Exception as e:
-            logger.warning("PersonaMemory.query_time failed (%s)", e)
-            return []
+
         out: List[Tuple[str, float]] = []
         for doc in res.docs:
             sim = _dist_to_sim(float(doc.vector_score))

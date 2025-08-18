@@ -15,7 +15,7 @@ from ..constants.emotions import (
     PRIMARY_EMOTIONS, SECONDARY_EMOTIONS, SECONDARY_KEYS,
     SOCIAL_METRICS, STYLE_METRICS, TERTIARY_EMOTIONS,
     TERTIARY_KEYS, TRIAD_KEYS, VALID_DYADS,VALID_TRIADS,
-    OPPOSITES,
+    OPPOSITES, NON_DYNAMIC_METRICS,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,9 @@ for _m in ALL_METRICS:
         or EMO_DT_DEFAULT
     )
 
+
+for _m in NON_DYNAMIC_METRICS:
+    EMO_DT_BASE[_m] = 0.0
 
 EMO_MATRIX_A: List[List[float]] | None = None
 EMO_MATRIX_B: List[List[float]] | None = None

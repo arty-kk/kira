@@ -104,8 +104,8 @@ class Settings:
     
     # ─── Database ────────────────────────────────────────────────
     DATABASE_URL: str = field(default_factory=lambda: _get_env("DATABASE_URL", required=True))
-    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "10", conv=int))
-    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "5", conv=int))
+    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "100", conv=int))
+    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "50", conv=int))
     DB_POOL_CLASS: str = field(default_factory=lambda: _get_env("DB_POOL_CLASS", "QueuePool", conv=str))
     DB_POOL_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_POOL_TIMEOUT", "10", conv=int))
     DB_POOL_RECYCLE: int = field(default_factory=lambda: _get_env("DB_POOL_RECYCLE", "1800", conv=int))
@@ -114,17 +114,20 @@ class Settings:
     REDIS_URL: str = field(default_factory=lambda: _get_env("REDIS_URL", required=True))
     REDIS_URL_QUEUE: str = field(default_factory=lambda: _get_env("REDIS_URL_QUEUE", required=True))
     REDIS_MAX_CONNECTIONS: int = field(default_factory=lambda: _get_env("REDIS_MAX_CONNECTIONS", "200", conv=int))
-    REDISSEARCH_KNN_K: int = field(default_factory=lambda: _get_env("REDISSEARCH_KNN_K", "10", conv=int))
-    REDISSEARCH_TIMEOUT: int = field(default_factory=lambda: _get_env("REDISSEARCH_TIMEOUT", "3", conv=int))
-    EMBED_INITIAL_CAP: int = field(default_factory=lambda: _get_env("EMBED_INITIAL_CAP", "512", conv=int))
-    EMBED_BLOCK_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BLOCK_SIZE", "32", conv=int))
-    MEMORY_MAX_ENTRIES: int = field(default_factory=lambda: _get_env("MEMORY_MAX_ENTRIES", "1000", conv=int))
-    FORGET_THRESHOLD: float = field(default_factory=lambda: _get_env("FORGET_THRESHOLD", "0.35", conv=float))
+    REDISSEARCH_KNN_K: int = field(default_factory=lambda: _get_env("REDISSEARCH_KNN_K", "40", conv=int))
+    REDISSEARCH_TIMEOUT: int = field(default_factory=lambda: _get_env("REDISSEARCH_TIMEOUT", "1", conv=int))
+    EMBED_INITIAL_CAP: int = field(default_factory=lambda: _get_env("EMBED_INITIAL_CAP", "4096", conv=int))
+    EMBED_BLOCK_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BLOCK_SIZE", "1024", conv=int))
+    HNSW_M: int = field(default_factory=lambda: _get_env("HNSW_M", "24", conv=int))
+    HNSW_EF_CONSTRUCTION: int = field(default_factory=lambda: _get_env("HNSW_EF_CONSTRUCTION", "400", conv=int))
+    HNSW_EF_RUNTIME: int = field(default_factory=lambda: _get_env("HNSW_EF_RUNTIME", "200", conv=int))
+    MEMORY_MAX_ENTRIES: int = field(default_factory=lambda: _get_env("MEMORY_MAX_ENTRIES", "1800", conv=int))
+    FORGET_THRESHOLD: float = field(default_factory=lambda: _get_env("FORGET_THRESHOLD", "0.28", conv=float))
     CONSOLIDATION_AGE: int = field(default_factory=lambda: _get_env("CONSOLIDATION_AGE", str(3600*24*7), conv=int))
-    MEMORY_MAINTENANCE_INTERVAL: int = field(default_factory=lambda: _get_env("MEMORY_MAINTENANCE_INTERVAL", "600", conv=int))
+    MEMORY_MAINTENANCE_INTERVAL: int = field(default_factory=lambda: _get_env("MEMORY_MAINTENANCE_INTERVAL", "1800", conv=int))
     EMBED_DIM: int = field(default_factory=lambda: _get_env("EMBED_DIM", "3072", conv=int))
-    DUPLICATE_DISTANCE_MAX: float   = field(default_factory=lambda: _get_env("DUPLICATE_DISTANCE_MAX", "0.30", conv=float))
-    MIN_MEMORY_SIMILARITY: float    = field(default_factory=lambda: _get_env("MIN_MEMORY_SIMILARITY", "0.20", conv=float))
+    DUPLICATE_DISTANCE_MAX: float   = field(default_factory=lambda: _get_env("DUPLICATE_DISTANCE_MAX", "0.08", conv=float))
+    MIN_MEMORY_SIMILARITY: float    = field(default_factory=lambda: _get_env("MIN_MEMORY_SIMILARITY", "0.68", conv=float))
 
     # ─── Celery ──────────────────────────────────────────────────
     CELERY_BROKER_URL: str = field(default_factory=lambda: _get_env("CELERY_BROKER_URL", ""))
@@ -154,8 +157,8 @@ class Settings:
     BOT_PERSONA_NAME: str = field(default_factory=lambda: _get_env("BOT_PERSONA_NAME", "GalaxyBee"))
     BOT_PERSONA_GENDER: str = field(default_factory=lambda: _get_env("BOT_PERSONA_GENDER", "female"))
     BOT_PERSONA_AGE: int = field(default_factory=lambda: _get_env("BOT_PERSONA_AGE", "29", conv=int))
-    BOT_PERSONA_ORIGIN: str = field(default_factory=lambda: _get_env(
-            "BOT_PERSONA_ORIGIN",(
+    BOT_PERSONA_BIO: str = field(default_factory=lambda: _get_env(
+            "BOT_PERSONA_BIO",(
             "Birthplace: Beetan, a planet in the GalaxyTap universe. "
             "Hobbies: Piloting starships solo and practicing precision shooting with plasma weapons. "
             "Interests: Cybernetics, science fiction, and D&D games. "
@@ -168,43 +171,73 @@ class Settings:
     BOT_PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("BOT_PERSONA_ZODIAC", "Scorpio"))
     BOT_PERSONA_TEMPERAMENT: str = field(default_factory=lambda: _get_env(
             "PERSONA_TEMPERAMENT",
-            '{"sanguine":0.35,"choleric":0.15,"phlegmatic":0.25,"melancholic":0.25}',
+            '{"sanguine":0.4,"choleric":0.15,"phlegmatic":0.25,"melancholic":0.20}',
         )
     )
 
     # ─── Persona behavioural thresholds ─────────────────────────
-    PERSONA_WEIGHT_HALFLIFE: int = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_HALFLIFE", "600", conv=int))
-    PERSONA_WEIGHT_STEP: float = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_STEP", "0.1", conv=float))
-    PERSONA_BLEND_FACTOR: float = field(default_factory=lambda: _get_env("PERSONA_BLEND_FACTOR", "0.8", conv=float))
+    PERSONA_WEIGHT_HALFLIFE: int = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_HALFLIFE", "7200", conv=int))
+    PERSONA_WEIGHT_STEP: float = field(default_factory=lambda: _get_env("PERSONA_WEIGHT_STEP", "0.08", conv=float))
+    PERSONA_BLEND_FACTOR: float = field(default_factory=lambda: _get_env("PERSONA_BLEND_FACTOR", "0.72", conv=float))
     APPRAISAL_IMPORTANCE_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_IMPORTANCE_FACTOR", "1.3", conv=float))
     APPRAISAL_EXPECTATION_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_EXPECTATION_FACTOR", "1.25", conv=float))
-    APPRAISAL_CONTROL_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_CONTROL_FACTOR", "1.2", conv=float))
-    EMO_THRESHOLD_DOMINANT: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_DOMINANT", "0.6", conv=float))
+    APPRAISAL_CONTROL_FACTOR: float = field(default_factory=lambda: _get_env("APPRAISAL_CONTROL_FACTOR", "1.3", conv=float))
+    EMO_THRESHOLD_DOMINANT: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_DOMINANT", "0.55", conv=float))
     EMO_THRESHOLD_SMOOTH: float = field(default_factory=lambda: _get_env("EMO_THRESHOLD_SMOOTH", "0.25", conv=float))
-    EMO_HYSTERESIS_DELTA: float = field(default_factory=lambda: _get_env("EMO_HYSTERESIS_DELTA", "0.08", conv=float))
-    EMO_EMA_ALPHA: float = field(default_factory=lambda: _get_env("EMO_EMA_ALPHA", "0.45", conv=float))
-    SECONDARY_EMO_BETA: float = field(default_factory=lambda: _get_env("SECONDARY_EMO_BETA", "0.5", conv=float))
-    SECONDARY_THRESH: float = field(default_factory=lambda: _get_env("SECONDARY_THRESH", "0.1", conv=float))
-    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.6", conv=float))
-    TERTIARY_THRESH: float = field(default_factory=lambda: _get_env("TERTIARY_THRESH", "0.15", conv=float))
+    EMO_HYSTERESIS_DELTA: float = field(default_factory=lambda: _get_env("EMO_HYSTERESIS_DELTA", "0.11", conv=float))
+    EMO_EMA_ALPHA: float = field(default_factory=lambda: _get_env("EMO_EMA_ALPHA", "0.42", conv=float))
+    SECONDARY_EMO_BETA: float = field(default_factory=lambda: _get_env("SECONDARY_EMO_BETA", "0.4", conv=float))
+    SECONDARY_THRESH: float = field(default_factory=lambda: _get_env("SECONDARY_THRESH", "0.08", conv=float))
+    TERTIARY_EMO_BETA: float = field(default_factory=lambda: _get_env("TERTIARY_EMO_BETA", "0.46", conv=float))
+    TERTIARY_THRESH: float = field(default_factory=lambda: _get_env("TERTIARY_THRESH", "0.12", conv=float))
     EMO_MIN_DOMINANT_DIFF: float = field(default_factory=lambda: _get_env("EMO_MIN_DOMINANT_DIFF", "0.05", conv=float))
-    EMO_PASSIVE_DECAY: float = field(default_factory=lambda: _get_env("EMO_PASSIVE_DECAY", "0.985", conv=float))
-    VALENCE_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("VALENCE_HOMEOSTASIS_DECAY", "0.995", conv=float))
-    CIRCADIAN_AMPLITUDE: float = field(default_factory=lambda: _get_env("CIRCADIAN_AMPLITUDE", "0.2", conv=float))
-    FATIGUE_ACCUMULATE_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_ACCUMULATE_RATE", "0.003", conv=float))
-    FATIGUE_RECOVERY_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_RECOVERY_RATE", "0.985", conv=float))
-    FATIGUE_AROUSAL_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_AROUSAL_THRESHOLD", "0.6", conv=float))
-    FATIGUE_ENERGY_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_ENERGY_THRESHOLD", "0.6", conv=float))
+    EMO_PASSIVE_DECAY: float = field(default_factory=lambda: _get_env("EMO_PASSIVE_DECAY", "0.992", conv=float))
+    VALENCE_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("VALENCE_HOMEOSTASIS_DECAY", "0.998", conv=float))
+    CIRCADIAN_AMPLITUDE: float = field(default_factory=lambda: _get_env("CIRCADIAN_AMPLITUDE", "0.1", conv=float))
+    FATIGUE_ACCUMULATE_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_ACCUMULATE_RATE", "0.0026", conv=float))
+    FATIGUE_RECOVERY_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_RECOVERY_RATE", "0.982", conv=float))
+    FATIGUE_AROUSAL_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_AROUSAL_THRESHOLD", "0.56", conv=float))
+    FATIGUE_ENERGY_THRESHOLD: float = field(default_factory=lambda: _get_env("FATIGUE_ENERGY_THRESHOLD", "0.56", conv=float))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
 
+    # ─── Emotional attachment ───────────────────────
+    ATTACHMENT_INIT: float = field(default_factory=lambda: _get_env("ATTACHMENT_INIT", "0.10", conv=float))
+    ATTACHMENT_BASELINE: float = field(default_factory=lambda: _get_env("ATTACHMENT_BASELINE", "0.10", conv=float))
+    ATTACHMENT_POS_RATE: float = field(default_factory=lambda: _get_env("ATTACHMENT_POS_RATE", "0.022", conv=float))
+    ATTACHMENT_NEG_RATE: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEG_RATE", "0.030", conv=float))
+    ATTACHMENT_POS_EXP: float = field(default_factory=lambda: _get_env("ATTACHMENT_POS_EXP", "1.08", conv=float))
+    ATTACHMENT_NEG_EXP: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEG_EXP", "1.18", conv=float))
+    ATTACHMENT_NEUTRAL_LEAK: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEUTRAL_LEAK", "0.0018", conv=float))
+    ATTACHMENT_NEG_BIAS_NEUTRAL: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEG_BIAS_NEUTRAL", "0.22", conv=float))
+    ATTACHMENT_IDLE_HALFLIFE: float = field(default_factory=lambda: _get_env("ATTACHMENT_IDLE_HALFLIFE", "1814400", conv=float))  # 21 days in seconds
+    ATTACHMENT_RUPTURE_REPAIR: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_REPAIR", "0.030", conv=float))
+    ATTACHMENT_RUPTURE_SALIENCE: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_SALIENCE", "0.85", conv=float))
+    ATTACHMENT_RUPTURE_VALENCE: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_VALENCE", "0.60", conv=float))
+    ATTACHMENT_PERSIST: bool = field(
+        default_factory=lambda: _get_env(
+            "ATTACHMENT_PERSIST", "true",
+            conv=lambda v: str(v).lower() in ("1","true","yes","on","y")
+        )
+    )
+    ATTACHMENT_PERSIST_MIN_PERIOD: float = field(default_factory=lambda: _get_env("ATTACHMENT_PERSIST_MIN_PERIOD", "15", conv=float))
+    ATTACHMENT_PERSIST_MIN_DELTA:  float = field(default_factory=lambda: _get_env("ATTACHMENT_PERSIST_MIN_DELTA",  "0.01", conv=float))
+    ATTACHMENT_STAGE_HYST: float = field(default_factory=lambda: _get_env("ATTACHMENT_STAGE_HYST", "0.01", conv=float))
+    ATTACHMENT_MAX_USERS: int = field(default_factory=lambda: _get_env("ATTACHMENT_MAX_USERS", "100000", conv=int))
+    ATTACHMENT_TIME_TAU: float = field(default_factory=lambda: _get_env("ATTACHMENT_TIME_TAU", "120.0", conv=float))
+    ATTACHMENT_VALENCE_EPS: float = field(default_factory=lambda: _get_env("ATTACHMENT_VALENCE_EPS", "0.07", conv=float))
+    ATTACHMENT_MAX_STEP: float = field(default_factory=lambda: _get_env("ATTACHMENT_MAX_STEP", "0.03", conv=float))
+    ATTACHMENT_RUPTURE_COOLDOWN: int = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_COOLDOWN", "3600", conv=int))
+    ATTACHMENT_RUPTURE_DROP: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_DROP", "0.20", conv=float))
+    ATTACHMENT_VEL_BETA: float = field(default_factory=lambda: _get_env("ATTACHMENT_VEL_BETA", "0.3", conv=float))
+
     # ─── Initial baseline for all metrics ───────────────────────
-    EMO_INITIAL_CENTER: float = field(default_factory=lambda: _get_env("EMO_INITIAL_CENTER", "0.33", conv=float))
-    EMO_INITIAL_SCALE: float = field(default_factory=lambda: _get_env("EMO_INITIAL_SCALE", "1", conv=float))
+    EMO_INITIAL_CENTER: float = field(default_factory=lambda: _get_env("EMO_INITIAL_CENTER", "0.4", conv=float))
+    EMO_INITIAL_SCALE: float = field(default_factory=lambda: _get_env("EMO_INITIAL_SCALE", "0.9", conv=float))
 
     # Exponential smoothing for persona state updates
-    STATE_EMA_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_ALPHA", "0.2", conv=float))
-    STATE_EMA_MAX_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MAX_ALPHA", "0.6", conv=float))
-    MEMORY_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("MEMORY_MIN_SALIENCE", "0.05", conv=float))
+    STATE_EMA_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_ALPHA", "0.26", conv=float))
+    STATE_EMA_MAX_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MAX_ALPHA", "0.60", conv=float))
+    MEMORY_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("MEMORY_MIN_SALIENCE", "0.06", conv=float))
 
     # ─── Models for Various Tasks ────────────────────────────────
     BASE_MODEL: str = field(default_factory=lambda: _get_env("BASE_MODEL", "gpt-4.1-nano"))
@@ -244,13 +277,13 @@ class Settings:
     GROUP_PING_MAX_AROUSAL: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_AROUSAL", "0.85", conv=float))
 
     # ─── Personal Ping Settings ─────────────────────────────────
-    PERSONAL_PING_INTERVAL_MIN: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_MIN", "543", conv=int))
+    PERSONAL_PING_INTERVAL_MIN: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_MIN", "60", conv=int))
     PERSONAL_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("PERSONAL_PING_HISTORY_COUNT", "10", conv=int))
     PERSONAL_PING_IDLE_THRESHOLD_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_IDLE_THRESHOLD_SECONDS", "12345", conv=int))
     PERSONAL_PING_ADAPTIVE_MULTIPLIER: float = field(default_factory=lambda: _get_env("PERSONAL_PING_ADAPTIVE_MULTIPLIER", "1.2", conv=float))
     PERSONAL_PING_RETENTION_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_RETENTION_SECONDS", "604800", conv=int))
     PERSONAL_PING_BATCH_SIZE: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BATCH_SIZE", "20", conv=int))
-    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.65", conv=float))
+    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.63", conv=float))
     PERSONAL_PING_BIORHYTHM_WEIGHT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BIORHYTHM_WEIGHT", "0.4", conv=float))
     PERSONAL_PING_START_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_START_HOUR", "9", conv=int))
     PERSONAL_PING_END_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_END_HOUR", "21", conv=int))

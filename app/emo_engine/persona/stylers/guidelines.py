@@ -1,4 +1,4 @@
-cat >app/emo_engine/persona/stylers/guidelines.py<< EOF
+cat >app/emo_engine/persona/stylers/guidelines.py<< 'EOF'
 #app/emo_engine/persona/stylers/guidelines.py
 from __future__ import annotations
 
@@ -105,6 +105,14 @@ async def style_guidelines(
             )
 
     weight = self._decayed_weight(uid) if uid is not None else None
+    att_v = None
+    if uid is not None and hasattr(self, "attachments"):
+        try:
+            rec = self.attachments.get(uid)
+            if rec is not None:
+                att_v = float(rec.get("value", None))
+        except Exception:
+            att_v = None
     last_msg = self._last_user_msg or ""
 
     now = time.time()
@@ -125,6 +133,7 @@ async def style_guidelines(
         "state": state.copy(),
         "mods": mods.copy(),
         "weight": weight,
+        "attachment": att_v,
         "last_msg": last_msg,
         "dominant": getattr(self, "current_dominant", None),
         "n": n,
@@ -189,6 +198,8 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     state = snapshot["state"]
     mods = snapshot["mods"]
     weight = snapshot["weight"]
+    attachment = snapshot.get("attachment")
+    base_weight = attachment if attachment is not None else weight
     last_msg = snapshot["last_msg"]
     n = snapshot["n"]
     max_items = snapshot["max_items"]
@@ -207,7 +218,8 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         for k in TONE_MAP
     ]
     tone_items.sort(key=lambda t: t[1], reverse=True)
-    top3 = tone_items[:3]
+
+    top3 = tone_items[:3] if len(tone_items) >= 3 else tone_items
 
     valence_mod = mods.get("valence_mod", 0.0)
     arousal_mod = mods.get("arousal_mod", 0.5)
@@ -225,7 +237,7 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     _set_flag(gl, "EmotionalState", f"EmotionalState={emo_state}")
 
     # ─── Emotional Intensity (0–100%) ─────────────
-    avg_tone = sum(val for _, val in top3) / 3.0
+    avg_tone = (sum(val for _, val in top3) / max(1, len(top3)))
     ar_mod = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
     v_abs = abs(state.get("valence", 0.0))
     raw_norm = 0.55 * avg_tone + 0.30 * ar_mod + 0.15 * v_abs
@@ -248,10 +260,10 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
 
     # ─── Dynamic AddressTone ─────────────────────────────────
     addr_score = 0.0
-    if weight is not None:
+    if base_weight is not None:
         friendliness = mods.get("friendliness_mod", 0.5)
         civility = mods.get("civility_mod", 0.5)
-        base_addr = 0.6 * weight + 0.2 * friendliness + 0.2 * civility
+        base_addr = 0.6 * base_weight + 0.2 * friendliness + 0.2 * civility
 
         if prev_addr is None:
             addr_score = base_addr

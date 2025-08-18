@@ -307,6 +307,9 @@ COGNITIVE_METRICS = ["creativity", "precision", "humor", "friendliness", "confid
 EXTRA_TRIGGER_METRICS = ["confusion", "embarrassment", "guilt"]
 DIMENSIONS = ["valence", "arousal", "energy", "fatigue", "dominance"]
 
+RELATIONSHIP_METRICS = ["attachment"]
+
+NON_DYNAMIC_METRICS = list(RELATIONSHIP_METRICS)
 
 BASE_METRICS = list(dict.fromkeys(
     DIMENSIONS

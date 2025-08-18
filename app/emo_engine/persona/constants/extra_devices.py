@@ -5,7 +5,7 @@ from typing import Tuple, Set
 from dataclasses import dataclass, field
 
 BOT_SIGNATURES: Set[str] = set()
-GLOBAL_DEVICE_PROB_SCALE = 0.66
+GLOBAL_DEVICE_PROB_SCALE = 0.5
 
 @dataclass(frozen=True)
 class RhetoricalDevice:
@@ -26,7 +26,6 @@ class RhetoricalDevice:
 
 
 BOT_SIGNATURES: Set[str] = {
-    # Мета-приёмы и «рамочные» комментарии
     "MetaCommentary",
     "FrameReminder",
     "NarratorInterjection",
@@ -35,24 +34,16 @@ BOT_SIGNATURES: Set[str] = {
     "HighlightStructure",
     "SignpostTransition",
     "OfferSummary",
-
-    # Призывы к действию и взаимодействию
     "PromptAction",
     "SolicitInput",
     "EncourageFeedback",
     "OfferChoice",
-
-    # Вопросы «по шаблону»
     "AskClarifyingQuestion",
     "AskRhetoricalQuestion",
     "ReflectiveQuestion",
-
-    # Советы, подсказки, руководство
     "OfferGuidance",
     "OfferTip",
     "OfferAdvice",
-
-    # Ссылки на данные и источники
     "IncludeStatistic",
     "ReferenceSource",
     "LinkToResource",
@@ -60,12 +51,8 @@ BOT_SIGNATURES: Set[str] = {
     "CiteAuthority",
     "CiteResearch",
     "OfferClarification",
-
-    # Обращение к собеседнику
     "UseDirectAddress",
     "UseInclusiveWe",
-
-    # Повторения и «заполнитель»
     "EmployRepetition",
     "Storytelling",
     "InsertAnecdote",
@@ -84,6 +71,12 @@ BOT_SIGNATURES: Set[str] = {
     "VaryPunctuation",
     "UseEllipsis",
     "InsertPause",
+    "ShareAmazement",
+    "SparkEnthusiasm",
+    "OfferEncouragement",
+    "EncouragingPhrase",
+    "BoostConfidence",
+    "WarmPraise",
 }
 
 # -------------------------------------------------------------------

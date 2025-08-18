@@ -14,8 +14,8 @@ from app.bot import start_bot
 
 
 async def _preinit_persona_memory() -> PersonaMemory:
-    pm = PersonaMemory()
-    await pm._ready.wait()
+    pm = PersonaMemory(start_maintenance=False)
+    await pm.ready()
     logging.info("✅ PersonaMemory is ready")
     return pm
 
