@@ -1,4 +1,3 @@
-cat >app/services/addons/welcome_manager.py<< 'EOF'
 #app/services/addons/welcome_manager.py
 
 from __future__ import annotations
@@ -294,4 +293,3 @@ async def generate_private_welcome(chat_id: int, user) -> str:
         logger.debug("welcome_manager: failed to set last_ping for pm", exc_info=True)
 
     return final_text
-EOF

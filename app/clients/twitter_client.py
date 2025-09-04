@@ -1,4 +1,3 @@
-cat >app/clients/twitter_client.py<< 'EOF'
 #app/clients/twitter_client.py
 import asyncio
 import logging
@@ -44,4 +43,3 @@ async def post_tweet(text: str) -> None:
     except Exception:
         logger.exception("Unexpected error posting tweet")
         raise
-EOF

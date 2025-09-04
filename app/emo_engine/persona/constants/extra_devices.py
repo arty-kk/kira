@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/constants/extra_devices.py<< 'EOF'
 #app/emo_engine/persona/constants/extra_devices.py
 import random
 from typing import Tuple, Set
@@ -754,4 +753,3 @@ EXTRA_DEVICES += (
 
 
 EXTRA_DEVICES = tuple(dev for dev in EXTRA_DEVICES if dev.name not in BOT_SIGNATURES)
-EOF

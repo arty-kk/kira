@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/states.py<< 'EOF'
 #app/emo_engine/persona/states.py
 from __future__ import annotations
 
@@ -986,4 +985,3 @@ async def _bg_worker(self) -> None:
         await asyncio.gather(*workers, return_exceptions=True)
         logger.info("BG-workers cancelled gracefully")
         raise
-EOF

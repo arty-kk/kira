@@ -1,4 +1,3 @@
-cat > app/bot/handlers/welcome.py << 'EOF'
 #app/bot/handlers/welcome.py
 import asyncio
 import logging
@@ -143,4 +142,3 @@ async def _handle_welcome(chat_id: int, user: User) -> None:
                 safe_plain = f"{mention_pt} {safe_plain}".strip()
 
             await bot.send_message(chat_id, safe_plain, parse_mode=None)
-EOF

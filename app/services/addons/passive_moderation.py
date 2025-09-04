@@ -1,4 +1,3 @@
-cat >app/services/addons/passive_moderation.py<< 'EOF'
 #app/services/addons/passive_moderation.py
 
 from __future__ import annotations
@@ -314,4 +313,3 @@ async def check_deep(
     logger.debug("check_deep answer=%r", ans)
 
     return ans.startswith("BLOCK")
-EOF

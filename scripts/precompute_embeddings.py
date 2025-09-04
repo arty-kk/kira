@@ -1,4 +1,3 @@
-cat >scripts/precompute_embeddings.py<< 'EOF'
 #scripts/precompute_embeddings.py
 import os
 import json
@@ -247,4 +246,3 @@ if CHECKPOINT.exists():
     CHECKPOINT.unlink()
 
 logger.info("✅ Saved %d embedded chunks to %s", len(embedded), OUT_PATH)
-EOF

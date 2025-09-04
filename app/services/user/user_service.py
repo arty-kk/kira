@@ -1,5 +1,4 @@
-cat >app/services/user/user_service.py<< 'EOF'
-# app/services/user/user_service.py
+#app/services/user/user_service.py
 from __future__ import annotations
 
 import logging
@@ -92,4 +91,3 @@ def compute_remaining(user: User) -> int:
 def get_total_paid_usd(user: User) -> float:
     cents = int(getattr(user, "total_paid_cents", 0) or 0)
     return round(cents / 100.0, 2)
-EOF

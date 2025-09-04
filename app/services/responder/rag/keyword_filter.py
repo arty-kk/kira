@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/keyword_filter.py<< 'EOF'
+cat >app/services/responder/rag/keyword_filter.py<< ''
 # app/services/responder/rag/keyword_filter.py
 import json
 import logging
@@ -77,4 +77,3 @@ def get_keyword_processor(model: Optional[str] = None) -> KeywordProcessor:
     _PROCESSORS[key] = proc
     return proc
 
-EOF

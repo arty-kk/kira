@@ -1,4 +1,3 @@
-cat > app/bot/components/dispatcher.py << 'EOF'
 # app/bot/components/dispatcher.py
 
 from aiogram import Dispatcher, F
@@ -24,4 +23,3 @@ import app.bot.handlers
 
 dp.callback_query.register(on_battle_start, F.data.startswith("battle_start:"))
 dp.callback_query.register(on_battle_move,  F.data.startswith("battle_move:"))
-EOF

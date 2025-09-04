@@ -1,4 +1,3 @@
-cat >app/bot/handlers/payments.py<< 'EOF'
 # app/bot/handlers/payments.py
 import logging
 import asyncio
@@ -313,4 +312,3 @@ async def on_payment_success(message: Message) -> None:
             _k_buy_info_msg(message.from_user.id),
             _k_buy_menu_msg(message.from_user.id),
         )
-EOF

@@ -1,5 +1,4 @@
-cat >app/core/db.py<< 'EOF'
-# app/core/db.py
+#app/core/db.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.pool import NullPool
@@ -34,4 +33,3 @@ Base = declarative_base()
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session
-EOF

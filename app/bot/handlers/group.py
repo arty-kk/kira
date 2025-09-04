@@ -1,4 +1,3 @@
-cat > app/bot/handlers/group.py << 'EOF'
 # app/bot/handlers/group.py
 
 import asyncio
@@ -168,4 +167,3 @@ async def on_group_message(message: Message) -> None:
         logger.warning("Redis error in on_group_message, skipping noncritical ops: %s", e)
     except Exception:
          logger.exception("Error in on_group_message handler")
-EOF

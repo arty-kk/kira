@@ -1,4 +1,3 @@
-cat >app/services/responder/core.py<< 'EOF'
 #app/services/responder/core.py
 from __future__ import annotations
 
@@ -1013,4 +1012,3 @@ async def respond_to_user(
     logger.info("✔ respond_to_user END   chat=%s user=%s dt=%.2fs",
                 chat_id, user_id, time.time() - t0)
     return reply
-EOF

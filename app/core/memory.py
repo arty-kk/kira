@@ -1,4 +1,3 @@
-cat > app/core/memory.py << 'EOF'
 #app/core/memory.py
 from __future__ import annotations
 
@@ -435,4 +434,3 @@ async def cache_gender(user_id: int, value: str) -> None:
         await redis.expire(f"user_gender_counts:{user_id}", MEMORY_TTL)
     except Exception:
         logger.exception("cache_gender failed user=%s", user_id)
-EOF

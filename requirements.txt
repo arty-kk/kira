@@ -1,4 +1,3 @@
-cat >requirements.txt<< 'EOF'
 #requirements.txt
 aiogram==3.7.0
 attrs>=23.2.0
@@ -32,4 +31,3 @@ yake>=0.4.8
 datasketch>=1.6.0
 greenlet>=3.0.2; platform_python_implementation == "CPython"
 Pillow>=10.3,<11
-EOF

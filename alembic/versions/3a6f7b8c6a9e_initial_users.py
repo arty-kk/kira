@@ -1,4 +1,3 @@
-cat >alembic/versions/3a6f7b8c6a9e_initial_users.py<< 'EOF'
 #alembic/versions/3a6f7b8c6a9e_initial_users.py
 from alembic import op
 import sqlalchemy as sa
@@ -33,4 +32,3 @@ def upgrade():
 def downgrade():
     op.drop_index("ix_users_username", table_name="users")
     op.drop_table("users")
-EOF

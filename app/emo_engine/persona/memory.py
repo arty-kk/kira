@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/memory.py<< 'EOF'
 #app/emo_engine/persona/memory.py
 from __future__ import annotations
 
@@ -2484,4 +2483,3 @@ class PersonaMemory:
             except Exception:
                 logger.exception("PersonaMemory maintenance error")
             await asyncio.sleep(self.MAINT_INTERVAL)
-EOF

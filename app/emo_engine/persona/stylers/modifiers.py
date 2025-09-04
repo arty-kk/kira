@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/stylers/modifiers.py<< 'EOF'
 #app/emo_engine/persona/stylers/modifiers.py
 import math
 import asyncio
@@ -422,4 +421,3 @@ def _compute_style_modifiers_sync(
             modified[k] = _clamp(modified.get(k, 0.0) * scale)
 
     return modified
-EOF

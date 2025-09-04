@@ -1,4 +1,3 @@
-cat >app/emo_engine/registry.py<< 'EOF'
 #app/emo_engine/registry.py
 from __future__ import annotations
 
@@ -71,4 +70,3 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
 
     logger.debug("persona.ready key=%s dt=%.3fs", key, _now() - t0)
     return persona
-EOF

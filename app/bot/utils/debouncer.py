@@ -1,4 +1,3 @@
-cat >app/bot/utils/debouncer.py<< EOF
 #app/bot/utils/debouncer.py
 import asyncio
 import json
@@ -70,4 +69,3 @@ def buffer_message_for_response(payload: dict):
     task = pending_tasks.get(key)
     if task is None or task.done():
         pending_tasks[key] = asyncio.create_task(schedule_response(key))
-EOF

@@ -1,5 +1,4 @@
-cat >app/services/responder/prompt_builder.py<< 'EOF'
-# app/services/responder/prompt_builder.py
+#app/services/responder/prompt_builder.py
 from __future__ import annotations
 
 import logging
@@ -120,4 +119,3 @@ async def build_system_prompt(
 
     logger.info("build_system_prompt ◀ end (prompt len=%d)", len(full_prompt))
     return full_prompt
-EOF

@@ -1,4 +1,3 @@
-cat >app/services/addons/group_ping.py<< 'EOF'
 #app/services/addons/group_ping.py
 
 from __future__ import annotations
@@ -463,4 +462,3 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
                 pass
     finally:
         persona.user_gender = orig_gender
-EOF

@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/utils/text_analyzer.py<< 'EOF'
 #app/emo_engine/persona/utils/text_analyzer.py
 import asyncio
 import json
@@ -165,4 +164,4 @@ class TextAnalyzer:
                 except (TypeError, ValueError):
                     continue
         return full
-EOF
+

@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/relevance.py<< 'EOF'
+cat >app/services/responder/rag/relevance.py<< ''
 # app/services/responder/rag/relevance.py
 import logging
 import re
@@ -44,4 +44,3 @@ async def is_relevant(
     if not ok:
         return False, (hits if return_hits else None)
     return True, (hits if return_hits else None)
-EOF

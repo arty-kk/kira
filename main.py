@@ -1,4 +1,3 @@
-cat > main.py << 'EOF'
 #main.py
 from __future__ import annotations
 
@@ -69,4 +68,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-EOF

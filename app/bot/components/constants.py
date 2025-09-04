@@ -1,4 +1,3 @@
-cat > app/bot/components/constants.py << 'EOF'
 # app/bot/components/constants.py
 from pathlib import Path
 from redis.asyncio import Redis
@@ -16,4 +15,3 @@ BOT_ID: int = settings.TELEGRAM_BOT_ID
 BOT_USERNAME: str = settings.TELEGRAM_BOT_USERNAME
 
 WELCOME_MESSAGES: dict[str, str] = {}
-EOF

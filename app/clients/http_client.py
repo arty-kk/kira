@@ -1,4 +1,3 @@
-cat >app/clients/http_client.py<< 'EOF'
 #app/clients/http_client.py
 import asyncio
 import aiohttp
@@ -51,4 +50,3 @@ class HTTPClient:
                 self._session = None
 
 http_client = HTTPClient(timeout_sec=getattr(settings, "HTTP_TIMEOUT_SEC", 10))
-EOF

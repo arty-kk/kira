@@ -1,4 +1,3 @@
-cat > app/bot/handlers/battle.py << 'EOF'
 # app/bot/handlers/battle.py
 import logging
 import uuid
@@ -114,4 +113,3 @@ async def cmd_battle_off(message: Message) -> None:
 async def cmd_battle_on(message: Message) -> None:
     await redis_client.srem("battle:opt_out", str(message.from_user.id))
     await message.reply("✅ You’ve opted in to Battles.")
-EOF

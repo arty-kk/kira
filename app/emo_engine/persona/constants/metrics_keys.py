@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/constants/metrics_keys.py<< 'EOF'
 #app/emo_engine/persona/constants/metrics_keys.py
 from functools import lru_cache
 from .emotions import ALL_METRICS
@@ -18,4 +17,3 @@ def _all_mod_keys():
     return metrics_keys
 
 metrics_keys = _all_mod_keys()
-EOF

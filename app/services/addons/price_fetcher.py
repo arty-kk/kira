@@ -1,5 +1,4 @@
-cat > app/services/addons/price_fetcher.py << 'EOF'
-# app/services/addons/price_fetcher.py
+#app/services/addons/price_fetcher.py
 
 import asyncio
 import json
@@ -60,4 +59,4 @@ async def price_fetcher() -> List[str]:
         return ["💹 Crypto Market 💹\n_____________________________\n<i>No data available.</i>"]
 
     return ["\n".join(lines)]
-EOF
+

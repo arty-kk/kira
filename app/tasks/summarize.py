@@ -1,4 +1,3 @@
-cat >app/tasks/summarize.py<< 'EOF'
 #app/tasks/summarize.py
 import asyncio
 import json
@@ -357,4 +356,3 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
         logger.info("Collapsed %d entries into 1 summary and removed originals", len(old_ids))
     except Exception as e:
         logger.exception("summarize_memory failed: %s", e)
-EOF

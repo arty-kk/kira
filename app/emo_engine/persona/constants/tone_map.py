@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/constants/tone_map.py<< 'EOF'
 #app/emo_engine/persona/constants/tone_map.py
 from typing import Dict
 from enum import Enum, auto
@@ -321,4 +320,3 @@ TONE_MAP: Dict[str, Tone] = {
     "madness_mod": Tone.Madness,
     "carefree_mod": Tone.Carefree,
 }
-EOF

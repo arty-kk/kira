@@ -1,4 +1,3 @@
-cat >app/bot/i18n/__init__.py<< 'EOF'
 #app/bot/i18n/__init__.py
 from typing import Optional
 from app.bot.i18n.menu_translation import MESSAGES
@@ -18,4 +17,3 @@ async def t(user_id: int, key: str, **kwargs) -> str:
     lang_dict = MESSAGES.get(lang, MESSAGES[settings.DEFAULT_LANG])
     template = lang_dict.get(key, MESSAGES[settings.DEFAULT_LANG].get(key, key))
     return template.format(**kwargs)
-EOF

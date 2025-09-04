@@ -1,4 +1,3 @@
-cat >app/tasks/utils/bg_loop.py<< 'EOF'
 #app/tasks/utils/bg_loop.py
 import asyncio
 import threading
@@ -72,4 +71,3 @@ def stop_bg_loop() -> None:
     _BG_LOOP = None
     _BG_THREAD = None
     _BG_STARTED.clear()
-EOF

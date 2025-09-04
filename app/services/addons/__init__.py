@@ -1,4 +1,3 @@
-cat >app/services/addons/__init__.py<< 'EOF'
 #app/services/addons/__init__.py
 from .group_battle import start_battle_job
 from .price_fetcher import price_fetcher
@@ -13,4 +12,3 @@ __all__ = [
     "personal_ping",
     "generate_and_post_tweet",
 ]
-EOF

@@ -1,4 +1,3 @@
-cat > Dockerfile << 'EOF'
 # Dockerfile
 FROM python:3.10-slim AS runtime
 
@@ -46,4 +45,3 @@ USER appuser
 EXPOSE 8443
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-u", "main.py"]
-EOF

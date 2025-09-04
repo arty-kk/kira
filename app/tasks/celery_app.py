@@ -1,4 +1,3 @@
-cat >app/tasks/celery_app.py<< 'EOF'
 #app/tasks/celery_app.py
 from __future__ import annotations
 
@@ -67,4 +66,3 @@ def _warm_up(sender=None, **_kwargs) -> None:
         asyncio.run(_init_kb())
     except Exception:
         pass
-EOF

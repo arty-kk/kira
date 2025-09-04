@@ -1,4 +1,3 @@
-cat >app/core/logging_config.py<< 'EOF'
 #app/core/logging_config.py
 import logging
 
@@ -49,4 +48,3 @@ def setup_logging() -> None:
         }
     }
 )
-EOF

@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/stylers/guidelines.py<< 'EOF'
 #app/emo_engine/persona/stylers/guidelines.py
 from __future__ import annotations
 
@@ -473,4 +472,3 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         "address_score": addr_score,
         "chosen_tone":   (chosen.name if 'chosen' in locals() and chosen else None),
     }
-EOF

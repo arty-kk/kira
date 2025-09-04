@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/constants/emotional_state.py<< 'EOF'
 #app/emo_engine/persona/constants/emotional_state.py
 from __future__ import annotations
 
@@ -57,4 +56,3 @@ def compute_emotional_state(
         parts.append(f"{t.name}:{pct}")
         acc += pct
     return "+".join(parts)
-EOF

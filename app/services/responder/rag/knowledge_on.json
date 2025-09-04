@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/knowledge_on.json<< 'EOF'
+cat >app/services/responder/rag/knowledge_on.json<< ''
 [
   {
     "id": "1",
@@ -8800,4 +8800,3 @@ cat >app/services/responder/rag/knowledge_on.json<< 'EOF'
     "tags": ["Elon Musk", "Musk", "Elon"]
   }
 ]
-EOF

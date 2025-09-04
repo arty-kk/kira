@@ -1,4 +1,3 @@
-cat > app/bot/components/webhook.py << 'EOF'
 # app/bot/components/webhook.py
 import ssl
 import asyncio
@@ -150,4 +149,3 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         await runner.cleanup()
         await bot.session.close()
         logger.info("👋 Bot stopped gracefully")
-EOF

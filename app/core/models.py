@@ -1,4 +1,3 @@
-cat >app/core/models.py<< 'EOF'
 #app/core/models.py
 
 from sqlalchemy import Column, BigInteger, Integer, String, DateTime
@@ -20,4 +19,3 @@ class User(Base):
     used_requests       = Column(Integer, default=0,  nullable=False)
     gender              = Column(String(6), nullable=True)
     total_paid_cents    = Column(Integer, default=0, nullable=False)
-EOF

@@ -1,4 +1,3 @@
-cat >app/__init__.py<< 'EOF'
 #app/__init__.py
 from .core.db import engine
 from .config import _get_env
@@ -11,4 +10,3 @@ __all__ = [
     "close_redis_pools",
     "setup_logging",
 ]
-EOF

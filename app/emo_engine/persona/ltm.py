@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/ltm.py<< 'EOF'
 #app/emo_engine/persona/ltm.py
 from __future__ import annotations
 
@@ -1627,4 +1626,3 @@ class LongTermMemory:
         items = sorted(grouped.items(), key=lambda kv: kv[1][2], reverse=True)
         pairs: list[tuple[str,str]] = [(k, v_c[0]) for k, v_c in items[:top_n]]
         return pairs
-EOF

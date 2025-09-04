@@ -1,4 +1,3 @@
-cat > app/bot/handlers/moderation.py << 'EOF'
 # app/bot/handlers/moderation.py
 import logging
 import asyncio
@@ -151,4 +150,3 @@ async def handle_passive_moderation(
             chat_id,
             getattr(message, "message_id", "<unknown>"),
         )
-EOF

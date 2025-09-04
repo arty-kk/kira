@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/knowledge_proc.py<< 'EOF'
+cat >app/services/responder/rag/knowledge_proc.py<< ''
 #app/services/responder/rag/knowledge_proc.py
 from __future__ import annotations
 
@@ -168,4 +168,3 @@ async def get_relevant(
         )
     )
     return picked
-EOF

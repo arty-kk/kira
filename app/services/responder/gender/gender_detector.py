@@ -1,4 +1,3 @@
-cat >app/services/responder/gender/gender_detector.py<< 'EOF'
 #app/services/responder/gender/gender_detector.py
 import asyncio
 import logging
@@ -170,4 +169,3 @@ async def detect_gender(name: str, text: str) -> str:
         return ans
 
     return "unknown"
-EOF

@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/core.py<< 'EOF'
 #app/emo_engine/persona/core.py
 from __future__ import annotations
 
@@ -936,4 +935,3 @@ class Persona:
 
         t.add_done_callback(_done)
         return t
-EOF

@@ -1,4 +1,4 @@
-cat >app/services/responder/rag/knowledge_off.json<< 'EOF'
+cat >app/services/responder/rag/knowledge_off.json<< ''
 [
   {
     "id": "1",
@@ -895,4 +895,3 @@ cat >app/services/responder/rag/knowledge_off.json<< 'EOF'
     "tags": ["developer", "father", "creator"]
   }
 ]
-EOF

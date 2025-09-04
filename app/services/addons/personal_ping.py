@@ -1,4 +1,3 @@
-cat >app/services/addons/personal_ping.py<< 'EOF'
 #app/services/addons/personal_ping.py
 import logging
 import statistics
@@ -497,4 +496,3 @@ async def _user_zoneinfo(user_id: int) -> ZoneInfo:
         return ZoneInfo(tz_name)
     except Exception:
         return ZoneInfo("UTC")
-EOF

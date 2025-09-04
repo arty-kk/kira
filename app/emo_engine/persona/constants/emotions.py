@@ -1,4 +1,3 @@
-cat >app/emo_engine/persona/constants/emotions.py<< 'EOF'
 #app/emo_engine/persona/constants/emotions.py
 from typing import Dict, List, Callable
 
@@ -352,4 +351,3 @@ for a, b in _raw_pairs:
     OPPOSITES.setdefault(b, a)
 
 FAT_CLAMP = lambda x: max(0.0, min(1.0, x))
-EOF

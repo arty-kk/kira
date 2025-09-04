@@ -1,4 +1,3 @@
-cat >app/services/addons/group_battle.py<< 'EOF'
 #app/services/addons/group_battle.py
 from __future__ import annotations
 
@@ -411,4 +410,3 @@ async def _cleanup_data_only(gid: str) -> None:
             await pipe.execute()
     except Exception:
         logger.exception("Error in cleanup_data_only")
-EOF

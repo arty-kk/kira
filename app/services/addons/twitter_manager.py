@@ -1,4 +1,3 @@
-cat >app/services/addons/twitter_manager.py<< 'EOF'
 #app/services/addons/twitter_manager.py
 import random
 import asyncio
@@ -205,4 +204,3 @@ async def generate_and_post_tweet() -> None:
         )
     except Exception:
         logger.exception("twitter_manager: saving to memory failed")
-EOF

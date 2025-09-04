@@ -1,4 +1,3 @@
-cat >app/clients/openai_client.py<< 'EOF'
 # app/clients/openai_client.py
 import asyncio
 import logging
@@ -226,4 +225,3 @@ def _get_output_text(resp) -> str:
         return t
 
     return ""
-EOF

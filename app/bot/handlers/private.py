@@ -1,4 +1,3 @@
-cat > app/bot/handlers/private.py << 'EOF'
 # app/bot/handlers/private.py
 import logging
 import tempfile
@@ -877,4 +876,3 @@ async def on_private_document_image(message: Message) -> None:
         if tmp_path and os.path.exists(tmp_path):
             try: os.remove(tmp_path)
             except Exception: pass
-EOF

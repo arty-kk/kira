@@ -1,4 +1,3 @@
-cat > app/config.py << 'EOF'
 #app/config.py
 from __future__ import annotations
 
@@ -401,4 +400,3 @@ class _SettingsProxy:
 
 
 settings = _SettingsProxy()
-EOF

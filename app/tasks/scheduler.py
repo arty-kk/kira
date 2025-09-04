@@ -1,4 +1,3 @@
-cat > app/tasks/scheduler.py << 'EOF'
 #app/tasks/scheduler.py
 from __future__ import annotations
 
@@ -302,4 +301,3 @@ def start_scheduler() -> None:
 
     for job in _sched.get_jobs():
         logger.info("Job %s → next run at %s", job.id, job.next_run_time)
-EOF
