@@ -14,7 +14,7 @@ from aiogram.filters import ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_MEMBER
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client
-from app.core.memory import _k_g_sum_u
+from app.core.memory import _k_g_sum_u, MEMORY_TTL
 from app.config import settings
 from app.services.addons.welcome_manager import generate_welcome, can_greet
 
@@ -22,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
-MEMORY_TTL = settings.MEMORY_TTL_DAYS * 86_400
 
 @dp.message(
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]),
@@ -47,6 +46,10 @@ async def on_new_members(message: Message) -> None:
                     logger.error("Redis pipeline timeout in welcome handler")
 
             logger.info("Added new member %s to chat %s", uid, chat_id)
+
+            if not getattr(settings, "ENABLE_GROUP_AI_WELCOME", True):
+                logger.info("Group welcomes disabled by flag for chat %s", chat_id)
+                continue
 
             if not await can_greet(chat_id):
                 logger.info("Rate limit reached for %s in chat %s", uid, chat_id)
@@ -79,6 +82,10 @@ async def on_user_join_via_chat_member(update: ChatMemberUpdated) -> None:
                 logger.error("Redis pipeline timeout in welcome handler")
 
         logger.info("User %s joined chat %s via ChatMemberUpdated", uid, chat_id)
+
+        if not getattr(settings, "ENABLE_GROUP_AI_WELCOME", True):
+            logger.info("Group welcomes disabled by flag for chat %s", chat_id)
+            return
 
         if not await can_greet(chat_id):
             logger.info("Rate limit reached for %s in chat %s", uid, chat_id)

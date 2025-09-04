@@ -4,7 +4,7 @@ import random
 import asyncio
 import logging
 
-from app.clients.openai_client import _call_openai_with_retry
+from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.clients.twitter_client import post_tweet
 from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message
@@ -33,15 +33,47 @@ TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
 
 DEFAULT_MODS = {
-    "creativity_mod": 0.5, "sarcasm_mod": 0.0, "enthusiasm_mod": 0.5,
-    "confidence_mod": 0.5, "precision_mod": 0.5,
-    "fatigue_mod":   0.0, "stress_mod":    0.0,
+    "creativity_mod": 0.5,
+    "sarcasm_mod": 0.0,
+    "enthusiasm_mod": 0.5,
+    "confidence_mod": 0.5,
+    "precision_mod": 0.5,
+    "fatigue_mod": 0.0,
+    "stress_mod": 0.0,
 }
+
+def _to_responses_input(messages: list[dict]) -> list[dict]:
+
+    out: list[dict] = []
+    for m in messages or []:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if isinstance(content, str):
+            out.append({"role": role, "content": [
+                {"type": "output_text" if role == "assistant" else "input_text", "text": content}
+            ]})
+        elif isinstance(content, list):
+            norm_parts: list[dict] = []
+            for p in content:
+                if isinstance(p, dict):
+                    t = p.get("type")
+                    if t == "text" or (t is None and "text" in p):
+                        p = {
+                            "type": ("output_text" if role == "assistant" else "input_text"),
+                            "text": p.get("text")
+                        }
+                norm_parts.append(p)
+            out.append({"role": role, "content": norm_parts})
+        else:
+            out.append({"role": role, "content": [{"type": "input_text", "text": str(content)}]})
+    return out
+
 
 async def generate_and_post_tweet() -> None:
     persona = await get_persona(settings.TWITTER_PERSONA_CHAT_ID)
+
     try:
-        await persona._restored_evt.wait()
+        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
     except Exception:
         logger.exception("twitter_manager: persona restore failed")
         
@@ -83,21 +115,20 @@ async def generate_and_post_tweet() -> None:
     try:
         news_resp = await asyncio.wait_for(
             _call_openai_with_retry(
+                endpoint="responses.create",
                 model=settings.REASONING_MODEL,
-                messages=[
+                input=_to_responses_input([
                     {"role": "system", "content": "You are a professional crypto journalist."},
                     {"role": "user", "content": news_prompt},
-                ],
-                max_completion_tokens=500,
-                temperature=0.0,
+                ]),
+                tools=[{"type": "web_search"}],
+                tool_choice={"type": "auto"},
+                max_output_tokens=500,
+                temperature=0.6,
             ),
             timeout=120.0,
         )
-        news_snippet = (
-            news_resp.choices[0].message.content.strip()
-            if getattr(news_resp, "choices", None)
-            else ""
-        )
+        news_snippet = (_get_output_text(news_resp) or "").strip()
     except asyncio.TimeoutError:
         logger.warning("twitter_manager: news digest timed out")
         news_snippet = ""
@@ -128,25 +159,22 @@ async def generate_and_post_tweet() -> None:
         "- Keep it under 250 characters\n"
         "Your goal: make readers stop scrolling and react instantly to your tweet."
     )
-    messages = history + [system_msg, {"role": "user", "content": user_prompt}]
+    messages = [system_msg] + history + [{"role": "user", "content": user_prompt}]
 
     tweet = None
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
+                endpoint="responses.create",
                 model=settings.POST_MODEL,
-                messages=messages,
+                input=_to_responses_input(messages),
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,
-                max_completion_tokens=120,
+                max_output_tokens=120,
             ),
             timeout=60.0,
         )
-        tweet = (
-            resp.choices[0].message.content.strip()
-            if getattr(resp, "choices", None)
-            else ""
-        )
+        tweet = (_get_output_text(resp) or "").strip()
     except asyncio.TimeoutError:
         logger.warning("twitter_manager: tweet generation timed out")
     except Exception:

@@ -52,7 +52,7 @@ def get_bg_loop() -> asyncio.AbstractEventLoop:
 
 
 def stop_bg_loop() -> None:
-    """Gracefully shut down the background loop if it exists."""
+
     global _BG_LOOP, _BG_THREAD
 
     if _BG_LOOP and _BG_LOOP.is_running():

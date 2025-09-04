@@ -13,7 +13,7 @@ from aiogram.types import FSInputFile
 from aiogram.exceptions import TelegramBadRequest
 
 from app.config import settings
-from app.core.memory import get_redis
+from app.core.memory import get_redis, get_redis_queue
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 import app.bot.components.constants as consts
@@ -31,6 +31,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
 
     consts.redis_client = get_redis()
+    consts.redis_queue  = get_redis_queue()
     redis_client = consts.redis_client
 
     me = await bot.get_me()

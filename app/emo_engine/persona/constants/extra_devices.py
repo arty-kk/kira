@@ -5,7 +5,7 @@ from typing import Tuple, Set
 from dataclasses import dataclass, field
 
 BOT_SIGNATURES: Set[str] = set()
-GLOBAL_DEVICE_PROB_SCALE = 0.5
+GLOBAL_DEVICE_PROB_SCALE = 0.66
 
 @dataclass(frozen=True)
 class RhetoricalDevice:
@@ -82,14 +82,14 @@ BOT_SIGNATURES: Set[str] = {
 # -------------------------------------------------------------------
 # 1. Sentence dynamics (Expanded)
 EXTRA_DEVICES: Tuple[RhetoricalDevice, ...] = (
-    RhetoricalDevice("VarySentenceLength", "energy_mod", base_prob=0.25, threshold=0.15),
+    RhetoricalDevice("VarySentenceLength", "energy_mod", base_prob=0.35, threshold=0.15),
     RhetoricalDevice("HighlightPace",         "energy_mod",     base_prob=0.03, threshold=0.18,
                      exclusive_with=("VarySentenceLength",)),
     RhetoricalDevice("BalanceLength",         "energy_mod",     base_prob=0.03, threshold=0.18,
                      exclusive_with=("HighlightPace",)),
     RhetoricalDevice("MemoryFollowUp",    "nostalgia_mod", base_prob=0.10, threshold=0.10),
     RhetoricalDevice("FillerPhrase",      "civility_mod",  base_prob=0.10, threshold=0.00),
-    RhetoricalDevice("EmojiTouch",        "humor_mod",     base_prob=0.10, threshold=0.00),
+    RhetoricalDevice("EmojiTouch",        "humor_mod",     base_prob=0.35, threshold=0.00),
 )
 
 # -------------------------------------------------------------------

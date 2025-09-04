@@ -14,7 +14,7 @@ from app.bot import start_bot
 
 
 async def _preinit_persona_memory() -> PersonaMemory:
-    pm = PersonaMemory(start_maintenance=False)
+    pm = PersonaMemory(chat_id=0, start_maintenance=False)
     await pm.ready()
     logging.info("✅ PersonaMemory is ready")
     return pm
@@ -24,14 +24,13 @@ async def main() -> None:
     setup_logging()
     logging.info("🚀 Starting application")
 
-    scheduler_enabled = _get_env("ENABLE_SCHEDULER", "false").lower() == "true"
+    scheduler_enabled = _get_env("ENABLE_SCHEDULER", "true").lower() == "true"
     if scheduler_enabled:
         start_scheduler()
     else:
         logging.info("⏱️ Scheduler disabled")
 
     try:
-
         await _preinit_persona_memory()
     except Exception:
         logging.exception("⚠️ PersonaMemory initialization failed")
@@ -60,7 +59,10 @@ async def main() -> None:
             logging.info("⏹️ Shutting down scheduler")
             s.shutdown(wait=True)
         logging.info("🗄️ Disposing engine")
-        engine.dispose()
+        try:
+            await engine.dispose()
+        except TypeError:
+            engine.dispose()
         logging.info("🔌 Closing Redis")
         await close_redis_pools()
         logging.info("✅ Shutdown complete")

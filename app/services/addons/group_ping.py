@@ -3,6 +3,7 @@ cat >app/services/addons/group_ping.py<< 'EOF'
 
 from __future__ import annotations
 
+import html
 import logging
 import asyncio
 import random
@@ -17,7 +18,7 @@ from app.core.db import AsyncSessionLocal
 from app.core.models import User
 from app.core.memory import get_cached_gender
 from app.clients.telegram_client import get_bot
-from app.clients.openai_client import _call_openai_with_retry
+from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.config import settings
 from app.core.memory import get_redis, load_context, push_message
 from app.emo_engine import get_persona 
@@ -48,28 +49,41 @@ DEFAULT_MODS = {
 }
 
 LUA_PICK_AND_BUMP_AND_SET = """
--- KEYS[1] = last_ping_zset, KEYS[2] = last_global_key
--- ARGV[1] = max_score, ARGV[2] = now_ts, ARGV[3] = ttl
+-- KEYS[1] = last_ping_zset, KEYS[2] = last_global_key, KEYS[3] = user_last_ts_zset
+-- ARGV[1] = max_ping_score (now - user_cooldown)
+-- ARGV[2] = now_ts
+-- ARGV[3] = ttl
+-- ARGV[4] = inactive_before (now - active_recent_seconds)
+-- ARGV[5] = scan_limit
 local zkey = KEYS[1]
 local gkey = KEYS[2]
+local ukey = KEYS[3]
 local max_score = tonumber(ARGV[1])
 local now_ts = tonumber(ARGV[2])
 local ttl = tonumber(ARGV[3])
-local res = redis.call('ZRANGEBYSCORE', zkey, 0, max_score, 'LIMIT', 0, 1)
-if not res[1] then return nil end
-redis.call('ZADD', zkey, now_ts, res[1])
-redis.call('SET', gkey, now_ts, 'EX', ttl)
-return res[1]
+local inactive_before = tonumber(ARGV[4])
+local scan_limit = tonumber(ARGV[5])
+if not scan_limit or scan_limit < 1 then scan_limit = 50 end
+local candidates = redis.call('ZRANGEBYSCORE', zkey, 0, max_score, 'LIMIT', 0, scan_limit)
+for i, uid in ipairs(candidates) do
+  local last_user_ts = redis.call('ZSCORE', ukey, uid)
+  if (not last_user_ts) or (tonumber(last_user_ts) < inactive_before) then
+    redis.call('ZADD', zkey, now_ts, uid)
+    redis.call('SET', gkey, now_ts, 'EX', ttl)
+    return uid
+  end
+end
+return nil
 """
 
 
-async def _send_with_retry(chat_id: int, text: str) -> bool:
+async def _send_with_retry(chat_id: int, text: str) -> int | None:
 
     attempt = 1
     while True:
         try:
-            await bot.send_message(chat_id, text, parse_mode="HTML")
-            return True
+            msg = await bot.send_message(chat_id, text, parse_mode="HTML")
+            return int(msg.message_id)
         except TelegramRetryAfter as e:
             delay = max(1, int(getattr(e, "retry_after", 5)))
             logger.warning("RetryAfter %ss on send_message (attempt %d)", delay, attempt)
@@ -77,14 +91,14 @@ async def _send_with_retry(chat_id: int, text: str) -> bool:
             attempt += 1
         except TelegramBadRequest as e:
             logger.warning("BadRequest on send_message: %s", e)
-            return False
+            return None
         except TelegramForbiddenError as e:
             logger.warning("Forbidden on send_message: %s", e)
-            return False
+            return None
         except Exception as e:
             if attempt >= 3:
                 logger.exception("send_message failed after %d attempts: %s", attempt, e)
-                return False
+                return None
             await asyncio.sleep(1.5 * attempt)
             attempt += 1
 
@@ -147,10 +161,12 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         return
 
     try:
-        sleeping = await redis.zrangebyscore(
-            f"user_last_ts:{chat_id}", 0, now - settings.GROUP_PING_ACTIVE_RECENT_SECONDS
+        sleeping_cnt = await redis.zcount(
+            f"user_last_ts:{chat_id}",
+            0,
+            now - settings.GROUP_PING_ACTIVE_RECENT_SECONDS,
         )
-        if not sleeping:
+        if sleeping_cnt == 0:
             return
     except RedisError:
         return
@@ -167,11 +183,9 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
             _all_users_cache_ts = now
         if _all_users_cache:
             try:
-                async with redis.pipeline(transaction=True) as pipe:
-                    for u in _all_users_cache:
-                        pipe.zadd(zkey, {str(u): 0}, nx=True)
-                    pipe.expire(zkey, settings.GROUP_PING_ACTIVE_TTL_SECONDS * 2)
-                    await pipe.execute()
+                if _all_users_cache:
+                    await redis.zadd(zkey, {str(u): 0 for u in _all_users_cache}, nx=True)
+                    await redis.expire(zkey, settings.GROUP_PING_ACTIVE_TTL_SECONDS * 2)
             except RedisError:
                 logger.debug("Failed to sync group_ping zset", exc_info=True)
     except RedisError:
@@ -185,24 +199,24 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         max_score = now - settings.GROUP_PING_USER_COOLDOWN_SECONDS
         last_global_key = f"last_global_ping_ts:{chat_id}"
         ttl = int(adaptive * 2)
+        inactive_before = now - settings.GROUP_PING_ACTIVE_RECENT_SECONDS
+        user_last_key = f"user_last_ts:{chat_id}"
         pick = await redis.eval(
             LUA_PICK_AND_BUMP_AND_SET,
-            2,
+            3,
             zkey,
             last_global_key,
+            user_last_key,
             max_score,
             now,
-            ttl
+            ttl,
+            inactive_before,
+            getattr(settings, "GROUP_PING_SCAN_LIMIT", 100),
         )
         if not pick:
             return
         uid = pick.decode() if isinstance(pick, (bytes, bytearray)) else str(pick)
-        sleeping_str = {
-            s.decode() if isinstance(s, (bytes, bytearray)) else str(s)
-            for s in sleeping
-        }
-        if uid not in sleeping_str:
-            return
+
     except (RedisError, ResponseError):
         return
     finally:
@@ -236,17 +250,30 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         else hlink(member.user.full_name or uid, f"tg://user?id={uid}")
     )
 
-    emoji = random.choice(settings.EMOJI_PING_LIST)
-    if random.random() < settings.EMOJI_PING_PROBABILITY:
+    if settings.EMOJI_PING_LIST and random.random() < settings.EMOJI_PING_PROBABILITY:
+        emoji = random.choice(settings.EMOJI_PING_LIST)
         ping_text = f"{mention} {emoji}"
-        ok = await _send_with_retry(chat_id, ping_text)
-        if ok:
+        mid = await _send_with_retry(chat_id, ping_text)
+        if mid:
+            try:
+                await redis.set(f"last_message_ts:{chat_id}", _time.time(), ex=settings.GROUP_PING_ACTIVE_TTL_SECONDS)
+            except RedisError:
+                logger.debug("failed to update last_message_ts after emoji ping", exc_info=True)
+            try:
+                await redis.set(f"msg:{chat_id}:{mid}", ping_text, ex=settings.MEMORY_TTL_DAYS * 86_400)
+                await redis.hset(f"last_ping:{chat_id}:{uid}", mapping={"msg_id": int(mid), "ts": int(_time.time()), "text": ping_text})
+                await redis.expire(f"last_ping:{chat_id}:{uid}", settings.GROUP_PING_ACTIVE_TTL_SECONDS)
+            except RedisError:
+                logger.debug("failed to cache ping message_id/text", exc_info=True)
             try:
                 await push_message(chat_id, "assistant", ping_text, user_id=int(uid))
             except Exception:
                 logger.exception("push_message failed for group ping %s", uid)
-            await redis.incr(_METRIC_SENT)
-            await redis.expire(_METRIC_SENT, 86_400)
+            try:
+                await redis.incr(_METRIC_SENT)
+                await redis.expire(_METRIC_SENT, 86_400)
+            except RedisError:
+                pass
         else:
             try:
                 async with redis.pipeline(transaction=True) as pipe:
@@ -260,7 +287,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     persona = await get_persona(chat_id)
     orig_gender = getattr(persona, "user_gender", "unknown")
     try:
-        await persona._restored_evt.wait()
+        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
     except Exception:
         logger.exception("group_ping: persona restore failed")
 
@@ -318,7 +345,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         logger.exception("load_context failed for chat_id=%s user=%s", chat_id, uid)
         mem_ctx = ""
 
-    append = random.random() < settings.EMOJI_APPEND_PROBABILITY
+    append = bool(settings.EMOJI_PING_LIST) and (random.random() < settings.EMOJI_APPEND_PROBABILITY)
 
     novelty = (
         0.4 * mods["creativity_mod"]
@@ -343,7 +370,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
     max_tokens = 150
 
-    system_msg = await build_system_prompt(persona, guidelines)
+    system_msg = await build_system_prompt(persona, guidelines, user_gender=persona.user_gender)
     if mem_ctx:
         prompt = (
             f"Below is a conversation history with the user within a global group chat:\n{mem_ctx}\n"
@@ -362,19 +389,35 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
+                endpoint="responses.create",
                 model=settings.RESPONSE_MODEL,
-                messages=[system_msg, {"role": "user", "content": prompt}],
-                max_completion_tokens=max_tokens,
+                input=[_msg("system", system_msg), _msg("user", prompt),],
+                max_output_tokens=max_tokens,
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,
             ),
             timeout=60.0
         )
-        ping_text = resp.choices[0].message.content.strip()
+        ping_text = (_get_output_text(resp) or "").strip()
+        if not ping_text:
+            raise RuntimeError("empty model output")
+        ping_text = html.escape(ping_text)
         if append:
-            ping_text = f"{ping_text} {emoji}"
+            ping_text = f"{ping_text} {random.choice(settings.EMOJI_PING_LIST)}"
         if "@" not in ping_text:
             ping_text = f"{mention} {ping_text}"
+        try:
+            prev_txt = await redis.hget(f"last_ping:{chat_id}:{uid}", "text")
+            if isinstance(prev_txt, (bytes, bytearray)):
+                prev_txt = prev_txt.decode("utf-8", "ignore")
+            if prev_txt and prev_txt.strip() == ping_text:
+                if settings.EMOJI_PING_LIST:
+                    ping_text = f"{ping_text} {random.choice(settings.EMOJI_PING_LIST)}"
+                else:
+                    logger.debug("group_ping: duplicate text for %s, skip", uid)
+                    return
+        except RedisError:
+            logger.debug("group_ping: last_ping dedupe read failed", exc_info=True)
     except Exception:
         try:
             await redis.incr(_METRIC_OPENAI_FAIL)
@@ -384,14 +427,32 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         return
 
     try:
-        ok = await _send_with_retry(chat_id, ping_text)
-        if ok:
+        mid = await _send_with_retry(chat_id, ping_text)
+        if mid:
+            try:
+                await redis.set(f"last_message_ts:{chat_id}", _time.time(), ex=settings.GROUP_PING_ACTIVE_TTL_SECONDS)
+            except RedisError:
+                logger.debug("failed to update last_message_ts after text ping", exc_info=True)
+            try:
+
+                await redis.set(f"msg:{chat_id}:{mid}", ping_text, ex=settings.MEMORY_TTL_DAYS * 86_400)
+                await redis.hset(f"last_ping:{chat_id}:{uid}",mapping={
+                    "msg_id": int(mid),
+                    "ts": int(_time.time()),
+                    "text": ping_text
+                })
+                await redis.expire(f"last_ping:{chat_id}:{uid}", settings.GROUP_PING_ACTIVE_TTL_SECONDS)
+            except RedisError:
+                logger.debug("failed to cache ping message_id/text", exc_info=True)
             try:
                 await push_message(chat_id, "assistant", ping_text, user_id=int(uid))
             except Exception:
                 logger.exception("push_message failed for group ping %s", uid)
-            await redis.incr(_METRIC_SENT)
-            await redis.expire(_METRIC_SENT, 86_400)
+            try:
+                await redis.incr(_METRIC_SENT)
+                await redis.expire(_METRIC_SENT, 86_400)
+            except RedisError:
+                pass
         else:
             try:
                 async with redis.pipeline(transaction=True) as pipe:

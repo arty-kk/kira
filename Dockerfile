@@ -10,7 +10,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY requirements.txt .
 
 RUN apt-get update && \
-    apt-get update && \
     apt-get install -y --no-install-recommends \
         gcc build-essential libpq-dev libffi-dev libssl-dev \
         curl postgresql-client redis-tools ffmpeg procps && \

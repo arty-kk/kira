@@ -6,15 +6,17 @@ import asyncio
 import logging
 import random
 import math
+import re
 import time
 import secrets
 
 from typing import Dict, List, Set, Tuple, Optional
 
+from app.config import settings
 from ..constants.extra_devices import EXTRA_DEVICES, BOT_SIGNATURES
 from ..constants.tone_map import TONE_MAP
 from ..constants.emotional_state import compute_emotional_state
-
+from ..memory import get_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +77,12 @@ def _gather_extras(
     rng.shuffle(devices)
 
     chosen: List[str] = []
+
     for device in devices:
         if device.should_apply(_metric(state, mods, device.metric_key), rng):
             chosen.append(device.name)
             _remove_conflicts(chosen)
-            if len(chosen) >= max_items // 2:
+            if len(chosen) >= max(2, max_items // 3):
                 break
     return chosen
 
@@ -87,24 +90,40 @@ def _gather_extras(
 async def style_guidelines(
     self,
     uid: Optional[int] = None,
-    max_items: int = 12,
+    max_items: int = 18,
     *,
     human_mode: bool = True,
 ) -> List[str]:
 
     state = self.state.copy()
-    state["seed"] = (self.chat_id << 32) ^ self.state_version
+    try:
+        _cid = int(self.chat_id)
+    except Exception:
+        _cid = hash(str(getattr(self, "chat_id", ""))) & 0xFFFFFFFF
+    try:
+        _ver = int(self.state_version)
+    except Exception:
+        _ver = hash(str(getattr(self, "state_version", 0))) & 0xFFFFFFFF
+    state["seed"] = ((_cid << 32) ^ _ver) & 0xFFFFFFFFFFFFFFFF
     mods = self._mods_cache.copy()
-    if not mods:
+    if (not mods) or (getattr(self, "_style_mods_version", -1) != self.state_version):
         try:
             mods = await asyncio.wait_for(self.style_modifiers(), timeout=5.0)
+            try:
+                self._mods_cache = dict(mods)
+                self._style_mods_version = self.state_version
+            except Exception:
+                logger.debug("failed to update mods cache", exc_info=True)
         except asyncio.TimeoutError:
             logger.warning(
                 "style_modifiers() timed-out; using previous cache (%d items)",
                 len(self._mods_cache),
             )
 
-    weight = self._decayed_weight(uid) if uid is not None else None
+    try:
+        weight = self._decayed_weight(uid) if uid is not None else None
+    except Exception:
+        weight = None
     att_v = None
     if uid is not None and hasattr(self, "attachments"):
         try:
@@ -113,7 +132,7 @@ async def style_guidelines(
                 att_v = float(rec.get("value", None))
         except Exception:
             att_v = None
-    last_msg = self._last_user_msg or ""
+    last_msg = getattr(self, "_last_user_msg", "") or ""
 
     now = time.time()
     if (now - getattr(self, "_mem_count_cache_ts", 1e9)) < 60:
@@ -142,7 +161,17 @@ async def style_guidelines(
         "prev_addr": prev_addr,
     }
 
+    snapshot["tone_hist"] = getattr(self, "_tone_hist", [])
+
     result = await asyncio.to_thread(_compute_guidelines_sync, snapshot)
+
+    chosen_tone = result.get("chosen_tone")
+    if chosen_tone:
+        hist = list(getattr(self, "_tone_hist", []))
+        hist.append((chosen_tone, time.time()))
+        if len(hist) > 6:
+            hist = hist[-6:]
+        self._tone_hist = hist
 
     self._prev_intensity_pct = result["intensity_pct"]
     self._prev_address_score = result["address_score"]
@@ -150,20 +179,53 @@ async def style_guidelines(
     base_flags = result["flags"]
     extras = _gather_extras(self, state, max_items, mods)
     hostility = _compute_hostility(state, mods)
-    _set_flag(extras, "HostilityLevel", f"HostilityLevel={hostility:.2f}")
+    _set_flag(base_flags, "HostilityLevel", f"HostilityLevel={hostility:.2f}")
 
-    if snapshot["n"] > 5 and snapshot["last_msg"] and len(snapshot["last_msg"]) >= 12:
-        extras.append("MemoryFollowUp")
-        _remove_conflicts(extras)
+    # Offer a follow-up question only when assistance is actually allowed and there is prior context
+    def _low_info(s: str) -> bool:
+        if not s:
+            return True
+        s2 = s.strip()
+        if len(s2) < 16:
+            return True
+        return bool(re.fullmatch(r"[\W_]+", s2))
+
+    allow_mem_fu = (n > 0) and bool(last_msg) and (not _low_info(last_msg))
+    if allow_mem_fu:
+        try:
+            extras.append("MemoryFollowUp")
+            _remove_conflicts(extras)
+        except Exception:
+            pass
+
+    try:
+        if last_msg and (not _low_info(last_msg)):
+            emb = await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
+            if emb and any(emb):
+                try:
+                    hits = await asyncio.wait_for(
+                        self.enhanced_memory.query(emb, top_k=1, uid=uid),
+                        timeout=getattr(settings, "REDISSEARCH_TIMEOUT", 3)
+                    )
+                except Exception:
+                    hits = []
+                if hits:
+                    _txt, _sim = hits[0]
+                    thr = float(getattr(settings, "MIN_MEMORY_SIMILARITY", 0.62))
+                    if _sim >= thr:
+                        extras.append("RecallPastSnippet")
+    except Exception:
+        pass
 
     PRIORITY: Tuple[str, ...] = (
-        "Tone", "EmotionalState", "EmotionalIntensity", "HostilityLevel", "AddressToneScore", "AddressTone",
+        "EmotionalState", "EmotionalIntensity", "Tone", "AddressTone", "AddressToneScore",
+        "HostilityLevel", "RhetoricalDevices", "EmojiTouch", "VarySentenceLength",
     )
     ordered_base: List[str] = []
     for pref in PRIORITY:
         ordered_base.extend([f for f in base_flags if f.startswith(pref)])
     ordered_base += [f for f in base_flags if f not in ordered_base]
-    core_slots = min(len(ordered_base), max_items - len(extras))
+    core_slots = max(0, min(len(ordered_base), max_items - len(extras)))
     final = ordered_base[:core_slots] + extras
 
     if human_mode:
@@ -202,7 +264,6 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     base_weight = attachment if attachment is not None else weight
     last_msg = snapshot["last_msg"]
     n = snapshot["n"]
-    max_items = snapshot["max_items"]
     prev_int = snapshot["prev_int"]
     prev_addr = snapshot["prev_addr"]
     dominant  = snapshot.get("dominant")
@@ -218,44 +279,149 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         for k in TONE_MAP
     ]
     tone_items.sort(key=lambda t: t[1], reverse=True)
+    topk = tone_items[:3] if len(tone_items) >= 3 else tone_items
 
-    top3 = tone_items[:3] if len(tone_items) >= 3 else tone_items
+    valence_mod = float(mods.get("valence_mod", 0.0))
+    arousal_mod = float(mods.get("arousal_mod", 0.5))
+    fatigue     = float(mods.get("fatigue_mod", state.get("fatigue", 0.0)))
+    surprise    = float(state.get("surprise", 0.0))
 
-    valence_mod = mods.get("valence_mod", 0.0)
-    arousal_mod = mods.get("arousal_mod", 0.5)
-    thr_tone = 0.8 - 0.1 * (1.0 - valence_mod) + 0.1 * (arousal_mod - 0.5)
+    T = 0.80 + 0.25*(arousal_mod - 0.5) + 0.15*surprise - 0.20*fatigue
+    T = max(0.50, min(1.10, T))
 
-    selected = [tone.name for tone, val in top3 if val >= thr_tone]
-    if selected:
-        gl[:] = [f for f in gl if not f.startswith("Tone=")]
-        for name in selected:
-            _append_once(gl, f"Tone+={name}")
+    tone_hist = snapshot.get("tone_hist", [])
+    hist_names = [h[0] if isinstance(h, (tuple, list)) else str(h) for h in tone_hist]
+    last_name = hist_names[-1] if hist_names else None
+
+    rep = 0
+    for name in reversed(hist_names):
+        if name == last_name:
+            rep += 1
+        else:
+            break
+    repeat_penalty = 0.18 * min(3, max(0, rep - 1))
+
+    if topk:
+        m = max(v for _, v in topk)
     else:
-        _set_flag(gl, "Tone", "Tone=MildlyExpressive")
+        m = 0.0
+    logits = []
+    for tone, v in topk:
+        logit = (v - m) / max(1e-6, T)
+        if tone.name == last_name and rep >= 2:
+            logit -= repeat_penalty
+        logits.append((tone, logit))
+
+    if logits:
+        exps = [math.exp(l) for _, l in logits]
+        Z = sum(exps)
+        probs = [e / Z for e in exps] if Z > 0 else [1.0 / len(exps)] * len(exps)
+    else:
+        exps = []
+        probs = []
+
+    state_seed = int(snapshot["state"].get("seed", 0)) & 0xFFFFFFFF
+    base_seed = (hash((n, prev_int, prev_addr)) & 0xFFFFFFFF) if (n is not None) else secrets.randbits(32)
+    seed = (base_seed ^ state_seed) & 0xFFFFFFFF
+    rng = random.Random(seed)
+    r = rng.random()
+    cum = 0.0
+    chosen = None
+    for (tone, _), p in zip(logits, probs):
+        cum += p
+        if r <= cum:
+            chosen = tone
+            break
+    if chosen is None and topk:
+        chosen = topk[0][0]
+
+    band = max(0.04, 0.06 + 0.06*(arousal_mod - 0.5) - 0.04*fatigue)
+    selected = []
+    if chosen:
+        selected.append(chosen.name)
+        chosen_val = next((v for t, v in topk if t.name == chosen.name), None)
+        if chosen_val is not None:
+            for tone, v in topk:
+                if tone.name == chosen.name:
+                    continue
+                if (chosen_val - v) <= band:
+                    selected.append(tone.name)
+
+    gl[:] = [f for f in gl if not (f.startswith("Tone=") or f.startswith("Tone+="))]
+    if not selected and topk:
+        selected = [topk[0][0].name]
+
+    for name in selected:
+        _append_once(gl, f"Tone+={name}")
 
     emo_state = compute_emotional_state(state, mods, dominant, allow_mixed=True)
     _set_flag(gl, "EmotionalState", f"EmotionalState={emo_state}")
 
-    # ─── Emotional Intensity (0–100%) ─────────────
-    avg_tone = (sum(val for _, val in top3) / max(1, len(top3)))
-    ar_mod = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
-    v_abs = abs(state.get("valence", 0.0))
-    raw_norm = 0.55 * avg_tone + 0.30 * ar_mod + 0.15 * v_abs
-    raw_adj = math.pow(max(0.0, min(1.0, raw_norm)), 1.1) * 100.0
+    # ─── Emotional Intensity (human-like) ─────────────
+    avg_tone = (sum(val for _, val in topk) / max(1, len(topk)))
+    ar_mod   = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
+    v_abs    = abs(state.get("valence", 0.0))
+    surprise = float(state.get("surprise", 0.0))
+    fatigue  = float(mods.get("fatigue_mod", state.get("fatigue", 0.0)))
+    salience = base_weight if base_weight is not None else 0.0
+
+    raw_norm = 0.52 * avg_tone + 0.30 * ar_mod + 0.18 * v_abs
+    raw_adj  = (max(0.0, min(1.0, raw_norm)) ** 1.12) * 100.0
 
     if prev_int is None:
-        intensity_pct = raw_adj
+        prev_int = 50.0
+
+    evidence = (
+        0.36 * ar_mod +
+        0.28 * v_abs +
+        0.18 * salience +
+        0.12 * surprise +
+        0.06 * hostility
+    )
+    evidence = max(0.0, min(1.0, evidence))
+
+    if rep >= 2:
+        evidence *= (1.0 - 0.08 * min(3, rep - 1))
+
+    thr_up = 0.60 + 0.35 * ((prev_int / 100.0) ** 1.6)
+
+    def _gate_cap(e: float) -> float:
+        s = 1.0 / (1.0 + math.exp(-(e - 0.80) / 0.08))
+        return 55.0 + 45.0 * s
+
+    target_cap = _gate_cap(evidence)
+    target_cap -= 6.0 * fatigue
+    target_cap = max(60.0, min(96.0, target_cap))
+
+    target = min(raw_adj, target_cap)
+
+    delta = target - prev_int
+
+    strong_push  = max(0.0, evidence - thr_up)
+    alpha_up     = 0.12 + 0.28 * strong_push
+    alpha_down   = 0.38
+
+    if prev_int >= 70.0 and delta > 0:
+        alpha_up *= 0.35
+
+    max_step_up   = 3.5 if prev_int < 70.0 else 2.0
+    max_step_down = 12.0
+
+    if delta > 0:
+        delta = min(delta, max_step_up)
+        intensity_pct = prev_int + alpha_up * delta
     else:
-        delta = raw_adj - prev_int
-        alpha = 0.35 if delta > 0 else 0.20
-        intensity_pct = prev_int + alpha * delta
-        intensity_pct = max(0.0, min(100.0, intensity_pct))
+        delta = max(delta, -max_step_down)
+        intensity_pct = prev_int + alpha_down * delta
 
-    cap = 82.0
-    if ar_mod >= 0.75 and v_abs >= 0.60:
-        cap = 92.0
-    intensity_pct = min(intensity_pct, cap)
+    knee = 82.0 - 4.0 * fatigue
+    knee = max(76.0, min(86.0, knee))
+    if intensity_pct > knee:
+        over = intensity_pct - knee
+        denom = max(1e-6, (100.0 - knee))
+        intensity_pct = knee + (100.0 - knee) * (1.0 - math.exp(-over / denom))
 
+    intensity_pct = max(0.0, min(100.0, intensity_pct))
     _set_flag(gl, "EmotionalIntensity", f"EmotionalIntensity={int(round(intensity_pct))}")
 
     # ─── Dynamic AddressTone ─────────────────────────────────
@@ -263,15 +429,18 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     if base_weight is not None:
         friendliness = mods.get("friendliness_mod", 0.5)
         civility = mods.get("civility_mod", 0.5)
-        base_addr = 0.6 * base_weight + 0.2 * friendliness + 0.2 * civility
+        base_addr = 0.6 * base_weight + 0.2 * friendliness + 0.2 * civility + 0.08
+        base_addr = max(0.0, min(1.0, base_addr))
 
         if prev_addr is None:
             addr_score = base_addr
         else:
             addr_score = 0.6 * prev_addr + 0.4 * base_addr
 
-        noise = 0.05 * (1.0 - mods.get("confidence_mod", 0.5))
-        addr_score = max(0.0, min(1.0, addr_score + random.uniform(-noise, noise)))
+        noise_amp = 0.05 * (1.0 - mods.get("confidence_mod", 0.5))
+        noise_seed = (seed ^ 0x9E3779B9) & 0xFFFFFFFF
+        rng_addr = random.Random(noise_seed)
+        addr_score = max(0.0, min(1.0, addr_score + rng_addr.uniform(-noise_amp, noise_amp)))
         addr_score -= 0.5 * hostility * (0.7 + 0.3 * (1.0 - civ))
         addr_score = max(0.0, min(1.0, addr_score))
 
@@ -293,6 +462,8 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         elif hostility >= 0.45:                label = "DirectCool"
 
         _set_flag(gl, "AddressTone", f"AddressTone={label}")
+    else:
+        _set_flag(gl, "AddressTone", "AddressTone=InformalNeutral")
 
     _set_flag(gl, "AddressToneScore", f"AddressToneScore={addr_score:.2f}")
 
@@ -300,5 +471,6 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         "flags":         [getattr(f, "name", f) for f in gl],
         "intensity_pct": intensity_pct,
         "address_score": addr_score,
+        "chosen_tone":   (chosen.name if 'chosen' in locals() and chosen else None),
     }
 EOF

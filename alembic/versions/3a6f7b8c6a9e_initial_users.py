@@ -24,7 +24,8 @@ def upgrade():
         sa.Column("free_requests_left", sa.Integer(), nullable=False),
         sa.Column("paid_requests", sa.Integer(), nullable=False),
         sa.Column("used_requests", sa.Integer(), nullable=False),
-        sa.Column("gender", sa.String(length=6), nullable=True),
+        sa.Column("total_paid_cents", sa.Integer(), nullable=False),
+        sa.Column("gender", sa.String(length=6), nullable=True)
     )
     op.create_index("ix_users_username", "users", ["username"], unique=False)
 

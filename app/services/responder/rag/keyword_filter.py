@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 _PROCESSORS: Dict[str, KeywordProcessor] = {}
 
-
 def _build_processor_from_file(path: Path) -> KeywordProcessor:
     if not path.is_file():
         logger.warning("Knowledge keywords file not found at %s", path)

@@ -7,6 +7,7 @@ import logging
 import re
 import time
 import asyncio
+import hashlib
 
 from urllib.parse import urlparse
 from typing import Literal, List
@@ -24,9 +25,12 @@ _DEEP_SEMAPHORE = asyncio.Semaphore(3)
 MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
 MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
 DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
+_PIPELINE_TIMEOUT = float(getattr(settings, "REDIS_PIPELINE_TIMEOUT", 1.0))
 
 async def is_flooding(chat_id: int, user_id: int) -> bool:
 
+    max_msgs = int(getattr(settings, "MOD_MAX_MESSAGES", 10))
+    period = int(getattr(settings, "MOD_PERIOD_SECONDS", 60))
     redis = get_redis()
     key = f"mod_flood:{chat_id}:{user_id}"
     now_ts = time.time()
@@ -34,11 +38,11 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
     try:
         async with redis.pipeline(transaction=True) as pipe:
             pipe.lpush(key, now_ts)
-            pipe.ltrim(key, 0, settings.MOD_MAX_MESSAGES * 2)
-            pipe.expire(key, settings.MOD_PERIOD_SECONDS + 1)
-            pipe.lrange(key, 0, settings.MOD_MAX_MESSAGES * 2)
-            result = await pipe.execute()
-        timestamps = result[-1]
+            pipe.ltrim(key, 0, max_msgs * 2)
+            pipe.expire(key, period + 1)
+            pipe.lrange(key, 0, max_msgs * 2)
+            result = await asyncio.wait_for(pipe.execute(), timeout=_PIPELINE_TIMEOUT)
+        timestamps = result[-1] or []
     except RedisError:
         logger.warning("is_flooding: Redis error for chat %s user %s", chat_id, user_id)
         return False
@@ -46,7 +50,7 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
         logger.warning("is_flooding: Redis pipeline timeout for chat %s user %s", chat_id, user_id)
         return False
 
-    threshold = now_ts - settings.MOD_PERIOD_SECONDS
+    threshold = now_ts - period
     valid = []
     for ts in timestamps:
         try:
@@ -58,18 +62,19 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
         except Exception:
             continue
 
-    return len(valid) > settings.MOD_MAX_MESSAGES
+    return len(valid) > max_msgs
 
 
 def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
 
     pattern = r"https?://[\w\-\.\?=/#%]+|www\.[\w\-\.\?=/#%]+"
-    urls = [m.group(0).rstrip('.,;!?') for m in re.finditer(pattern, text)]
+    strip_trail = '.,;!?)]}\'"'
+    urls = [m.group(0).rstrip(strip_trail) for m in re.finditer(pattern, text)]
     if entities:
         for ent in entities:
             if ent.get("type") == "url":
                 off, length = ent["offset"], ent["length"]
-                snippet = text[off:off + length].rstrip('.,;!?')
+                snippet = text[off:off + length].rstrip(strip_trail)
                 if snippet and snippet not in urls:
                     urls.append(snippet)
     return list(dict.fromkeys(urls))[:MAX_URLS]
@@ -78,10 +83,11 @@ def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
 def url_is_unwanted(url: str) -> bool:
 
     try:
-        netloc = urlparse(url).netloc.lower().split(':', 1)[0]
+        u = url if '://' in url else f'http://{url}'
+        netloc = urlparse(u).netloc.lower().split(':', 1)[0]
     except Exception:
         return True
-    for kw in settings.MODERATION_ALLOWED_LINK_KEYWORDS:
+    for kw in getattr(settings, "MODERATION_ALLOWED_LINK_KEYWORDS", []):
         if kw and kw.lower() in netloc:
             return False
     return True
@@ -93,12 +99,19 @@ async def moderate_with_openai(text: str) -> bool:
         return False
     trimmed = text[:MAX_PROMPT_TEXT]
 
-    cache_key = f"mod:cache:{hash(text)}"
+    model_tag = str(getattr(settings, "MODERATION_MODEL", "default"))
+    tox_tag = str(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", ""))
+    cache_key = "mod:cache:" + hashlib.sha256(
+        (model_tag + "|" + tox_tag + "|" + trimmed).encode("utf-8")
+    ).hexdigest()[:48]
+
     redis = get_redis()
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
-            return cached == "1"
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            return str(cached) == "1"
     except Exception:
         logger.debug("moderate_with_openai: cache lookup failed")
 
@@ -133,10 +146,12 @@ async def moderate_with_openai(text: str) -> bool:
     result = results[0]
     flagged = bool(getattr(result, "flagged", False))
     try:
+        ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
         await asyncio.wait_for(
             redis.set(
-                cache_key, "1" if flagged else "0",
-                ex=settings.MODERATION_CACHE_TTL, 
+                cache_key,
+                "1" if flagged else "0",
+                ex=ttl,
                 nx=True
             ),
             timeout=0.5
@@ -155,7 +170,8 @@ async def moderate_with_openai(text: str) -> bool:
         if isinstance(score, (int, float)) and score >= settings.MODERATION_TOXICITY_THRESHOLD:
             logger.debug("moderation: flagged by %s=%.2f", category, score)
             try:
-                await redis.set(cache_key, "1", ex=settings.MODERATION_CACHE_TTL)
+                ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
+                await redis.set(cache_key, "1", ex=ttl)
             except Exception:
                 pass
             return True
@@ -180,16 +196,18 @@ async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
         client = get_openai()
         try:
             resp = await asyncio.wait_for(
-                client.chat.completions.create(
+                client.responses.create(
                     model=settings.BASE_MODEL,
-                    messages=[
-                        {"role": "system", "content": "You are a helpful assistant for moderation."},
-                        {"role": "user", "content": prompt}
+                    input=[
+                        {"role": "system", "content": (
+                            "You are a moderation classifier. "
+                            "Reply only YES or NO."
+                        )},
+                        {"role": "user", "content": prompt},
                     ],
-                    temperature=0.0,
-                    max_completion_tokens=4,
+                    max_output_tokens=16,
                 ),
-                timeout=15.0
+                timeout=15.0,
             )
         except asyncio.TimeoutError:
             logger.warning("is_promo_via_ai: timeout")
@@ -198,7 +216,7 @@ async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
             logger.exception("is_promo_via_ai: API error")
             return False
 
-    reply = resp.choices[0].message.content.strip().upper()
+    reply = (getattr(resp, "output_text", "") or "").strip().upper()
     return reply.startswith("YES")
 
 
@@ -219,15 +237,15 @@ async def check_light(
     urls = extract_urls(text, entities)
     logger.debug("check_light: urls=%r", urls)
 
-    if source == "user" and urls and await is_promo_via_ai(text, urls):
-        return "promo"
-
-    if len(urls) > settings.MODERATION_SPAM_LINK_THRESHOLD:
+    if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 
     for u in urls:
         if url_is_unwanted(u):
             return "promo"
+
+    if source == "user" and urls and await is_promo_via_ai(text, urls):
+        return "promo"
 
     if source == "user" and await moderate_with_openai(text):
         return "toxic"
@@ -251,28 +269,39 @@ async def check_deep(
         logger.exception("check_deep: load_context error for chat %s", chat_id)
         history = []
 
-    snippet = history[-DEEP_HISTORY:]
-    prompt_messages: List[dict[str, str]] = [
-        {"role": "system", "content": (
-            "You are a context-aware moderator. Given recent conversation, "
-            "respond ONLY 'BLOCK' if the message is toxic or violates rules, "
-            "otherwise respond ONLY 'ALLOW'."
-        )},
-        *snippet,
-        {"role": "user", "content": text},
-    ]
+    def _as_resp_msg(m):
+        if not isinstance(m, dict):
+            return None
+        role = m.get("role")
+        if role not in ("system", "user", "assistant"):
+            return None
+        content = m.get("content") or m.get("text")
+        if content is None:
+            return None
+        if isinstance(content, (list, dict)):
+            content = str(content)
+        return {"role": role, "content": content}
+
+    snippet = [x for x in map(_as_resp_msg, history[-DEEP_HISTORY:]) if x]
 
     async with _DEEP_SEMAPHORE:
         client = get_openai()
         try:
             resp = await asyncio.wait_for(
-                client.chat.completions.create(
+                client.responses.create(
                     model=settings.BASE_MODEL,
-                    messages=prompt_messages,
-                    temperature=0.0,
-                    max_completion_tokens=16,
+                    input=[
+                        {"role": "system", "content": (
+                            "You are a context-aware moderator. Given recent conversation, "
+                            "respond ONLY 'BLOCK' if the message is toxic or violates rules, "
+                            "otherwise respond ONLY 'ALLOW'."
+                        )},
+                        *snippet,
+                        {"role": "user", "content": text},
+                    ],
+                    max_output_tokens=16,
                 ),
-                timeout=20.0
+                timeout=20.0,
             )
         except asyncio.TimeoutError:
             logger.warning("check_deep: timeout for chat %s", chat_id)
@@ -281,12 +310,7 @@ async def check_deep(
             logger.exception("check_deep: API error for chat %s", chat_id)
             return False
 
-    ans = ""
-    try:
-        ans = resp.choices[0].message.content.strip().upper()
-    except Exception:
-        logger.error("check_deep: unexpected response %r", resp)
-        return False
+    ans = (getattr(resp, "output_text", "") or "").strip().upper()
     logger.debug("check_deep answer=%r", ans)
 
     return ans.startswith("BLOCK")

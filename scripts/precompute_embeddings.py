@@ -13,8 +13,7 @@ from pathlib import Path
 from typing import List
 from dotenv import load_dotenv
 from tqdm import tqdm
-from openai._exceptions import RateLimitError, OpenAIError
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
 
 
@@ -96,22 +95,86 @@ def split_text(text: str, size: int = 1000) -> List[str]:
     return chunks
 
 
-if CHECKPOINT.exists():
-    with open(CHECKPOINT, "r", encoding="utf-8") as ck:
+def load_kb_any(path: Path) -> List[dict]:
+
+    data = path.read_text(encoding="utf-8")
+
+    if not data.strip():
+        raise ValueError(f"KB file is empty: {path}")
+
+    data = data.lstrip("\ufeff")
+
+    try:
+        obj = json.loads(data)
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict) and isinstance(obj.get("items"), list):
+            return obj["items"]
+    except json.JSONDecodeError:
+        pass
+
+    no_comments = re.sub(r"^\s*//.*$", "", data, flags=re.M)
+    no_comments = re.sub(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/", "", no_comments, flags=re.S)
+    no_trailing = re.sub(r",\s*([\]\}])", r"\1", no_comments).strip()
+    try:
+        obj = json.loads(no_trailing)
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict) and isinstance(obj.get("items"), list):
+            return obj["items"]
+    except json.JSONDecodeError:
+        pass
+
+    items = []
+    jsonl_ok = True
+    for line in data.splitlines():
+        s = line.strip()
+        if not s or s.startswith("//"):
+            continue
+        if s.endswith(","):
+            s = s[:-1]
         try:
-            done = json.load(ck)
-            done_ids = { item["id"] + "|" + item["text"] for item in done }
+            obj = json.loads(s)
+            if isinstance(obj, dict):
+                items.append(obj)
+            else:
+                jsonl_ok = False
+                break
         except Exception:
-            done_ids = set()
-else:
-    done_ids = set()
+            jsonl_ok = False
+            break
+    if jsonl_ok and items:
+        return items
+
+    logger.error("Failed to parse KB as JSON/JSONC/JSONL. First 200 chars: %r", data[:200])
+    raise ValueError(f"KB file is not valid JSON/JSONL: {path}")
 
 
-with open(KB_PATH, encoding="utf-8") as f:
-    raw = f.read()
-    cleaned = re.sub(r',\s*([\]\}])', r'\1', raw)
-    cleaned = "\n".join(line for line in cleaned.splitlines() if line.strip())
-    items = json.loads(cleaned)
+embedded = []
+if CHECKPOINT.exists():
+    try:
+        with open(CHECKPOINT, "r", encoding="utf-8") as ck:
+            embedded = json.load(ck) or []
+    except Exception:
+        logger.warning("Checkpoint is unreadable, starting fresh.")
+        embedded = []
+done_ids = { f'{item.get("id","")}|{item.get("text","")}' for item in embedded }
+
+
+items = load_kb_any(KB_PATH)
+if not isinstance(items, list):
+    raise ValueError(f"KB root must be a list, got {type(items)}")
+ 
+valid_items = []
+for i, it in enumerate(items):
+    if not isinstance(it, dict):
+        logger.warning("Skipping non-dict item at index %d: %r", i, type(it))
+        continue
+    txt = (it.get("text") or "").strip()
+    if not txt:
+        continue
+    valid_items.append(it)
+items = valid_items
 
 
 entries = []
@@ -130,7 +193,7 @@ logger.info("→ Total chunks to embed: %d", len(entries))
 
 sema = threading.Semaphore(int(os.getenv("EMBED_CONCURRENCY", "2")))
 @retry(
-    retry=retry_if_exception_type((RateLimitError, OpenAIError, Exception)),
+    retry=retry_if_exception_type(Exception),
     stop=stop_after_attempt(5),
     wait=wait_exponential(multiplier=1, min=1, max=30),
     before_sleep=before_sleep_log(logger, logging.WARNING),
@@ -142,14 +205,13 @@ def embed_batch(texts: List[str]) -> List[List[float]]:
     return [item.embedding for item in resp.data]
 
 
-embedded = []
 start_time = time.time()
 with ThreadPoolExecutor(max_workers=2) as executor:
     tasks = []
     for i in range(0, len(entries), BATCH_SIZE):
         batch = entries[i : i + BATCH_SIZE]
         batch_ids = {item["id"] + "|" + item["text"] for item in batch}
-        if batch_ids & done_ids:
+        if batch_ids.issubset(done_ids):
             continue
         future = executor.submit(embed_batch, [e["text"] for e in batch])
         tasks.append((future, batch))

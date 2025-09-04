@@ -15,8 +15,9 @@ class User(Base):
     full_name           = Column(String, nullable=False)
     registered_at       = Column(DateTime(timezone=True), server_default=func.now())
 
-    free_requests_left  = Column(Integer, default=35, nullable=False)
+    free_requests_left  = Column(Integer, default=30, nullable=False)
     paid_requests       = Column(Integer, default=0,  nullable=False)
     used_requests       = Column(Integer, default=0,  nullable=False)
     gender              = Column(String(6), nullable=True)
+    total_paid_cents    = Column(Integer, default=0, nullable=False)
 EOF

@@ -21,7 +21,7 @@ import app.bot.components.constants as consts
 from app.bot.components.constants import redis_client
 from app.bot.handlers.moderation import handle_passive_moderation
 from app.bot.utils.debouncer import buffer_message_for_response
-from app.core.memory import record_activity, inc_msg_count
+from app.core.memory import record_activity, inc_msg_count, MEMORY_TTL
 from app.config import settings
 
 
@@ -29,7 +29,6 @@ logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
-MEMORY_TTL = settings.MEMORY_TTL_DAYS * 86_400
 
 def _is_mention(message: types.Message) -> bool:
 

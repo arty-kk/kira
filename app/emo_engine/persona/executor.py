@@ -5,7 +5,7 @@ import atexit
 
 from concurrent.futures import ThreadPoolExecutor
 
-CPU = os.cpu_count() or 4
+CPU = 5
 
 MAX_WORKERS = int(os.getenv("GLOBAL_EXECUTOR_MAX_WORKERS", str(CPU * 2)))
 EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS)

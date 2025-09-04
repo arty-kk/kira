@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from typing import Optional
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -72,13 +74,22 @@ async def add_paid_requests(db: AsyncSession, user_id: int, amount: int) -> None
             logger.warning("User %s not found", user_id)
             return
 
-        user.paid_requests += max(int(amount), 0)
+        inc_requests = max(int(amount), 0)
+        if inc_requests <= 0:
+            await db.commit()
+            return
+
+        user.paid_requests += inc_requests
+        user.total_paid_cents = (user.total_paid_cents or 0) + inc_requests * 12
         await db.commit()
     except Exception:
         logger.exception("add_paid_requests failed for user %s", user_id)
         await db.rollback()
 
-
 def compute_remaining(user: User) -> int:
     return user.free_requests_left + user.paid_requests
+
+def get_total_paid_usd(user: User) -> float:
+    cents = int(getattr(user, "total_paid_cents", 0) or 0)
+    return round(cents / 100.0, 2)
 EOF

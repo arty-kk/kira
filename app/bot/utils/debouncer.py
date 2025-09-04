@@ -6,7 +6,7 @@ import logging
 
 from collections import defaultdict
 
-from app.bot.components.constants import redis_client
+import app.bot.components.constants as consts
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ async def schedule_response(key: str):
         if first_reply_to and not payload.get("reply_to"):
             payload["reply_to"] = first_reply_to
         try:
-            await redis_client.lpush(settings.QUEUE_KEY, json.dumps(payload))
+            await consts.redis_queue.lpush(settings.QUEUE_KEY, json.dumps(payload))
         except Exception as e:
             logger.warning("lpush failed for %s: %s", key, e)
             return

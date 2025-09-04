@@ -21,15 +21,15 @@ from ..constants.emotions import (
 
 logger = logging.getLogger(__name__)
 
-NOISE_SCALE_PRIMARY = 0.25
-NOISE_SCALE_SECONDARY = 0.22
-NOISE_SCALE_TERTIARY = 0.2
-NOISE_SCALE_DRIVE_SOCIAL = 0.15
-NOISE_SCALE_DYADS_TRIADS = 0.15
-NOISE_SCALE_COGNITIVE_STYLE = 0.3
+NOISE_SCALE_PRIMARY = 0.5
+NOISE_SCALE_SECONDARY = 0.45
+NOISE_SCALE_TERTIARY = 0.4
+NOISE_SCALE_DYADS_TRIADS = 0.35
+NOISE_SCALE_DRIVE_SOCIAL = 0.4
+NOISE_SCALE_COGNITIVE_STYLE = 0.6
 
 
-STYLE_SEM = asyncio.Semaphore(min(MAX_WORKERS, 16))
+STYLE_SEM = asyncio.Semaphore(min(MAX_WORKERS, 100))
 
 
 async def style_modifiers(self) -> Dict[str, float]:
@@ -42,7 +42,11 @@ async def style_modifiers(self) -> Dict[str, float]:
         FALLBACK_DELTA = self._fallback_delta
         state_snapshot = self.state.copy()
         prev_cache = self._mods_cache.copy()
-        rng_seed = (hash((self.chat_id, self.state_version)) & 0xFFFFFFFF) / (2**32)
+        rng_seed = (
+            ((int(self.chat_id) << 32) ^ int(self.state_version) ^
+             (hash((self.chat_id, self.state_version)) & 0xFFFFFFFF))
+            & 0xFFFFFFFFFFFFFFFF
+        )
 
     async with STYLE_SEM:
         loop = asyncio.get_running_loop()
@@ -74,11 +78,24 @@ def _fallback_for(metric: str, FALLBACK_DELTA: float) -> float:
     base = 0.45 if metric in PRIMARY_EMOTIONS else 0.5
     return base - FALLBACK_DELTA
 
+def _adaptive_alpha(a_norm: float, surprise: float, fatigue: float, stress: float,
+                    base: float = 0.55, min_a: float = 0.35, max_a: float = 0.80) -> float:
+
+    alpha = base + 0.25 * (a_norm - 0.5) + 0.15 * surprise - 0.20 * fatigue - 0.10 * stress
+    return max(min_a, min(max_a, alpha))
+
+def _apply_step_cap(prev_val: float, candidate: float, max_step: float) -> float:
+    delta = candidate - prev_val
+    if delta > max_step:
+        return prev_val + max_step
+    if delta < -max_step:
+        return prev_val - max_step
+    return candidate
 
 def _compute_style_modifiers_sync(
     state: Dict[str, float],
     prev: Dict[str, float],
-    rng_seed: float,
+    rng_seed: int,
     FALLBACK_DELTA: float,
 ) -> Dict[str, float]:
 
@@ -105,7 +122,7 @@ def _compute_style_modifiers_sync(
     stress   = state.get("stress", 0.0)
     dom      = state.get("dominance", 0.5)
     ar       = state.get("arousal", 0.5)
-    civ      = state.get("civility", 0.5)
+    civ      = state.get("civility", 0.25)
     wit      = state.get("wit", 0.5)
     fatigue  = state.get("fatigue", 0.0)
 
@@ -120,7 +137,46 @@ def _compute_style_modifiers_sync(
         noise = rng.gauss(0.0, _sigma_for(emo) * NOISE_SCALE_PRIMARY)
         raw = base + noise
         if key in prev:
-            raw = 0.65 * prev[key] + 0.35 * raw
+            raw = 0.20 * prev[key] + 0.80 * raw
+        modified[key] = _clamp(raw)
+
+    # Secondary emotions
+    for prim, subs in SECONDARY_EMOTIONS.items():
+        for sec, fn in subs.items():
+            key = f"{sec}_mod"
+            base = fn(state)
+            noise = rng.gauss(0.0, _sigma_for(sec) * NOISE_SCALE_SECONDARY)
+            raw = base + noise
+            if key in prev:
+                raw = 0.3 * prev[key] + 0.7 * raw
+            modified[key] = _clamp(raw)
+
+    # Tertiary emotions
+    for sec, subs in TERTIARY_EMOTIONS.items():
+        for ter, fn in subs.items():
+            key = f"{ter}_mod"
+            base = fn(state)
+            noise = rng.gauss(0.0, _sigma_for(ter) * NOISE_SCALE_TERTIARY)
+            raw = base + noise
+            if key in prev:
+                raw = 0.35 * prev[key] + 0.65 * raw
+            modified[key] = _clamp(raw)
+
+    # Dyads & Triads
+    for emo_name in list(VALID_DYADS.values()) + list(VALID_TRIADS.values()):
+        key = f"{emo_name}_mod"
+        if key in modified:
+            continue
+        base = state.get(emo_name, 0.0)
+        noise = rng.gauss(0.0, _sigma_for(emo_name) * NOISE_SCALE_DYADS_TRIADS)
+        raw = base + noise
+        if key in prev:
+            alpha = _adaptive_alpha(a_norm=a_norm, surprise=surprise, fatigue=fatigue, stress=stress,
+                                    base=0.55, min_a=0.35, max_a=0.80)
+            smoothed = (1.0 - alpha) * prev[key] + alpha * raw
+            max_step = 0.15 + 0.20 * (a_norm - 0.5) - 0.10 * fatigue
+            max_step = max(0.08, min(0.20, max_step))
+            raw = _apply_step_cap(prev[key], smoothed, max_step)
         modified[key] = _clamp(raw)
 
     # Energy with circadian
@@ -129,7 +185,7 @@ def _compute_style_modifiers_sync(
     noise = rng.gauss(0.0, _sigma_for("energy") * NOISE_SCALE_PRIMARY)
     raw_e = base + noise
     if key in prev:
-        raw_e = 0.7 * prev[key] + 0.3 * raw_e
+        raw_e = 0.55 * prev[key] + 0.45 * raw_e
     fatigue_penalty = 0.4 * state.get("fatigue", 0.0)
     now = datetime.now()
     hour = now.hour + now.minute / 60.0
@@ -142,42 +198,8 @@ def _compute_style_modifiers_sync(
     noise = rng.gauss(0.0, _sigma_for("fatigue") * NOISE_SCALE_PRIMARY)
     raw_f = base + noise
     if key in prev:
-        raw_f = 0.7 * prev[key] + 0.3 * raw_f
+        raw_f = 0.35 * prev[key] + 0.65 * raw_f
     modified[key] = _clamp(raw_f)
-
-    # Secondary emotions
-    for prim, subs in SECONDARY_EMOTIONS.items():
-        for sec, fn in subs.items():
-            key = f"{sec}_mod"
-            base = fn(state)
-            noise = rng.gauss(0.0, _sigma_for(sec) * NOISE_SCALE_SECONDARY)
-            raw = base + noise
-            if key in prev:
-                raw = 0.7 * prev[key] + 0.3 * raw
-            modified[key] = _clamp(raw)
-
-    # Tertiary emotions
-    for sec, subs in TERTIARY_EMOTIONS.items():
-        for ter, fn in subs.items():
-            key = f"{ter}_mod"
-            base = fn(state)
-            noise = rng.gauss(0.0, _sigma_for(ter) * NOISE_SCALE_TERTIARY)
-            raw = base + noise
-            if key in prev:
-                raw = 0.75 * prev[key] + 0.25 * raw
-            modified[key] = _clamp(raw)
-
-    # Dyads & Triads
-    for emo_name in list(VALID_DYADS.values()) + list(VALID_TRIADS.values()):
-        key = f"{emo_name}_mod"
-        if key in modified:
-            continue
-        base = state.get(emo_name, 0.0)
-        noise = rng.gauss(0.0, _sigma_for(emo_name) * NOISE_SCALE_DYADS_TRIADS)
-        raw = base + noise
-        if key in prev:
-            raw = 0.8 * prev[key] + 0.2 * raw
-        modified[key] = _clamp(raw)
 
     # Drive, social & extra-trigger metrics
     for metric in DRIVE_METRICS + SOCIAL_METRICS + EXTRA_TRIGGER_METRICS:
@@ -265,7 +287,7 @@ def _compute_style_modifiers_sync(
         noise = rng.gauss(0.0, _sigma_for(metric) * NOISE_SCALE_DRIVE_SOCIAL)
         raw   = raw + noise
         if key in prev:
-            smoothed = 0.45 * prev[key] + 0.55 * raw
+            smoothed = 0.3 * prev[key] + 0.7 * raw
             max_step = 0.12 + 0.18 * (a_norm - 0.5) - 0.10 * fatigue
             max_step = max(0.08, min(0.20, max_step))
             delta = smoothed - prev[key]
@@ -380,7 +402,7 @@ def _compute_style_modifiers_sync(
             scale = NOISE_SCALE_COGNITIVE_STYLE * (0.9 if metric in ("aggressiveness","profanity") else 1.2)
             raw += rng.gauss(0.0, _sigma_for(metric) * scale)
         if key in prev:
-            smoothed = 0.4 * prev[key] + 0.6 * raw
+            smoothed = 0.40 * prev[key] + 0.60 * raw
             max_step = 0.22 + 0.25 * (a_norm - 0.5) - 0.15 * fatigue
             max_step = max(0.10, min(0.35, max_step))
             delta = smoothed - prev[key]

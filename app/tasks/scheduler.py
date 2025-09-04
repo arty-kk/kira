@@ -278,14 +278,15 @@ def start_scheduler() -> None:
         logger.info("group_ping_job disabled by SCHED_ENABLE_GROUP_PING=false")
 
     if settings.SCHED_ENABLE_PERSONAL_PING:
+        interval_secs = settings.PERSONAL_PING_INTERVAL_SEC
         _sched.add_job(
             personal_ping_job, "interval",
-            minutes=settings.PERSONAL_PING_INTERVAL_MIN,
+            seconds=interval_secs,
             id="personal_ping_job",
-            max_instances=20,
+            max_instances=1,
             coalesce=True,
             replace_existing=True,
-            jitter=int(settings.PERSONAL_PING_INTERVAL_MIN * 60 * 0.1),
+            jitter=int(interval_secs * 0.1),
             next_run_time=eager,
         )
     else:

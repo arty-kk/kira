@@ -6,13 +6,14 @@ import json
 import logging
 import functools
 import numpy as np
+import base64 as _b64
 import asyncio
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.config import settings
-from app.clients.openai_client import get_openai
+from app.clients.openai_client import _call_openai_with_retry
 from asyncio import get_running_loop
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def _load_precomputed(model: str) -> List[Dict[str, Any]]:
             if not isinstance(emb, (list, tuple)):
                 logger.warning("Skipping entry without valid emb: %r", entry.get("id"))
                 continue
-            entry["emb"] = np.asarray(emb, dtype=float)
+            entry["emb"] = np.asarray(emb, dtype=np.float32)
             valid.append(entry)
         logger.info("Loaded %d embeddings from %s", len(valid), path)
         return valid
@@ -87,13 +88,28 @@ async def get_relevant(
     mean_vec = _KB_ENTRIES.get(mean_key, 0)
 
     try:
-        client = get_openai()
         api_model = file_model.replace("-offtopic", "")
-        resp = await client.embeddings.create(
-            model=api_model,
-            input=[query]
+
+        resp = await asyncio.wait_for(
+            _call_openai_with_retry(
+                endpoint="embeddings.create",
+                model=api_model,
+                input=[query],
+                encoding_format="float",
+            ),
+            timeout=60.0,
         )
-        qraw = np.asarray(resp.data[0].embedding, dtype=float)
+        vec = resp.data[0].embedding
+
+        if isinstance(vec, str):
+            try:
+                raw = _b64.b64decode(vec)
+                qraw = np.frombuffer(raw, dtype=np.float32)
+            except Exception:
+                logger.error("Embedding returned base64 string and failed to decode for model %s", file_model)
+                return []
+        else:
+            qraw = np.asarray(vec, dtype=np.float32)
         qemb = _normalize(qraw - mean_vec)
     except Exception:
         logger.exception("Embedding query failed for model %s", file_model)

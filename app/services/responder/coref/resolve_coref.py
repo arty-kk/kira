@@ -6,22 +6,26 @@ import re
 
 from typing import List, Dict
 
-from app.clients.openai_client import _call_openai_with_retry
+from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_COT_PROMPT = """You are a coreference-/deixis-resolution assistant.
+_COT_PROMPT = """You are a **multilingual** coreference/deixis-resolution assistant.
 
 Instructions (CoT Phase):
-1. Identify all pronouns in the user query that refer to entities, events, persons, or objects NOT to the assistant itself and/or the user who wrote the query.
-2. Ignore in coreference-/deixis-resolution any pronouns that refer to the assistant itself and/or the user who wrote the query (I, we, us, you, your, my, me).
-3. For each pronoun (not related to the assistant and/or user) locate its antecedent in the provided conversation snippet.
-4. If any pronouns that do NOT refer to the assistant and/or user do not have a clear logical antecedent, do not consider those pronouns in coreference resolution.
+1. Identify pronouns that may require coreference: third-person pronouns (he, she, it, they) and **demonstrative pronouns used pronominally** (this/that/these/those when they stand alone or with "one/ones").
+2. EXCLUDE from consideration:
+   - first- and second-person forms (I, me, my, you, your) in any language;
+   - demonstratives used as **determiners** before a noun (e.g., "that book", "this idea");
+   - "that" used as a **conjunction/complementizer** introducing a clause (e.g., "I think that we should go");
+   - relative "that" inside noun clauses (do not try to replace it).
+3. For each eligible pronoun, locate its antecedent in the provided conversation snippet.
+4. If a pronoun has no clear antecedent, ignore it.
 5. Return **only** a numbered list like:
    1. pronoun → antecedent
    2. pronoun → antecedent
-6. If no pronouns require resolution, reply exactly: No pronouns to resolve.
+6. If no pronouns require resolution, reply exactly: No pronouns to resolve
 
 Example 1:
 Snippet:
@@ -39,28 +43,56 @@ Query:
 Reply:
   1. he → Sam
 
-Example 2:
+Example 3:
 Snippet:
   Alice has read an interesting book.
 Query:
   "What was the title of this book?"
 Reply: No pronouns to resolve.
+
+Example 4:
+Snippet:
+  Alice has read an interesting book: The Great Gatsby.
+Query:
+  "What was the title of this"
+Reply: 
+  1. this → The Great Gatsby
+
+Example 5:
+Snippet:
+  I put the red folder on your desk.
+Query:
+  "Could you hand me that?"
+Reply:
+  1. that → the red folder
+
+Example 6:
+Query:
+  "I think that we should go."
+Reply: No pronouns to resolve
 """
 
-_FINAL_PROMPT = """Now rewrite the user's query using the resolved antecedents.
+_FINAL_PROMPT = """Rewrite the user's query using the resolved antecedents.
 
 Rules (Rewrite Phase):
-1. Replace each pronoun (not related to the assistant itself and/or the user who wrote the query) with its specific antecedent.
-2. Preserve the original meaning and conversational context.
-3. **Return exactly** the rewritten query string, with no numbering, quotes, or extra text.
+1. Replace only second- or third-person pronouns (except *I'm*, *my*, *me*, *you*, *your* in any language) and **pronominal** demonstratives (this/that/these/those standing alone or with "one/ones") with their specific antecedents.
+2. Do **not** modify first- or second-person forms, demonstratives used as determiners before nouns, or "that" used as a conjunction/complementizer or as a relative pronoun.
+3. Preserve the original meaning and conversational context.
+4. **Return exactly** the rewritten query string, with no numbering, quotes, or extra text.
 
 Example:
 Original: "Can you tell me if she locked the door?"
 Rewritten: "Can you tell me if Alice locked the door?"
+
+Example:
+Snippet: I put the red folder on your desk.
+Original: "Could you hand me that?"
+Rewritten: "Could you hand me the red folder?"
 """
 
 COT_TIMEOUT = 15
 FINAL_TIMEOUT = 15
+
 
 async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
 
@@ -78,33 +110,27 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
             return original
         return s
 
-    cot_messages = [
-        {
-            "role": "system",
-            "content": _COT_PROMPT
-        },
-        *snippet,
-        {
-            "role": "user",
-            "content": f"Identify the antecedents for each referring expression in this user query:\n\"{text}\""
-        },
+    _snippet_input = [
+        _msg(m["role"], str(m.get("content", "")))
+        for m in snippet
+    ]
+    cot_input = [
+        _msg("system", _COT_PROMPT),
+        *_snippet_input,
+        _msg("user", f'Identify the antecedents (if they have one) in this user query:\n"{text}"'),
     ]
     try:
-        start = asyncio.get_running_loop().time()
         cot_resp = await asyncio.wait_for(
             _call_openai_with_retry(
+                endpoint="responses.create",
                 model=settings.BASE_MODEL,
-                messages=cot_messages,
-                temperature=0.0,
-                top_p=1.0,
-                max_completion_tokens=1000,
+                input=cot_input,
+                max_output_tokens=1000,
+                temperature=0,
             ),
             timeout=COT_TIMEOUT,
         )
-        if not cot_resp.choices:
-            raise ValueError("empty choices in CoT response")
-        reasoning = cot_resp.choices[0].message.content.strip()
-        logger.debug("CoT completed in %.2fs", asyncio.get_running_loop().time() - start)
+        reasoning = (_get_output_text(cot_resp) or "").strip()
     except asyncio.TimeoutError:
         logger.warning("resolve_coref CoT step timed out after %.1fs", COT_TIMEOUT)
         reasoning = None
@@ -122,28 +148,24 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         "\n\nIMPORTANT: Only output the rewritten query. NO explanations, NO chain-of-thought."
     )
 
-    final_messages = [
-        {"role": "system", "content": prompt_content},
-        {"role": "user",   "content": text},
+    final_input = [
+        _msg("system", prompt_content),
+        _msg("user", text),
     ]
 
     try:
-        start = asyncio.get_running_loop().time()
         final_resp = await asyncio.wait_for(
             _call_openai_with_retry(
+                endpoint="responses.create",
                 model=settings.BASE_MODEL,
-                messages=final_messages,
-                temperature=0.0,
-                top_p=1.0,
-                max_completion_tokens=1000,
+                input=final_input,
+                max_output_tokens=1000,
+                temperature=0,
             ),
             timeout=FINAL_TIMEOUT,
         )
-        if not final_resp.choices:
-            raise ValueError("empty choices in final response")
-        rewritten_raw = final_resp.choices[0].message.content
+        rewritten_raw = _get_output_text(final_resp)
         rewritten = _clean_rewrite(rewritten_raw, text)
-        logger.debug("Final rewrite completed in %.2fs", asyncio.get_running_loop().time() - start)
         return rewritten
     except asyncio.TimeoutError:
         logger.warning("resolve_coref final rewrite timed out after %.1fs", FINAL_TIMEOUT)

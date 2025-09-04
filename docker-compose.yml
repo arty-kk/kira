@@ -23,17 +23,34 @@ services:
       timeout: 3s
       retries: 5
 
-  redis:
-    image: redis/redis-stack-server:7.2.0-v9
-    container_name: redis
+  redis_kv:
+    image: redis:7
+    container_name: redis_kv
     restart: unless-stopped
     env_file: .env
     environment:
-      - "REDIS_ARGS=--appendonly yes --appendfsync no --maxmemory 4gb --maxmemory-policy allkeys-lru"
+      - "REDIS_ARGS=--appendonly yes --appendfsync everysec --maxmemory 6gb --maxmemory-policy volatile-lru --requirepass ${REDIS_PASSWORD}"
+    command: ["sh","-lc","redis-server $${REDIS_ARGS}"]
     volumes:
-      - redis_data:/data
+      - redis_kv_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis_vec:
+    image: redis/redis-stack-server:7.2.0-v14
+    container_name: redis_vec
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - "REDIS_ARGS=--appendonly no --save 900 1 --save 300 10 --save 60 10000 --maxmemory 16gb --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD}"
+    command: ["sh","-lc","redis-server $${REDIS_ARGS} --loadmodule /opt/redis-stack/lib/redisearch.so"]
+    volumes:
+      - redis_vec_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -67,12 +84,19 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      QUEUE_KEY: "queue:chat"
       ENABLE_SCHEDULER: "true"
-      CELERY_BROKER_URL: "redis://redis:6379/0"
       CERTS_DIR: "/certs"
       USE_SELF_SIGNED_CERT: "true"
     depends_on:
-      redis:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
         condition: service_healthy
       db:
         condition: service_healthy
@@ -91,14 +115,20 @@ services:
   worker-tasks:
     build: .
     container_name: worker-tasks
-    restart: always
+    restart: unless-stopped
     env_file: .env
     environment:
-      ENABLE_SCHEDULER: "false"
-      CELERY_BROKER_URL: "redis://redis:6379/0"
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/0
       CELERY_CONCURRENCY: "16"
+      ENABLE_SCHEDULER: "false"
     depends_on:
-      redis:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
         condition: service_healthy
       db:
         condition: service_healthy
@@ -120,18 +150,24 @@ services:
 
   worker-queue:
     build: .
-    container_name: worker-queue
     restart: unless-stopped
     env_file: .env
     environment:
-      REDIS_URL_QUEUE: "redis://redis:6379/0"
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
       QUEUE_KEY: "queue:chat"
     depends_on:
-      redis:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
         condition: service_healthy
       db:
         condition: service_healthy
     entrypoint: ["python", "-u", "-m", "app.tasks.queue_worker"]
+    stop_signal: SIGINT
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "pgrep", "-f", "app.tasks.queue_worker"]
       interval: 30s
@@ -140,6 +176,7 @@ services:
 
 volumes:
   db_data:
-  redis_data:
+  redis_kv_data:
+  redis_vec_data:
   pgadmin_data:
 EOF
