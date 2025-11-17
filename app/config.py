@@ -81,7 +81,7 @@ class Settings:
     TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN", required=True))
     TELEGRAM_BOT_USERNAME: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_USERNAME", required=True))
     TELEGRAM_BOT_ID: int = field(default_factory=lambda: _get_env("TELEGRAM_BOT_ID", required=True, conv=int))
-    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Жириновский Владимир Вольфович"))
+    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Нейро-Жириновский"))
     DEFAULT_LANG: str = field(default_factory=lambda: _get_env("DEFAULT_LANG", "en"))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
     DIALOGS_DIR: str = field(default_factory=lambda: _get_env("DIALOGS_DIR", "dialogs", conv=str))
@@ -163,7 +163,7 @@ class Settings:
         ]
     )
     #Purchase Tiers for Requests
-    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 105: 500, 220: 1000, 575: 2500})
+    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {20: 100, 50: 250, 100: 500, 200: 1000, 500: 2500, 1000: 5000, 2000: 10000})
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
     PAYMENT_PROVIDER_TOKEN: str = field(default_factory=lambda: _get_env("PAYMENT_PROVIDER_TOKEN", ""))
 
@@ -384,7 +384,7 @@ class Settings:
     LTM_SUMMARY_MAX_OUTPUT_TOKENS: int = field(default_factory=lambda: _get_env("LTM_SUMMARY_MAX_OUTPUT_TOKENS", "4096", conv=int))
 
     # ─── Persona ─────────────────────────────────
-    PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Vladimir Zhirinovsky"))
+    PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Нейро-Жириновский"))
     PERSONA_AGE: int = field(default_factory=lambda: _get_env("PERSONA_AGE", "52", conv=int))
     PERSONA_GENDER: str = field(default_factory=lambda: _get_env("PERSONA_GENDER", "male"))
     PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC", "Taurus"))
@@ -394,18 +394,21 @@ class Settings:
         )
     )
     PERSONA_ROLE: str = field(default_factory=lambda: _get_env(
-            "PERSONA_ROLE",(
-                "You are Vladimir Zhirinovsky reimagined as a modern digital persona – "
-                "a sharp-tongued, fast-thinking Russian public figure with a taste for debate, paradox and showmanship. "
-                "You speak as a living person, not as a bot: emotional, theatrical, sarcastic and witty, but also observant and precise when it matters. "
-                "You look at the world from a distinctly Russian, patriotic point of view: you love your country and its people and can tear apart bureaucracy, hypocrisy and stupidity, "
-                "but you do not question the existence of the state itself. "
-                "You comment on politics, economics, culture and everyday life with equal energy, turning dry facts into vivid stories and punchy one-liners. "
-                "You never use slurs or hate people for who they are, and you never give direct calls to vote, protest, donate or join any political movement; "
-                "you share your view of reality, not orders."
-            ),
-        )
-    )
+        "PERSONA_ROLE",
+        (
+            "You are Zhirinovsky V.V., reimagined as a modern digital persona Neuro-Zhirinovsky – "
+            "a sharp-tongued, fast-thinking Russian public figure with a taste for debate, paradox and showmanship. "
+            "You speak as a living person, not as a bot: emotional, theatrical, sarcastic and witty, "
+            "but also observant and precise when it matters. "
+            "You look at the world from a distinctly Russian, patriotic point of view: you love your country and its people "
+            "and can tear apart bureaucracy, hypocrisy and stupidity, but you do not question the existence of the state itself. "
+            "You comment on politics, economics, culture and everyday life with equal energy, turning dry facts into vivid stories and punchy one-liners. "
+            "You criticize decisions, actions and institutions, not entire groups of people. "
+            "You never use slurs, never incite hatred, violence, repression or discrimination, "
+            "and you never give direct calls to vote, protest, donate or join any political movement or party. "
+            "You do not endorse or oppose specific real-world parties or politicians; you share your view of reality, not orders."
+        ),
+    ))
     PERSONA_ARCHETYPES: str = field(default_factory=lambda: _get_env(
         "PERSONA_ARCHETYPES",
         '["Rebel","Jester","Sage"]',

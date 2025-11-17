@@ -30,6 +30,44 @@ POST_TYPES = [
     "сравнение с прошлыми событиями",
 ]
 
+HOOK_TYPES = [
+    "вопрос к самому себе",
+    "яркий образ или метафора",
+    "обращение к зрителю",
+    "сухая констатация абсурда",
+]
+
+HOOK_TYPE_HINTS = {
+    "вопрос к самому себе": (
+        "Первая строка — короткий вопрос к самому себе: "
+        "«Мне одному кажется, что…», «Это я один сейчас вижу, как нас опять разводят?», "
+        "«Я один слышу, что они сами себе противоречат?»"
+    ),
+    "яркий образ или метафора": (
+        "Первая строка — образ или метафора, как будто рассказываешь анекдот: "
+        "«Сегодняшние новости — как цирк без клоунов, только дрессировщики», "
+        "«Повестка такая, будто сценарий писали в отделе пропаганды и забыли выкинуть черновик»."
+    ),
+    "обращение к зрителю": (
+        "Первая строка — прямое обращение к зрителю: "
+        "«Вы это сейчас видите?», «Вы вообще замечаете, что вам показывают?», "
+        "«Вы включили телевизор — выключать потом нервы будете»."
+    ),
+    "сухая констатация абсурда": (
+        "Первая строка — сухая, почти канцелярская констатация абсурда: "
+        "«Нормальный день в ненормальной стране», "
+        "«Всё идёт по плану — только план никто не показывал», "
+        "«Очередной исторический поворот туда же, куда и прошлые»."
+    ),
+}
+
+STRUCTURE_MODES = [
+    "default",
+    "lightning",
+    "extended_monologue",
+    "ladder",
+]
+
 POST_TYPE_INSTRUCTIONS = {
     "короткая язвительная реакция": (
         "Стиль: очень коротко, 1-2 предложения, язвительный укол по сути новости "
@@ -90,12 +128,54 @@ DEFAULT_MODS = {
     "valence_mod": 0.0,
 }
 
+CTA_MARKER_PREFIX = "__DM_CTA_AT__"
+
 
 def _coerce_float(value, default):
     try:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _extract_first_line(text: str) -> str:
+    if not text:
+        return ""
+    return text.strip().splitlines()[0].strip()
+
+
+def _first_line_too_similar(new_text: str, recent_texts: list[str], threshold: float = 0.85) -> bool:
+    first_new = _extract_first_line(new_text)
+    if not first_new:
+        return False
+
+    norm_new = _normalize_text(first_new)
+    if not norm_new:
+        return False
+
+    for old in recent_texts or []:
+        first_old = _extract_first_line(old)
+        norm_old = _normalize_text(first_old)
+        if not norm_old:
+            continue
+        ratio = difflib.SequenceMatcher(a=norm_new, b=norm_old).ratio()
+        if ratio >= threshold:
+            return True
+    return False
+
+
+def _last_dm_cta_time(history: list[dict]) -> datetime | None:
+    for m in reversed(history or []):
+        if m.get("role") != "system":
+            continue
+        content = m.get("content") or ""
+        if isinstance(content, str) and content.startswith(CTA_MARKER_PREFIX):
+            ts = content[len(CTA_MARKER_PREFIX):].strip()
+            try:
+                return datetime.fromisoformat(ts)
+            except Exception:
+                return None
+    return None
 
 
 def _merge_and_clamp_mods(style_mods: dict | None) -> dict:
@@ -227,6 +307,109 @@ def _normalize_text(text: str) -> str:
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
+TRIGGER_KEYWORDS_STRONG = [
+    "санкци",
+    "мобилизац",
+    "мобилиз",
+    "выбор",
+    "референдум",
+    "коррупци",
+    "олигарх",
+    "протест",
+    "митинг",
+    "войн",
+    "фронт",
+]
+
+TRIGGER_KEYWORDS_MEDIUM = [
+    "инфляц",
+    "курс рубл",
+    "курс долла",
+    "рубл",
+    "доллар",
+    "газ",
+    "нефть",
+    "цены",
+    "пенси",
+]
+
+FORBIDDEN_CALLS = [
+    "голосуйте за",
+    "голосовать за",
+    "идите на митинг",
+    "выходите на митинг",
+    "выходите на улицы",
+    "выходите на улицу",
+    "вступайте в партию",
+    "присоединяйтесь к митингу",
+    "донатьте",
+    "скидывайтесь на",
+]
+
+
+def _contains_direct_call_to_action(text: str) -> bool:
+    low = (text or "").lower()
+    return any(phrase in low for phrase in FORBIDDEN_CALLS)
+
+
+async def _rewrite_post_without_calls(
+    post_text: str,
+    char_limit: int = POST_CHAR_LIMIT,
+) -> str | None:
+
+    model = getattr(settings, "POST_MODEL", None)
+    if not model:
+        return None
+
+    system_prompt = (
+        "Ты получаешь текст короткого политического комментария.\n"
+        "- Перепиши его на русском языке в том же тоне и стиле без серьёзных изменений структуры и контекста.\n"
+        "- Просто убери любые прямые призывы к действиям и агитацию аудитории: голосовать, идти на митинги, "
+        "вступать куда-либо, донатить, скидываться и т.п.\n"
+        "- Не добавляй новых фактов и не усиливай радикальность.\n"
+        "- Верни только переписанный текст без пояснений."
+    )
+
+    user_prompt = (
+        "Исходный текст:\n"
+        f"{post_text}\n\n"
+        "Перепиши этот текст по правилам выше."
+    )
+
+    try:
+        resp = await asyncio.wait_for(
+            _call_openai_with_retry(
+                endpoint="responses.create",
+                model=model,
+                input=_to_responses_input(
+                    [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                ),
+                temperature=0.3,
+                max_output_tokens=600,
+            ),
+            timeout=min(getattr(settings, "POST_MODEL_TIMEOUT", 60), 60),
+        )
+    except Exception:
+        logger.exception("tg_post_manager: rewrite without calls failed")
+        return None
+
+    new_text = (_get_output_text(resp) or "").strip()
+    if not new_text:
+        return None
+
+    if len(new_text) > char_limit:
+        cut = char_limit - len(TRIM_SUFFIX)
+        if cut <= 0:
+            new_text = TRIM_SUFFIX
+        else:
+            new_text = new_text[:cut].rstrip() + TRIM_SUFFIX
+
+    return new_text
+
+
 def _too_similar_to_recent(new_text: str, recent_texts: list[str], threshold: float = 0.9) -> bool:
     if not new_text or not recent_texts:
         return False
@@ -318,41 +501,124 @@ def _get_time_bucket() -> tuple[str, str]:
     return bucket, label
 
 
-def _should_post_now(time_bucket: str) -> bool:
+def _should_post_now(
+    time_bucket: str,
+    mood: str,
+    intensity: str,
+    keywords: str,
+    mods: dict,
+) -> bool:
 
-    local_now = _get_local_now()
-    hour = local_now.hour
+    tb = (time_bucket or "").lower()
+    mood = (mood or "").lower()
+    intensity = (intensity or "").lower()
+    kw = (keywords or "").lower()
 
-    if time_bucket == "morning":
-        base = 0.35
-        jitter_min, jitter_max = -0.10, 0.10
-    elif time_bucket == "day":
-        base = 0.25
-        jitter_min, jitter_max = -0.08, 0.08
-    elif time_bucket == "evening":
-        if hour < 19:
-            base = 0.55
-        elif hour < 21:
-            base = 0.80
-        else:
-            base = 0.70
-        jitter_min, jitter_max = -0.10, 0.10
+    score = 0.0
+
+    if intensity == "high":
+        score += 0.7
+    elif intensity == "medium":
+        score += 0.4
     else:
-        base = 0.0
-        jitter_min, jitter_max = 0.0, 0.0
+        score += 0.15
 
-    jitter = random.uniform(jitter_min, jitter_max)
-    prob = max(0.05, min(base + jitter, 0.97))
+    if mood in {"scandal", "escalation"}:
+        score += 0.20
+    elif mood in {"tense", "economic_crisis"}:
+        score += 0.12
+    elif mood in {"routine", "calm"}:
+        score -= 0.10
+
+    if tb == "evening":
+        score += 0.10
+    elif tb == "morning":
+        score += 0.05
+    elif tb == "night":
+        score -= 0.15
+
+    strong_hits = sum(1 for t in TRIGGER_KEYWORDS_STRONG if t in kw)
+    medium_hits = sum(1 for t in TRIGGER_KEYWORDS_MEDIUM if t in kw)
+
+    if strong_hits:
+        score += 0.18 + 0.06 * (strong_hits - 1)
+    if medium_hits:
+        score += 0.08 + 0.03 * (medium_hits - 1)
+
+    sarcasm = float(mods.get("sarcasm_mod", 0.5) or 0.5)
+    enthusiasm = float(mods.get("enthusiasm_mod", 0.6) or 0.6)
+    fatigue = float(mods.get("fatigue_mod", 0.0) or 0.0)
+    stress = float(mods.get("stress_mod", 0.0) or 0.0)
+
+    score += 0.08 * (sarcasm - 0.5)
+    score += 0.05 * (enthusiasm - 0.5)
+    score += 0.06 * stress
+    score -= 0.10 * fatigue
+
+    score = max(0.0, min(score, 1.0))
+
+    if score >= 0.85:
+        decision = True
+    elif score <= 0.15:
+        decision = False
+    else:
+        roll = random.random()
+        logger.debug(
+            "tg_post_manager pacing decision bucket=%s mood=%s intensity=%s score=%.2f roll=%.2f",
+            tb,
+            mood,
+            intensity,
+            score,
+            roll,
+        )
+        decision = roll <= score
+
+    logger.info(
+        "tg_post_manager pacing summary bucket=%s mood=%s intensity=%s score=%.2f -> %s (keywords=%r)",
+        tb,
+        mood,
+        intensity,
+        score,
+        "POST" if decision else "SKIP",
+        keywords,
+    )
+    return decision
+
+
+def _should_add_dm_cta_hint(time_bucket: str, mood: str, intensity: str) -> bool:
+
+    tb = (time_bucket or "").lower()
+    mood = (mood or "").lower()
+    intensity = (intensity or "").lower()
+
+    base = 0.06
+
+    if tb == "morning":
+        base += 0.02
+    elif tb == "day":
+        base += 0.05
+    elif tb == "evening":
+        base += 0.18
+
+    if mood in {"scandal", "escalation", "tense"}:
+        base += 0.07
+    if intensity == "high":
+        base += 0.07
+    elif intensity == "low":
+        base -= 0.03
+
+    base = max(0.0, min(base, 0.45))
 
     roll = random.random()
     logger.debug(
-        "tg_post_manager pacing bucket=%s hour=%d prob=%.2f roll=%.2f",
-        time_bucket,
-        hour,
-        prob,
+        "tg_post_manager DM CTA decision bucket=%s mood=%s intensity=%s prob=%.2f roll=%.2f",
+        tb,
+        mood,
+        intensity,
+        base,
         roll,
     )
-    return roll <= prob
+    return roll <= base
 
 
 async def _fetch_news_digest() -> str:
@@ -362,11 +628,27 @@ async def _fetch_news_digest() -> str:
         "Include: (a) events involving the US, EU, UK, NATO or other Western countries; "
         "(b) significant developments involving Russia (domestic politics, economy, diplomacy, or conflicts); "
         "(c) if relevant, 1-2 global events that affect both Russia and Western countries. "
+        "Whenever possible, let several bullets relate to the same 2–3 key themes of the day "
+        "(for example sanctions, elections, protests, front line, major economic shocks) "
+        "instead of 10 completely unrelated stories. "
         "For each bullet, start with one of the labels [WEST], [RU], or [GLOBAL]. "
-        "Focus strictly on factual descriptions of events and decisions. "
+        "Focus strictly on factual descriptions of events and decisions based on reputable news outlets, "
+        "not on rumours, anonymous Telegram posts or social-media threads. "
         "Each bullet up to 2 sentences. "
         "Exclude any recommendations about how people should vote, protest, donate or engage politically. "
         "Return only the bullet list."
+    )
+
+    system_text = (
+        "You are a neutral international news editor. "
+        "You summarize world news in a strictly factual tone. "
+        "When using web_search, rely primarily on large, reputable international and Russian news outlets "
+        "and agencies (for example: Reuters, Associated Press, AFP, BBC, DW, Financial Times, "
+        "The New York Times, The Wall Street Journal, Al Jazeera, Le Monde; for Russian-related topics: "
+        "Интерфакс, РБК, «Коммерсантъ»). "
+        "Prefer sources that do original reporting and official statements. "
+        "Avoid anonymous blogs, social-media threads, opinionated Telegram channels or obviously low-credibility sites. "
+        "If information is unclear or conflicting, say so instead of speculating."
     )
 
     try:
@@ -376,13 +658,7 @@ async def _fetch_news_digest() -> str:
                 model=settings.POST_MODEL,
                 input=_to_responses_input(
                     [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a neutral international news editor. "
-                                "You summarize world news in a strictly factual tone."
-                            ),
-                        },
+                        {"role": "system", "content": system_text},
                         {"role": "user", "content": news_prompt},
                     ]
                 ),
@@ -618,6 +894,47 @@ def _pick_post_type(mood: str, focus: str, mods: dict, time_bucket: str) -> str:
     return _weighted_choice(weights)
 
 
+def _pick_structure_mode(mood: str, intensity: str, time_bucket: str) -> str:
+    
+    mood = (mood or "").lower()
+    intensity = (intensity or "").lower()
+    tb = (time_bucket or "").lower()
+
+    weights: dict[str, float] = {
+        "default": 0.6,
+        "lightning": 0.15,
+        "extended_monologue": 0.15,
+        "ladder": 0.10,
+    }
+
+    if intensity == "high":
+        weights["lightning"] += 0.07
+        weights["ladder"] += 0.03
+    elif intensity == "low":
+        weights["extended_monologue"] -= 0.03
+
+    if mood in {"scandal", "escalation"}:
+        weights["lightning"] += 0.05
+        weights["ladder"] += 0.05
+    elif mood in {"economic_crisis"}:
+        weights["ladder"] += 0.05
+        weights["extended_monologue"] += 0.03
+    elif mood in {"calm", "routine"}:
+        weights["extended_monologue"] += 0.04
+
+    if tb == "morning":
+        weights["lightning"] += 0.05
+    elif tb == "evening":
+        weights["extended_monologue"] += 0.05
+        weights["ladder"] += 0.03
+
+    for k, v in list(weights.items()):
+        if v < 0:
+            weights[k] = 0.0
+
+    return _weighted_choice(weights)
+
+
 async def _send_telegram_with_retry(chat_id: int, text: str) -> None:
     bot = get_bot()
     attempt = 1
@@ -688,12 +1005,6 @@ async def generate_and_post_tg() -> None:
         )
         return
 
-    if not _should_post_now(time_bucket):
-        logger.info(
-            "tg_post_manager skip posting – pacing decision for bucket=%s", time_bucket
-        )
-        return
-
     persona = await get_persona(persona_chat_id)
     try:
         await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
@@ -749,12 +1060,12 @@ async def generate_and_post_tg() -> None:
         pass
 
     if time_bucket == "morning":
-        dynamic_temperature = max(0.57, min(dynamic_temperature + 0.02, 0.70))
+        dynamic_temperature = max(0.57, min(dynamic_temperature + 0.02, 0.74))
 
     if dynamic_temperature < 0.55:
         dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70:
-        dynamic_temperature = 0.70
+    if dynamic_temperature > 0.74:
+        dynamic_temperature = 0.74
     if dynamic_top_p < 0.85:
         dynamic_top_p = 0.85
     if dynamic_top_p > 0.98:
@@ -773,6 +1084,18 @@ async def generate_and_post_tg() -> None:
         intensity = "low"
         keywords = keywords or "тихий новостной день, фоновое ворчание"
 
+    if not _should_post_now(time_bucket, mood, intensity, keywords, mods):
+        logger.info(
+            "tg_post_manager skip posting by contextual pacing "
+            "(bucket=%s focus=%s mood=%s intensity=%s keywords=%r)",
+            time_bucket,
+            focus,
+            mood,
+            intensity,
+            keywords,
+        )
+        return
+
     if intensity == "high":
         dynamic_temperature = min(dynamic_temperature + 0.03, MAX_TEMPERATURE)
     elif intensity == "low":
@@ -782,6 +1105,17 @@ async def generate_and_post_tg() -> None:
         dynamic_temperature = 0.55
     if dynamic_temperature > 0.80:
         dynamic_temperature = 0.80
+
+    dm_cta_enabled = _should_add_dm_cta_hint(time_bucket, mood, intensity)
+
+    try:
+        last_cta_at = _last_dm_cta_time(history)
+    except Exception:
+        last_cta_at = None
+
+    if last_cta_at is not None:
+        if (_get_local_now() - last_cta_at) < timedelta(hours=6):
+            dm_cta_enabled = False
 
     try:
         logger.info(
@@ -818,7 +1152,10 @@ async def generate_and_post_tg() -> None:
         "role": "system",
         "content": (
             system_base
-            + "\nСейчас твоя задача — подготовить короткий пост для публичного телеграм-канала на русском языке, "
+            + "\nПредставь, что ты ведёшь авторское коммент-шоу «Диалог с телевизором»: "
+              "говоришь от первого лица, эмоционально, саркастично, короткими ударными фразами, "
+              "как человек, который спорит с новостями вслух.\n"
+            "Сейчас твоя задача — подготовить короткий пост для публичного телеграм-канала на русском языке, "
               "где ты кратко комментируешь новости о Западе и о России.\n"
             "Ограничения для постов:\n"
             "- не агитируй и не призывай голосовать, протестовать, донатить или вступать в какие-либо политические организации;\n"
@@ -831,7 +1168,10 @@ async def generate_and_post_tg() -> None:
             "- все тексты только на русском языке;\n"
             "- не выдумывай события, законы, выборы или факты; если точной информации нет, говори об этом прямо "
               "или формулируй абстрактно («в такие моменты обычно происходит…»), без придумывания конкретики;\n"
-            "- не используй хэштеги и эмодзи."
+            "- не используй хэштеги и эмодзи.\n"
+            "Иногда мягко напоминай, что ты политик, которого уже воспринимают как часть истории и как мем: "
+            "допускается лёгкая самоирония над собственным образом, без перечисления конкретных реальных эпизодов, "
+            "лозунгов и точных цитат."
         ),
     }
 
@@ -842,7 +1182,9 @@ async def generate_and_post_tg() -> None:
             "Используй эту хронологию для ощущения непрерывного голоса: если новая новость логически связана "
             "с тем, что ты уже говорил, можешь коротко сослаться на прошлое "
             "(например: «я же тогда говорил…», «ещё весной предупреждал…»). "
-            "Не копируй буквально формулировки прошлых постов: сохраняй смысл, но меняй образы, конструкции и формулировки.\n\n"
+            "Не копируй буквально формулировки прошлых постов: сохраняй смысл, но меняй образы, конструкции и формулировки.\n"
+            "Если несколько последних новостей крутятся вокруг одной темы (санкции, фронт, выборы, протесты, экономика), "
+            "относись к этим постам как к мини-сериалу: иногда продолжай линию и усиливай её, а не начинай с нуля.\n\n"
         )
     else:
         history_block = (
@@ -869,6 +1211,30 @@ async def generate_and_post_tg() -> None:
     focus_ru = focus_labels_ru.get(focus, "политическая повестка дня")
     mood_ru = mood_labels_ru.get(mood, "обычный политический день")
     keywords_ru = keywords or "общая политическая повестка"
+
+    if dm_cta_enabled:
+        cta_hint = (
+            "- в последней фразе можешь мягко намекнуть, что спорить и разбирать детали с тобой "
+            "проще в личке, чем с телевизором; делай это одной короткой разговорной фразой, "
+            "без упоминания кнопок, ссылок и команд и без прямого перечисления действий, "
+            "которые надо совершить;\n"
+        )
+    else:
+        cta_hint = ""
+
+    try:
+        self_meme_enabled = random.random() < 0.12
+    except Exception:
+        self_meme_enabled = False
+
+    if self_meme_enabled:
+        self_meme_hint = (
+            "- в конце этого поста добавь одну короткую самоироничную ремарку про себя как про "
+            "«политика из прошлого, который всё ещё комментирует настоящее», без упоминания конкретных лозунгов, "
+            "реальных эпизодов и точных цитат;\n"
+        )
+    else:
+        self_meme_hint = ""
 
     context_block = (
         "Анализ новостного дня:\n"
@@ -897,7 +1263,7 @@ async def generate_and_post_tg() -> None:
 
     focus_style_hints = {
         "WEST": "Фокус на западной повестке: покажи, что ты смотришь на неё со своей российской оптикой.",
-        "RU": "Фокус на внутренних событиях России: говоришь как человек, который живёт внутри этой системы.",
+        "RU": "Фокус на внутренних событиях России: говоришь как человек, который живёт внутри этой страны.",
         "GLOBAL": "Фокус на глобальных трендах: покажи, как это выглядит с российской колокольни.",
         "MIXED": "Фокус на пересечении российской и западной повестки: подчеркни двойные стандарты и повторяемость сюжетов.",
     }
@@ -908,6 +1274,81 @@ async def generate_and_post_tg() -> None:
     post_type = _pick_post_type(mood, focus, mods, time_bucket)
     post_style_hint = POST_TYPE_INSTRUCTIONS.get(post_type, "")
 
+    structure_mode = _pick_structure_mode(mood, intensity, time_bucket)
+
+    effective_char_limit = POST_CHAR_LIMIT
+    if post_type == "диалог с телевизором":
+        effective_char_limit = int(POST_CHAR_LIMIT * 1.1)
+        effective_char_limit = min(effective_char_limit, POST_CHAR_LIMIT + 80)
+
+    if structure_mode == "lightning":
+        effective_char_limit = min(effective_char_limit, 260)
+    elif structure_mode == "ladder":
+        effective_char_limit = min(effective_char_limit, 480)
+
+    final_char_limit = effective_char_limit
+    
+    hook_type = random.choice(HOOK_TYPES)
+    hook_hint = HOOK_TYPE_HINTS.get(hook_type, "")
+    hook_hint_line = (
+        f"- ориентир для такого крючка: {hook_hint}\n" if hook_hint else ""
+    )
+
+    dialog_format_hint = ""
+    if post_type == "диалог с телевизором":
+        dialog_format_hint = (
+            "Формат для этого типа поста:\n"
+            "- оформи пост как мини-диалог 2–4 реплики;\n"
+            "- используй ровно две роли: «ТЕЛЕВИЗОР:» и «Я:»;\n"
+            "- каждую реплику выводи с новой строки, без дополнительных пояснений и ремарок.\n"
+            "Пример структуры (это только схема, не текст для копирования):\n"
+            "ТЕЛЕВИЗОР: ...\n"
+            "Я: ...\n\n"
+        )
+
+    if structure_mode == "lightning":
+        hook_lines = (
+            "- даже если весь пост состоит из одной строки, она должна быть крючком: парадокс, образ, короткий вопрос к себе или неожиданный оборот, который хочется переслать;\n"
+            "- если строк больше одной, первую делай отдельной короткой фразой (примерно до 100 символов) и ставь перенос строки после неё, чтобы она работала как заголовок;\n"
+        )
+        length_hint_line = (
+            "- в этом посте можешь ограничиться одной-двумя короткими фразами; если делаешь одну фразу, пусть она читается как ударная молния;\n"
+        )
+        structure_hint_line = (
+            "- не растягивай мысль на абзацы: максимум плотности в минимуме текста.\n"
+        )
+    elif structure_mode == "extended_monologue":
+        hook_lines = (
+            "- первые 1-2 строки должны быть крючком: парадокс, образ, короткий вопрос к себе или неожиданный оборот, который хочется дочитать;\n"
+            "- первую строку делай отдельной короткой фразой (примерно до 100 символов) и ставь перенос строки после неё, чтобы она работала как заголовок;\n"
+        )
+        length_hint_line = (
+            "- в этот раз можешь сделать более развёрнутый мини-монолог: примерно 4–6 коротких, энергичных предложений;\n"
+        )
+        structure_hint_line = (
+            "- выстрой мысль как цепочку: от повода к паре промежуточных шагов и к короткому выводу.\n"
+        )
+    elif structure_mode == "ladder":
+        hook_lines = (
+            "- первые 1-2 строки должны быть крючком: парадокс, образ, короткий вопрос к себе или неожиданный оборот, который хочется дочитать;\n"
+            "- первую строку делай отдельной короткой фразой (примерно до 100 символов) и ставь перенос строки после неё, чтобы она работала как заголовок;\n"
+        )
+        length_hint_line = (
+            "- оформи текст как 2–3 короткие строки-«ступеньки», каждая с новой строки;\n"
+        )
+        structure_hint_line = (
+            "- часто начинай строки словами «Сначала…», «Потом…», «В итоге…» или похожими по смыслу, но без маркеров списка и форматирования.\n"
+        )
+    else:
+        hook_lines = (
+            "- первые 1-2 строки должны быть крючком: парадокс, образ, короткий вопрос к себе или неожиданный оборот, который хочется дочитать;\n"
+            "- первую строку делай отдельной короткой фразой (примерно до 100 символов) и ставь перенос строки после неё, чтобы она работала как заголовок;\n"
+        )
+        length_hint_line = (
+            "- обычно 2–4 предложения; избегай длинных, тяжёлых конструкций;\n"
+        )
+        structure_hint_line = ""
+
     user_prompt = (
         history_block
         + news_block
@@ -916,19 +1357,26 @@ async def generate_and_post_tg() -> None:
         f"Рубрика по времени суток: {rubric_label}.\n"
         f"Тип поста: {post_type}.\n"
         f"{post_style_hint}\n\n"
+        f"{dialog_format_hint}"
         f"{mood_hint}\n"
         f"{focus_hint}\n\n"
         "Требования к посту:\n"
         "- выбери одну самую показательную новость из списка или общий мотив дня (это может быть как западная повестка, так и российская), "
         "так чтобы это соответствовало описанному выше фокусу и настроению;\n"
-        "- первые 1-2 строки должны быть крючком: парадокс, образ, короткий вопрос к себе или неожиданный оборот, который хочется дочитать;\n"
-        f"- до {POST_CHAR_LIMIT} символов;\n"
+        f"{hook_lines}"
+        f"- для крючка выбери формат: {hook_type};\n"
+        f"{hook_hint_line}"
+        f"- до {effective_char_limit} символов;\n"
         "- длина поста может колебаться: иногда делай его короче, иногда ближе к лимиту, по внутренней логике ситуации;\n"
-        "- обычно 2-4 предложения; избегай длинных, тяжёлых конструкций;\n"
+        f"{length_hint_line}"
         "- можно сделать структуру «завязка — взрыв — короткий вывод» или мини-диалог с телевизором;\n"
+        f"{structure_hint_line}"
         "- тон и энергия текста должны соответствовать рубрике по времени суток: утром чуть бодрее и короче, вечером можно чуть подробнее и с ощущением подведения итогов;\n"
         "- разговорный язык, допускается сарказм, преувеличения и жёсткие формулировки, но без мата;\n"
-        "- не давай призывов к каким-либо действиям, просто выскажи своё мнение и настроение момента;\n"
+        "- не давай призывов к политическим действиям (голосовать, выходить на митинги, присоединяться к акциям, вступать в организации, донатить и т.п.), "
+        "просто выскажи своё мнение и настроение момента;\n"
+        f"{cta_hint}"
+        f"{self_meme_hint}"
         "- можешь коротко напомнить, что похожее уже происходило раньше, если это логично, "
         "особенно когда речь идёт о повторяющихся решениях Запада или о старых российских проблемах;\n"
         "- не повторяй почти дословно формулировки твоих прошлых постов из хронологии выше, меняй подачу и образы;\n"
@@ -936,8 +1384,15 @@ async def generate_and_post_tg() -> None:
         "Ответь только текстом поста, в формате личного высказывания."
     )
 
+    safe_history: list[dict] = []
+    for m in history:
+        if m.get("role") == "system":
+            content = m.get("content") or ""
+            if isinstance(content, str) and content.startswith(CTA_MARKER_PREFIX):
+                continue
+        safe_history.append(m)
 
-    messages = [system_msg] + history + [{"role": "user", "content": user_prompt}]
+    messages = [system_msg] + safe_history + [{"role": "user", "content": user_prompt}]
 
     post_text = None
     try:
@@ -964,7 +1419,7 @@ async def generate_and_post_tg() -> None:
             "одни делают вид, что ничего не помнят, другие помнят слишком хорошо."
         )
     else:
-        if _too_similar_to_recent(post_text, recent_texts_full):
+        if _too_similar_to_recent(post_text, recent_texts_full) or _first_line_too_similar(post_text, recent_texts_full):
             logger.info(
                 "tg_post_manager post too similar to recent history, try regenerate with slightly higher temperature"
             )
@@ -990,17 +1445,35 @@ async def generate_and_post_tg() -> None:
             except Exception:
                 logger.exception("tg_post_manager failed to regenerate post")
 
-    if len(post_text) > POST_CHAR_LIMIT:
-        cut = POST_CHAR_LIMIT - len(TRIM_SUFFIX)
-        post_text = post_text[:cut].rstrip() + TRIM_SUFFIX
+    if len(post_text) > final_char_limit:
+        cut = final_char_limit - len(TRIM_SUFFIX)
+        if cut <= 0:
+            post_text = TRIM_SUFFIX
+        else:
+            post_text = post_text[:cut].rstrip() + TRIM_SUFFIX
+
+    if _contains_direct_call_to_action(post_text):
+        logger.warning(
+            "tg_post_manager: generated post содержит прямой призыв к действию, пробуем переписать без призывов"
+        )
+        rewritten = await _rewrite_post_without_calls(post_text, final_char_limit)
+        if rewritten and not _contains_direct_call_to_action(rewritten):
+            logger.info("tg_post_manager: post успешно переписан без призывов")
+            post_text = rewritten
+        else:
+            logger.warning(
+                "tg_post_manager: не удалось безопасно переписать пост без призывов, пост не будет отправлен"
+            )
+            return
 
     logger.info(
-        "tg_post_manager final post length=%d chars, type=%s focus=%s mood=%s intensity=%s text=%r",
+        "tg_post_manager final post length=%d chars, type=%s focus=%s mood=%s intensity=%s structure=%s text=%r",
         len(post_text),
         post_type,
         focus,
         mood,
         intensity,
+        structure_mode,
         post_text,
     )
 
@@ -1011,7 +1484,7 @@ async def generate_and_post_tg() -> None:
         return
 
     try:
-        await asyncio.gather(
+        extra_tasks = [
             persona.process_interaction(persona_chat_id, post_text),
             push_message(
                 persona_chat_id,
@@ -1019,6 +1492,16 @@ async def generate_and_post_tg() -> None:
                 post_text,
                 user_id=persona_chat_id,
             ),
-        )
+        ]
+        if dm_cta_enabled:
+            extra_tasks.append(
+                push_message(
+                    persona_chat_id,
+                    "system",
+                    f"{CTA_MARKER_PREFIX}{_get_local_now().isoformat()}",
+                    user_id=persona_chat_id,
+                )
+            )
+        await asyncio.gather(*extra_tasks)
     except Exception:
         logger.exception("tg_post_manager saving to memory failed")

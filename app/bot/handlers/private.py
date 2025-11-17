@@ -892,7 +892,33 @@ def _rows_kv(items: list[tuple[str, str]], n: int, kind: str) -> list[list[Inlin
 
 
 async def start_persona_wizard(message: Message) -> None:
+    
     user_id = message.chat.id
+
+    if not getattr(settings, "SHOW_PERSONA_BUTTON", True):
+
+        try:
+            await _wiz_clear(user_id)
+        except Exception:
+            logger.debug("start_persona_wizard: _wiz_clear failed", exc_info=True)
+
+        await _show_main_panel(
+            user_id,
+            await t(user_id, "menu.main") or "Main Menu",
+        )
+
+        try:
+            async with session_scope(read_only=True, stmt_timeout_ms=2000) as db:
+                u = await db.get(User, user_id)
+                already = bool(u and u.pm_welcome_sent)
+            if not already:
+                full_name = getattr(getattr(message, "from_user", None), "full_name", None)
+                await _send_private_welcome(user_id, full_name=full_name)
+        except Exception:
+            logger.debug("start_persona_wizard: welcome send failed", exc_info=True)
+
+        return
+
     await _wiz_clear(user_id)
     st = await _wiz_hydrate_from_db(user_id, {})
     st.setdefault("step", "start")
@@ -902,7 +928,14 @@ async def start_persona_wizard(message: Message) -> None:
         [InlineKeyboardButton(text=await t(user_id, "persona.reset"), callback_data="persona:reset")],
         [InlineKeyboardButton(text=await t(user_id, "persona.cancel"), callback_data="persona:cancel")],
     ])
-    await send_message_safe(bot, message.chat.id, await t(user_id, "persona.start"), parse_mode="HTML", reply_markup=kb)
+    await send_message_safe(
+        bot,
+        message.chat.id,
+        await t(user_id, "persona.start"),
+        parse_mode="HTML",
+        reply_markup=kb,
+    )
+
 
 
 @dp.callback_query(F.data == "persona:cancel", F.message.chat.type == ChatType.PRIVATE)

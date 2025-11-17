@@ -307,7 +307,7 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
     prompt = (
         "A user just started a private chat with you.\n"
         f"The user's language code is {lang_code}. Use this language to respond to the user.\n"
-        "Greet him with a friendly, short message and ask to make his acquaintance.\n"
+        "Greet him on your own behalf, just as V.V. Zhirinovsky would have done in the current situation.\n"
         #"Tell them that you can be their personal conseillerie, psychologist, coach, friend, or just a pleasant conversational partner, and that your abilities are limited only by their imagination."
     )
 
