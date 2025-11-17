@@ -1,8 +1,9 @@
+cat >app/bot/i18n/menu_translation.py<< 'EOF'
 #app/bot/i18n/menu_translation.py
 from typing import Literal, Tuple, Dict
 
 Lang = Literal["ru","en","es","pt","de","fr","it"]
-CHANNEL_URL = "https://t.me/bonnie_dev"
+CHANNEL_URL = "https://t.me/zhiriksay"
 TOKEN_URL = "https://pump.fun/coin/A538RF9jG1ZMs3anmwD8wKpx3FCM92hm231yTDK2pump"
 
 LANG_BUTTONS: dict[str, str] = {
@@ -49,7 +50,7 @@ MESSAGES: Dict[Lang, Dict[str, str]] = {
         "gender.male": "👨 Male",
         "gender.female": "👩 Female",
         "menu.requests": "🛒 Requests",
-        "menu.link": "📢 Dev Channel",
+        "menu.link": "📢 Channel",
         "menu.mode": "⚙️ Mode",
         "menu.faq": "❔ FAQ",
         "menu.token": "🪙 Token",
@@ -185,7 +186,7 @@ Bonnie lives by its own rules, personal worldview, and awareness of what is happ
         "gender.male": "👨 Мужской",
         "gender.female": "👩 Женский",
         "menu.requests": "🛒 Запросы",
-        "menu.link": "📢 Dev Channel",
+        "menu.link": "📢 Канал",
         "menu.mode": "⚙️ Режим",
         "menu.faq": "❔ FAQ",
         "menu.token": "🪙 Токен",
@@ -968,3 +969,4 @@ Bonnie vive secondo le proprie regole, una visione personale del mondo e un’at
 - supporto tecnico/collaborazione: @artys_ai"""
     }
 }
+EOF
