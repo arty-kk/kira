@@ -1,16 +1,16 @@
-cat >app/services/responder/rag/relevance.py<< ''
-# app/services/responder/rag/relevance.py
+#app/services/responder/rag/relevance.py
 import logging
 import re
 from typing import List, Tuple, Optional
 
 from app.config import settings
 from .knowledge_proc import get_relevant
+from .keyword_filter import find_tag_hits
 
 logger = logging.getLogger(__name__)
 
 _CLEAN = re.compile(r"[^\w\s]")
-_MIN_CONTENT_CHARS = int(getattr(settings, "RELEVANCE_MIN_CONTENT_CHARS", 3))
+_MIN_CONTENT_CHARS = int(getattr(settings, "RELEVANCE_MIN_CONTENT_CHARS", 5))
 
 async def is_relevant(
     text: str, *, model: str, threshold: float, return_hits: bool
@@ -21,6 +21,17 @@ async def is_relevant(
     if not clean or len(clean) < _MIN_CONTENT_CHARS:
         logger.info("gate: empty/too-short -> not relevant")
         return False, None
+
+    try:
+        topk = int(getattr(settings, "KNOWLEDGE_TOP_K", 3)) or 3
+        tag_hits = await find_tag_hits(text, model=model, limit=topk * 10)
+    except Exception:
+        logger.exception("gate: keyword pre-check failed")
+        tag_hits = []
+
+    if tag_hits:
+        logger.info("gate: keyword hits -> relevant (skip embeddings); hits=%d", len(tag_hits))
+        return True, (tag_hits if return_hits else None)
 
     try:
         hits = await get_relevant(text, model_name=model)

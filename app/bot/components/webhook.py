@@ -1,4 +1,4 @@
-# app/bot/components/webhook.py
+#app/bot/components/webhook.py
 import ssl
 import asyncio
 import logging
@@ -9,7 +9,6 @@ import aiofiles
 from aiohttp import web
 from aiogram import types
 from aiogram.types import FSInputFile
-from aiogram.exceptions import TelegramBadRequest
 
 from app.config import settings
 from app.core.memory import get_redis, get_redis_queue
@@ -38,13 +37,14 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     consts.BOT_USERNAME = me.username.lower()
     logger.info("Bot @%s starting…", consts.BOT_USERNAME)
 
-    chat_id = settings.ALLOWED_GROUP_ID
-    key = f"last_message_ts:{chat_id}"
-    if not await redis_client.exists(key):
-        ttl = settings.MEMORY_TTL_DAYS * 86_400
-        await redis_client.set(key, time_module.time())
-        await redis_client.expire(key, ttl)
-        logger.debug("Initialized last_message_ts for chat %s with TTL %ds", chat_id, ttl)
+    targets = {int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or []) if str(x).strip()}
+    ttl = settings.MEMORY_TTL_DAYS * 86_400
+    for chat_id in targets:
+        key = f"last_message_ts:{chat_id}"
+        if not await redis_client.exists(key):
+            await redis_client.set(key, time_module.time())
+            await redis_client.expire(key, ttl)
+            logger.debug("Initialized last_message_ts for chat %s with TTL %ds", chat_id, ttl)
 
     try:
         async with aiofiles.open(LANG_FILE, "r", encoding="utf-8") as f:
@@ -81,7 +81,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     except Exception:
         logger.exception("Error setting webhook")
 
-    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
 
     async def handle_webhook(request: web.Request) -> web.Response:
@@ -92,7 +92,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         response = web.Response(status=200)
 
         try:
-            key = f"tg:update:{update_id}"
+            key = f"tg:{consts.BOT_ID}:update:{update_id}"
             seen = await redis_client.get(key)
             if not seen:
                 await redis_client.set(key, "1", ex=60)

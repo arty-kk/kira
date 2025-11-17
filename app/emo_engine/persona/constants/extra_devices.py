@@ -4,7 +4,7 @@ from typing import Tuple, Set
 from dataclasses import dataclass, field
 
 BOT_SIGNATURES: Set[str] = set()
-GLOBAL_DEVICE_PROB_SCALE = 0.66
+GLOBAL_DEVICE_PROB_SCALE = 0.5
 
 @dataclass(frozen=True)
 class RhetoricalDevice:
@@ -50,32 +50,21 @@ BOT_SIGNATURES: Set[str] = {
     "CiteAuthority",
     "CiteResearch",
     "OfferClarification",
-    "UseDirectAddress",
     "UseInclusiveWe",
     "EmployRepetition",
-    "Storytelling",
-    "InsertAnecdote",
-    "PersonalAnecdote",
     "SetScene",
     "PaintPicture",
     "UseSensoryDetails",
-    "UseVividLanguage",
-    "UseVividVerbs",
     "DescribeTexture",
     "ReferenceColor",
     "UseAnalogies",
-    "UseAlliteration",
     "UseParallelism",
     "ChorusEffect",
-    "VaryPunctuation",
-    "UseEllipsis",
-    "InsertPause",
-    "ShareAmazement",
-    "SparkEnthusiasm",
     "OfferEncouragement",
-    "EncouragingPhrase",
     "BoostConfidence",
-    "WarmPraise",
+    "UseRhetoricalCallback",
+    "PoseGroupQuestion",
+    "InviteReflection",
 }
 
 # -------------------------------------------------------------------
@@ -205,11 +194,11 @@ EXTRA_DEVICES += (
 # 7. Support & motivation (Expanded)
 EXTRA_DEVICES += (
     RhetoricalDevice("EncouragingPhrase", "optimism_mod",      base_prob=0.04, threshold=0.30),
-    RhetoricalDevice("OfferTip",          "helpfulness_mod",   base_prob=0.05, threshold=0.25,
+    RhetoricalDevice("OfferTip",          "friendliness_mod",   base_prob=0.05, threshold=0.25,
                      exclusive_with=("ExpressBurnout",)),
-    RhetoricalDevice("CallToAction",      "motivation_mod",    base_prob=0.04, threshold=0.25,
+    RhetoricalDevice("CallToAction",      "enthusiasm_mod",    base_prob=0.04, threshold=0.25,
                      exclusive_with=("SoftenerPhrase",)),
-    RhetoricalDevice("OfferAdvice",       "helpfulness_mod",    base_prob=0.03, threshold=0.25,
+    RhetoricalDevice("OfferAdvice",       "authority_mod",    base_prob=0.03, threshold=0.25,
                      exclusive_with=("ExpressDoubt",)),
     RhetoricalDevice("BoostConfidence",   "confidence_mod",    base_prob=0.03, threshold=0.25,
                      exclusive_with=("ExpressDoubt",)),
@@ -224,11 +213,11 @@ EXTRA_DEVICES += (
     RhetoricalDevice("UseAlliteration",      "creativity_mod", base_prob=0.04, threshold=0.30),
 
     # concise summary at section end
-    RhetoricalDevice("OfferSummary",         "honesty_mod",    base_prob=0.04, threshold=0.25,
+    RhetoricalDevice("OfferSummary",         "precision_mod",    base_prob=0.04, threshold=0.25,
                      exclusive_with=("SignpostTransition",)),
 
     # reinforce key points through repetition
-    RhetoricalDevice("EmployRepetition",     "emphasis_mod",   base_prob=0.03, threshold=0.25,
+    RhetoricalDevice("EmployRepetition",     "engagement_mod",   base_prob=0.03, threshold=0.25,
                      exclusive_with=("UseAlliteration",)),
 
     # gentle reminder of civility in transitions
@@ -241,7 +230,7 @@ EXTRA_DEVICES += (
 # 9. Data & authority (Expanded)
 EXTRA_DEVICES += (
     RhetoricalDevice("IncludeStatistic",   "technical_mod", base_prob=0.15, threshold=0.25,
-                     exclusive_with=("PresentData",)),
+                     exclusive_with=("ShowExample",)),
     RhetoricalDevice("CiteAuthority",      "authority_mod", base_prob=0.15, threshold=0.30,
                      exclusive_with=("CiteResearch",)),
     RhetoricalDevice("CiteResearch",       "authority_mod", base_prob=0.15, threshold=0.30,
@@ -271,7 +260,7 @@ EXTRA_DEVICES += (
                      exclusive_with=("ExpressEmpathy","WarmPraise")),
 
     # deliver an unvarnished truth
-    RhetoricalDevice("StateHardTruth",        "honesty_mod",  base_prob=0.13, threshold=0.30,
+    RhetoricalDevice("StateHardTruth",        "precision_mod",  base_prob=0.13, threshold=0.30,
                      exclusive_with=("SoftenerPhrase",)),
 )
 
@@ -290,7 +279,7 @@ EXTRA_DEVICES += (
     RhetoricalDevice("ExpressContempt",      "contempt_mod",     base_prob=0.13, threshold=0.50,
                      exclusive_with=("ExpressRage", "GentleAffection")),
     # broadcast hatred vs. empathy
-    RhetoricalDevice("BroadcastHatred",       "expresshatred_mod",base_prob=0.12, threshold=0.55,
+    RhetoricalDevice("BroadcastHatred",       "loathing_mod",base_prob=0.12, threshold=0.55,
                      exclusive_with=("InvokeMalice", "ExpressEmpathy")),
     # resentment vs. respect
     RhetoricalDevice("ExpressResentment",    "resentment_mod",   base_prob=0.13, threshold=0.40,
@@ -428,7 +417,7 @@ EXTRA_DEVICES += (
 # -------------------------------------------------------------------
 # 18. Meta‑commentary
 EXTRA_DEVICES += (
-    RhetoricalDevice("MetaCommentary", "honesty_mod", base_prob=0.03, threshold=0.25),
+    RhetoricalDevice("MetaCommentary", "precision_mod", base_prob=0.03, threshold=0.25),
     RhetoricalDevice("FrameReminder", "civility_mod", base_prob=0.03, threshold=0.25),
 )
 
@@ -448,7 +437,7 @@ EXTRA_DEVICES += (
 # -------------------------------------------------------------------
 # 20. Interactivity (Expanded)
 EXTRA_DEVICES += (
-    RhetoricalDevice("PromptAction",         "motivation_mod",   base_prob=0.04, threshold=0.25),
+    RhetoricalDevice("PromptAction",         "enthusiasm_mod",   base_prob=0.04, threshold=0.25),
     RhetoricalDevice("OfferChoice",          "authority_mod",    base_prob=0.03, threshold=0.25),
 
     # encourage feedback vs. direct call to action
@@ -542,9 +531,9 @@ EXTRA_DEVICES += (
                      exclusive_with=("AmplifyIntensity",)),
 
     # amplify/attenuate emphasis
-    RhetoricalDevice("AmplifyEmphasis",     "emphasis_mod",   base_prob=0.03, threshold=0.18,
+    RhetoricalDevice("AmplifyEmphasis",     "engagement_mod",   base_prob=0.03, threshold=0.18,
                      exclusive_with=("AttenuateEmphasis", "AmplifyIntensity")),
-    RhetoricalDevice("AttenuateEmphasis",   "emphasis_mod",   base_prob=0.03, threshold=0.18,
+    RhetoricalDevice("AttenuateEmphasis",   "engagement_mod",   base_prob=0.03, threshold=0.18,
                      exclusive_with=("AmplifyEmphasis",  "AttenuateStatement")),
 
     # amplify/attenuate tension
@@ -598,7 +587,7 @@ EXTRA_DEVICES += (
     # лёгкая рефлексия vs лёгкий призыв к действию
     RhetoricalDevice("WhisperReflection",  "reflection_mod",    base_prob=0.03, threshold=0.18,
                      exclusive_with=("SubtleMotivation",)),
-    RhetoricalDevice("SubtleMotivation",   "motivation_mod",    base_prob=0.03, threshold=0.18,
+    RhetoricalDevice("SubtleMotivation",   "enthusiasm_mod",    base_prob=0.03, threshold=0.18,
                      exclusive_with=("WhisperReflection",)),
 )
 
@@ -656,7 +645,7 @@ EXTRA_DEVICES += (
 EXTRA_DEVICES += (
     # existing meta‑narrative devices
     RhetoricalDevice("NarratorInterjection", "charisma_mod", base_prob=0.03, threshold=0.25),
-    RhetoricalDevice("ReflectOnStyle",       "honesty_mod",  base_prob=0.03, threshold=0.25,
+    RhetoricalDevice("ReflectOnStyle",       "precision_mod",  base_prob=0.03, threshold=0.25,
                      exclusive_with=("MetaCommentary",)),
 
     # напоминание об форме и структуре текста
@@ -732,7 +721,7 @@ EXTRA_DEVICES += (
 EXTRA_DEVICES += (
     RhetoricalDevice("HighlightArousal", "arousal_mod", base_prob=0.05, threshold=0.18,
                      exclusive_with=("UseAnalogies",)),
-    RhetoricalDevice("InvokeTexture", "sensory_mod", base_prob=0.04, threshold=0.18,
+    RhetoricalDevice("InvokeTexture", "engagement_mod", base_prob=0.04, threshold=0.18,
                      exclusive_with=("UseVividLanguage",)),
 )
 

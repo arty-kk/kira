@@ -8,9 +8,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_COREF_TIMEOUT =  15
 
-_COREF_SYSTEM = """You are a multilingual classifier that decides whether a user message contains pronouns that may require coreference resolution.
+COREF_SYSTEM = """You are a multilingual classifier that decides whether a user message contains pronouns that may require coreference resolution.
 
 Decision rules (language-agnostic):
 - Return NO if the text contains only first- or second-person forms (e.g., first person singular/plural and second person).
@@ -32,7 +31,7 @@ async def _ask_model(text: str, *, force_yesno: bool = False) -> str:
         _call_openai_with_retry(
             endpoint="responses.create",
             model=settings.BASE_MODEL,
-            instructions=_COREF_SYSTEM,
+            instructions=COREF_SYSTEM,
             input=user_prompt,
             text={
                 "format": {
@@ -52,7 +51,7 @@ async def _ask_model(text: str, *, force_yesno: bool = False) -> str:
             temperature=0,
             max_output_tokens=16,
         ),
-        timeout=10,
+        timeout=settings.BASE_MODEL_TIMEOUT,
     )
     raw = (_get_output_text(resp) or "").strip()
     try:
@@ -74,11 +73,11 @@ async def needs_coref(text: str) -> bool:
         return False
 
     try:
-        ans = await asyncio.wait_for(_ask_model(text), timeout=_COREF_TIMEOUT)
+        ans = await asyncio.wait_for(_ask_model(text), timeout=settings.BASE_MODEL_TIMEOUT)
         if ans in ("YES", "NO"):
             return ans == "YES"
 
-        ans2 = await asyncio.wait_for(_ask_model(text, force_yesno=True), timeout=_COREF_TIMEOUT)
+        ans2 = await asyncio.wait_for(_ask_model(text, force_yesno=True), timeout=settings.BASE_MODEL_TIMEOUT)
         if ans2 in ("YES", "NO"):
             return ans2 == "YES"
 
@@ -88,9 +87,8 @@ async def needs_coref(text: str) -> bool:
     except asyncio.CancelledError:
         raise
     except asyncio.TimeoutError:
-        logger.warning("needs_coref timed out after %.1f sec; defaulting to NO", _COREF_TIMEOUT)
+        logger.warning("needs_coref timed out after %.1f sec; defaulting to NO", settings.BASE_MODEL_TIMEOUT)
         return False
     except Exception as e:
         logger.warning("needs_coref error: %s; defaulting to NO", e)
         return False
-

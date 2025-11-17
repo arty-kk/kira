@@ -6,6 +6,7 @@ import random
 
 from datetime import datetime
 from typing import Dict
+from zoneinfo import ZoneInfo
 
 from app.config import settings
 from ..executor import EXECUTOR, MAX_WORKERS
@@ -20,12 +21,12 @@ from ..constants.emotions import (
 
 logger = logging.getLogger(__name__)
 
-NOISE_SCALE_PRIMARY = 0.5
-NOISE_SCALE_SECONDARY = 0.45
-NOISE_SCALE_TERTIARY = 0.4
-NOISE_SCALE_DYADS_TRIADS = 0.35
-NOISE_SCALE_DRIVE_SOCIAL = 0.4
-NOISE_SCALE_COGNITIVE_STYLE = 0.6
+NOISE_SCALE_PRIMARY = 0.4
+NOISE_SCALE_SECONDARY = 0.35
+NOISE_SCALE_TERTIARY = 0.3
+NOISE_SCALE_DYADS_TRIADS = 0.25
+NOISE_SCALE_DRIVE_SOCIAL = 0.3
+NOISE_SCALE_COGNITIVE_STYLE = 0.5
 
 
 STYLE_SEM = asyncio.Semaphore(min(MAX_WORKERS, 100))
@@ -33,6 +34,11 @@ STYLE_SEM = asyncio.Semaphore(min(MAX_WORKERS, 100))
 
 async def style_modifiers(self) -> Dict[str, float]:
     logger.debug("style_modifiers ▶ start")
+    inflight = getattr(self, "_mods_inflight", None)
+    inflight_ver = getattr(self, "_mods_inflight_ver", -1)
+    if inflight and not inflight.done() and inflight_ver == self.state_version:
+        return await inflight
+
     async with self._mods_lock:
         if self._style_mods_version == self.state_version and self._mods_cache:
             return self._mods_cache.copy()
@@ -47,23 +53,30 @@ async def style_modifiers(self) -> Dict[str, float]:
             & 0xFFFFFFFFFFFFFFFF
         )
 
-    async with STYLE_SEM:
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            EXECUTOR,
-            _compute_style_modifiers_sync,
-            state_snapshot,
-            prev_cache,
-            rng_seed,
-            FALLBACK_DELTA,
-        )
+        async def _run():
+            async with STYLE_SEM:
+                return await loop.run_in_executor(
+                    EXECUTOR,
+                    _compute_style_modifiers_sync,
+                    state_snapshot,
+                    prev_cache,
+                    rng_seed,
+                    FALLBACK_DELTA,
+                )
+        task = asyncio.create_task(_run(), name="style-mods")
+        self._mods_inflight = task
+        self._mods_inflight_ver = self.state_version
+
+    result = await task
 
     async with self._mods_lock:
-        self._mods_cache = {k: round(v, 2) for k, v in result.items()}
+        self._mods_cache = result
         self._style_mods_version = self.state_version
+        if getattr(self, "_mods_inflight", None) is task:
+            self._mods_inflight = None
+            self._mods_inflight_ver = -1
         return self._mods_cache.copy()
-
-
 
 def _sigma_for(metric: str) -> float:
     if metric in PRIMARY_EMOTIONS:
@@ -71,7 +84,6 @@ def _sigma_for(metric: str) -> float:
     if metric in DRIVE_METRICS:
         return 0.05
     return 0.04
-
 
 def _fallback_for(metric: str, FALLBACK_DELTA: float) -> float:
     base = 0.45 if metric in PRIMARY_EMOTIONS else 0.5
@@ -102,11 +114,16 @@ def _compute_style_modifiers_sync(
 
     modified: Dict[str, float] = {}
 
+    sec_names = {k for subs in SECONDARY_EMOTIONS.values() for k in subs}
+    ter_names = {k for subs in TERTIARY_EMOTIONS.values() for k in subs}
+    derived_names = sec_names | ter_names
+
     # Valence & Arousal
     v_norm = _clamp((state.get("valence", 0.0) + 1.0) / 2.0)
     modified["valence_mod"] = v_norm
     a_norm = _clamp(state.get("arousal", 0.5))
     modified["arousal_mod"] = a_norm
+    SKIP_PRIMARY = set(DRIVE_METRICS) | {"energy", "fatigue"}
 
     anger    = state.get("anger", 0.0)
     disgust  = state.get("disgust", 0.0)
@@ -131,6 +148,8 @@ def _compute_style_modifiers_sync(
 
     # Primary emotions
     for emo in PRIMARY_EMOTIONS:
+        if emo in derived_names or emo in SKIP_PRIMARY:
+            continue
         key = f"{emo}_mod"
         base = state.get(emo, _fallback_for(emo, FALLBACK_DELTA))
         noise = rng.gauss(0.0, _sigma_for(emo) * NOISE_SCALE_PRIMARY)
@@ -143,6 +162,8 @@ def _compute_style_modifiers_sync(
     for prim, subs in SECONDARY_EMOTIONS.items():
         for sec, fn in subs.items():
             key = f"{sec}_mod"
+            if key in modified:
+                continue
             base = fn(state)
             noise = rng.gauss(0.0, _sigma_for(sec) * NOISE_SCALE_SECONDARY)
             raw = base + noise
@@ -154,11 +175,13 @@ def _compute_style_modifiers_sync(
     for sec, subs in TERTIARY_EMOTIONS.items():
         for ter, fn in subs.items():
             key = f"{ter}_mod"
+            if key in modified:
+                continue
             base = fn(state)
             noise = rng.gauss(0.0, _sigma_for(ter) * NOISE_SCALE_TERTIARY)
             raw = base + noise
             if key in prev:
-                raw = 0.35 * prev[key] + 0.65 * raw
+                raw = 0.4 * prev[key] + 0.6 * raw
             modified[key] = _clamp(raw)
 
     # Dyads & Triads
@@ -184,9 +207,9 @@ def _compute_style_modifiers_sync(
     noise = rng.gauss(0.0, _sigma_for("energy") * NOISE_SCALE_PRIMARY)
     raw_e = base + noise
     if key in prev:
-        raw_e = 0.55 * prev[key] + 0.45 * raw_e
+        raw_e = 0.65 * prev[key] + 0.35 * raw_e
     fatigue_penalty = 0.4 * state.get("fatigue", 0.0)
-    now = datetime.now()
+    now = datetime.now(ZoneInfo(getattr(settings, "DEFAULT_TZ", "UTC")))
     hour = now.hour + now.minute / 60.0
     circadian = 1.0 + settings.CIRCADIAN_AMPLITUDE * math.sin(2 * math.pi * (hour / 24.0))
     modified[key] = _clamp(raw_e * (1 - fatigue_penalty) * circadian)
@@ -401,7 +424,7 @@ def _compute_style_modifiers_sync(
             scale = NOISE_SCALE_COGNITIVE_STYLE * (0.9 if metric in ("aggressiveness","profanity") else 1.2)
             raw += rng.gauss(0.0, _sigma_for(metric) * scale)
         if key in prev:
-            smoothed = 0.40 * prev[key] + 0.60 * raw
+            smoothed = 0.20 * prev[key] + 0.80 * raw
             max_step = 0.22 + 0.25 * (a_norm - 0.5) - 0.15 * fatigue
             max_step = max(0.10, min(0.35, max_step))
             delta = smoothed - prev[key]

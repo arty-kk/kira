@@ -11,7 +11,7 @@ from app.config import settings
 from ..constants.emotions import (
     ALL_METRICS, COGNITIVE_METRICS,
     DRIVE_METRICS, DYAD_KEYS, PRIMARY_COORDS,
-    PRIMARY_EMOTIONS, SECONDARY_EMOTIONS, SECONDARY_KEYS,
+    PRIMARY_ORDER, SECONDARY_EMOTIONS, SECONDARY_KEYS,
     SOCIAL_METRICS, STYLE_METRICS, TERTIARY_EMOTIONS,
     TERTIARY_KEYS, TRIAD_KEYS, VALID_DYADS,VALID_TRIADS,
     OPPOSITES, NON_DYNAMIC_METRICS,
@@ -98,20 +98,19 @@ def _init_matrices() -> None:
     EMO_MATRIX_A = [[-1.0 if i == j else 0.0 for j in range(_N)] for i in range(_N)]
     EMO_MATRIX_B = [[1.0 if i == j else 0.0 for j in range(_N)] for i in range(_N)]
 
-    DYAD_MATRIX = [[0.0] * len(PRIMARY_EMOTIONS) for _ in DYAD_KEYS]
-    TRIAD_MATRIX = [[0.0] * len(PRIMARY_EMOTIONS) for _ in TRIAD_KEYS]
+    base_prim = list(PRIMARY_ORDER)
+    DYAD_MATRIX = [[0.0] * len(base_prim) for _ in DYAD_KEYS]
+    TRIAD_MATRIX = [[0.0] * len(base_prim) for _ in TRIAD_KEYS]
 
     if np is not None:
-        prim_vec = np.array([PRIMARY_COORDS[p] for p in PRIMARY_EMOTIONS])  # shape (12, 2)
+        prim_vec = np.array([PRIMARY_COORDS[p] for p in base_prim])
 
-        pairs_idx = np.array([[PRIMARY_EMOTIONS.index(a), PRIMARY_EMOTIONS.index(b)] for (a, b) in VALID_DYADS])
+        pairs_idx = np.array([[base_prim.index(a), base_prim.index(b)] for (a, b) in VALID_DYADS])
         dyad_vec = prim_vec[pairs_idx].sum(axis=1)
         dyad_unit = dyad_vec / (np.linalg.norm(dyad_vec, axis=1, keepdims=True) + 1e-9)
         DYAD_MATRIX[:] = (dyad_unit @ prim_vec.T).tolist()
 
-        triad_idx = np.array(
-            [[PRIMARY_EMOTIONS.index(a), PRIMARY_EMOTIONS.index(b), PRIMARY_EMOTIONS.index(c)] for (a, b, c) in VALID_TRIADS]
-        )
+        triad_idx = np.array([[base_prim.index(a), base_prim.index(b), base_prim.index(c)] for (a,b,c) in VALID_TRIADS])
         triad_vec = prim_vec[triad_idx].sum(axis=1)
         triad_unit = triad_vec / (np.linalg.norm(triad_vec, axis=1, keepdims=True) + 1e-9)
         TRIAD_MATRIX[:] = (triad_unit @ prim_vec.T).tolist()
@@ -123,7 +122,7 @@ def _init_matrices() -> None:
         bx, by = x1 + x2, y1 + y2
         norm = sqrt(bx * bx + by * by) or 1.0
         bx, by = bx / norm, by / norm
-        for j, prim in enumerate(PRIMARY_EMOTIONS):
+        for j, prim in enumerate(base_prim):
             px, py = PRIMARY_COORDS[prim]
             DYAD_MATRIX[idx][j] = bx * px + by * py
 
@@ -132,13 +131,11 @@ def _init_matrices() -> None:
         by = PRIMARY_COORDS[e1][1] + PRIMARY_COORDS[e2][1] + PRIMARY_COORDS[e3][1]
         norm = sqrt(bx * bx + by * by) or 1.0
         bx, by = bx / norm, by / norm
-        for j, prim in enumerate(PRIMARY_EMOTIONS):
+        for j, prim in enumerate(base_prim):
             px, py = PRIMARY_COORDS[prim]
             TRIAD_MATRIX[idx][j] = bx * px + by * py
 
-
 _init_matrices()
-
 
 def _sigmoid(x: float, k: float = 10, mid: float = 0.5) -> float:
 

@@ -6,23 +6,23 @@ import asyncio
 import logging
 
 from celery import Celery
+from celery.signals import setup_logging as celery_setup_logging, worker_ready
 
 from app.config import settings
 from app.services.responder.rag.knowledge_proc import _init_kb
 from app.core.logging_config import setup_logging
+from app.tasks.utils.bg_loop import get_bg_loop
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
-from celery.signals import setup_logging as celery_setup_logging
-
 
 @celery_setup_logging.connect
 def _disable_celery_autologger(**_kwargs):
-    return None
+    pass
 
 
-broker_url = os.getenv("CELERY_BROKER_URL")
+broker_url = settings.CELERY_BROKER_URL or os.getenv("CELERY_BROKER_URL")
 if not broker_url:
     raise RuntimeError("Environment variable CELERY_BROKER_URL is required")
 if not broker_url.startswith("redis://"):
@@ -35,6 +35,10 @@ celery = Celery(
     backend=None,
     include=[
         "app.tasks.summarize",
+        "app.tasks.periodic",
+        "app.tasks.welcome",
+        "app.tasks.moderation",
+        "app.tasks.api_cleanup",
     ],
 )
 
@@ -56,13 +60,25 @@ celery.conf.update(
     worker_prefetch_multiplier=1,
     worker_concurrency=settings.CELERY_CONCURRENCY,
     worker_hijack_root_logger=False,
+    broker_connection_retry_on_startup=True,
 )
 
 
-@celery.on_after_finalize.connect
-def _warm_up(sender=None, **_kwargs) -> None:
+def _run(coro):
+    loop = get_bg_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return fut.result()
 
+
+@worker_ready.connect
+def _warm_up_worker(sender=None, **_kwargs) -> None:
     try:
-        asyncio.run(_init_kb())
+        _run(_init_kb())
+        logger.info(
+            "Knowledge base initialized in Celery worker %s",
+            getattr(sender, "hostname", "?"),
+        )
     except Exception:
-        pass
+        logger.exception(
+            "Failed to initialize knowledge base in worker process"
+        )

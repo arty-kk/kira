@@ -3,17 +3,24 @@ from __future__ import annotations
 
 import time
 import asyncio
-import functools
 import logging
 
 from collections import OrderedDict
+from contextlib import suppress
+from typing import Dict, Tuple, List, Set
+
 from .persona.core import Persona
+from app.core.db import session_scope
+from app.core.models import User, ApiKey
 from app.config import settings
 
 _TTL = getattr(settings, "PERSONA_CACHE_TTL", 3600)
 _MAX = getattr(settings, "PERSONA_CACHE_MAX", 300)
-_cache: "OrderedDict[tuple[int,int], tuple[Persona, float]]" = OrderedDict()
+_Key = Tuple[int, int, int]
+_cache: "OrderedDict[_Key, tuple[Persona, float]]" = OrderedDict()
+_inflight: Dict[_Key, asyncio.Future[Persona]] = {}
 _lock  = asyncio.Lock()
+_bg_closers: set[asyncio.Task] = set()
 
 
 logger = logging.getLogger(__name__)
@@ -22,21 +29,47 @@ logger = logging.getLogger(__name__)
 def _now() -> float:
     return time.monotonic()
 
-
-def _purge_locked(now: float) -> None:
-
+def _purge_locked(now: float) -> list[Persona]:
+    to_close: list[Persona] = []
     stale = [cid for cid, (_, ts) in _cache.items() if now - ts > _TTL]
     for cid in stale:
-        _cache.pop(cid, None)
+        entry = _cache.pop(cid, None)
+        if entry:
+            to_close.append(entry[0])
     while len(_cache) > _MAX:
-        _cache.popitem(last=False)
+        _k, entry = _cache.popitem(last=False)
+        to_close.append(entry[0])
     if stale:
         logger.debug("purged %d persona(s)", len(stale))
+    return to_close
 
+def _schedule_closes(personas: list[Persona]) -> None:
+    if not personas:
+        return
+    loop = asyncio.get_running_loop()
+    for p in personas:
+        try:
+            t = loop.create_task(p.close(), name="persona-purge-close")
+            _bg_closers.add(t)
+            def _done(fut: asyncio.Task) -> None:
+                _bg_closers.discard(fut)
+                if fut.cancelled():
+                    return
+                try:
+                    exc = fut.exception()
+                except asyncio.CancelledError:
+                    return
+                if exc:
+                    logger.debug("background close failed", exc_info=True)
+            t.add_done_callback(_done)
+        except Exception:
+            logger.exception("schedule_closes failed", exc_info=True)
 
 async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: bool = False) -> Persona:
     t0 = _now()
-    key = (chat_id, 0) if group_mode else (chat_id, user_id or 0)
+    key: _Key = (chat_id, user_id or 0, 1 if group_mode else 0)
+    closers: list[Persona] = []
+    persona_hit: Persona | None = None
 
     async with _lock:
         entry = _cache.get(key)
@@ -47,12 +80,77 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
                 _cache[key] = (persona, now)
                 _cache.move_to_end(key, last=True)
                 logger.debug("persona.cache hit key=%s", key)
-                return persona
-            _cache.pop(key, None)
+                closers += _purge_locked(now)
+                persona_hit = persona
+            else:
+                _cache.pop(key, None)
+        else:
+            persona_hit = None
+        fut = _inflight.get(key)
+        if persona_hit is None and fut is None:
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            _inflight[key] = fut
+            creator = True
+        else:
+            creator = False
+        closers += _purge_locked(_now())
+
+    _schedule_closes(closers)
+
+    if persona_hit is not None:
+        try:
+            persona_hit._spawn(persona_hit._ensure_background_started, name="persona-ensure-bg")
+        except Exception:
+            logger.debug("persona.ensure_background start failed (cache hit)", exc_info=True)
+        return persona_hit
+
+    if not creator:
+        logger.debug("persona.cache wait key=%s – awaiting in-flight build", key)
+        return await _inflight[key]
 
     logger.debug("persona.cache miss key=%s – constructing", key)
-    persona = Persona(chat_id)
 
+    try:
+        persona = Persona(chat_id)
+    except Exception as e:
+        async with _lock:
+            fut_fail = _inflight.pop(key, None)
+            if fut_fail and not fut_fail.done():
+                try:
+                    fut_fail.set_exception(e)
+                except Exception:
+                    logger.debug("persona.cache: set_exception failed", exc_info=True)
+        logger.debug("persona.cache build failed key=%s", key, exc_info=True)
+        raise
+
+    async with session_scope(read_only=True) as db:
+        prefs = None
+        ak = None
+        try:
+            if user_id:
+                with suppress(Exception):
+                    ak = await db.get(ApiKey, int(user_id))
+            if ak and getattr(ak, "persona_prefs", None):
+                prefs = ak.persona_prefs
+            owner_uid = getattr(ak, "user_id", None) if ak else None
+            target_id = owner_uid or (user_id if not ak else None) or chat_id
+            if prefs is None and target_id:
+                with suppress(Exception):
+                    u = await db.get(User, int(target_id))
+                if u and getattr(u, "persona_prefs", None):
+                    prefs = u.persona_prefs
+        except Exception:
+            logger.debug("load persona_prefs failed", exc_info=True)
+
+        if prefs:
+            try:
+                persona.apply_overrides(prefs)
+            except Exception:
+                logger.debug("apply_overrides failed", exc_info=True)
+
+    dispose: Persona | None = None
+    closers2: list[Persona] = []
     async with _lock:
         now = _now()
         current = _cache.get(key)
@@ -62,11 +160,80 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
                 _cache[key] = (p2, now)
                 _cache.move_to_end(key, last=True)
                 logger.debug("persona.raced key=%s reused existing", key)
-                return p2
-            _cache.pop(key, None)
-        _cache[key] = (persona, now)
-        _cache.move_to_end(key, last=True)
-        _purge_locked(now)
+                dispose = persona
+                ret = p2
+            else:
+                _cache.pop(key, None)
+                _cache[key] = (persona, now)
+                _cache.move_to_end(key, last=True)
+                ret = persona
+        else:
+            _cache[key] = (persona, now)
+            _cache.move_to_end(key, last=True)
+            ret = persona
+        closers2 = _purge_locked(now)
+        try:
+            loop = asyncio.get_running_loop()
+            ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
+        except Exception:
+            logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
+        fut_done = _inflight.pop(key, None)
+        if fut_done and not fut_done.done():
+            fut_done.set_result(ret)
 
+    _schedule_closes(closers2)
+
+    if dispose is not None:
+        try:
+            await dispose.close()
+        except Exception:
+            logger.debug("persona.dispose close failed", exc_info=True)
     logger.debug("persona.ready key=%s dt=%.3fs", key, _now() - t0)
-    return persona
+    return ret
+
+
+async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
+    if not prefs:
+        return
+    async with _lock:
+        now = _now()
+        for key, (persona, ts) in list(_cache.items()):
+            chat_id, uid, group_flag = key
+            if uid == owner_id:
+                try:
+                    persona.apply_overrides(prefs)
+                    _cache[key] = (persona, now)
+                except Exception:
+                    logger.debug(
+                        "update_cached_personas_for_owner failed for key=%s",
+                        key,
+                        exc_info=True,
+                    )
+
+
+async def shutdown_personas() -> None:
+    async with _lock:
+        items = list(_cache.values())
+        _cache.clear()
+        if _inflight:
+            for fut in list(_inflight.values()):
+                if fut and not fut.done():
+                    fut.set_exception(RuntimeError("persona registry shutdown"))
+            _inflight.clear()
+    personas = [p for (p, _ts) in items]
+    if not personas:
+        return
+    try:
+        tasks = [asyncio.create_task(p.close()) for p in personas]
+        tasks += list(_bg_closers)
+        _bg_closers.clear()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        logger.info("persona.cache: closed %d persona(s)", len(personas))
+
+__all__ = [
+    "get_persona",
+    "shutdown_personas",
+    "update_cached_personas_for_owner",
+]

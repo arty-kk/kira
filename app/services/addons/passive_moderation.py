@@ -1,15 +1,16 @@
 #app/services/addons/passive_moderation.py
-
 from __future__ import annotations
 
 import logging
 import re
 import time
+import base64
 import asyncio
 import hashlib
+import unicodedata
 
 from urllib.parse import urlparse
-from typing import Literal, List
+from typing import Literal, List, Optional
 
 from redis.exceptions import RedisError
 
@@ -25,6 +26,110 @@ MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
 MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
 DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
 _PIPELINE_TIMEOUT = float(getattr(settings, "REDIS_PIPELINE_TIMEOUT", 1.0))
+
+TELEGRAM_DOMAINS = [d.lower() for d in getattr(
+    settings, "MODERATION_TELEGRAM_DOMAINS",
+    ["t.me", "telegram.me", "telegram.dog"]
+)]
+
+SANITIZE_REPLACE_ANY_LINK = getattr(settings, "SANITIZE_REPLACE_ANY_LINK", "[link]")
+SANITIZE_REPLACE_TG_LINK  = getattr(settings, "SANITIZE_REPLACE_TG_LINK", "[tg-link]")
+
+def is_telegram_link(url: str) -> bool:
+    try:
+        u = url.strip()
+        if u.lower().startswith("tg://"):
+            return True
+        if "://" not in u:
+            u = f"http://{u}"
+        host = urlparse(u).netloc.lower().split(":", 1)[0]
+        return any(host == d or host.endswith("." + d) for d in TELEGRAM_DOMAINS)
+    except Exception:
+        return False
+
+_ZW_RE = re.compile(
+    r"[\u200B\u200C\u200D\u2060\u180E\uFEFF\u2061\u2062\u2063\u2064]"
+)
+_BRACKETED_DOT_RE = re.compile(r"\[\s*\.\s*\]|\(\s*\.\s*\)|\{\s*\.\s*\}", re.IGNORECASE)
+_DOT_WORD_RE = re.compile(r"\b(dot|точка|дот)\b", re.IGNORECASE)
+_DOT_LIKE = "•·∙⋅∘｡。・●○◦"
+_CYR_TO_LAT = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "r", "с": "c", "х": "x", "у": "y", "к": "k",
+    "т": "t", "м": "m", "н": "n", "в": "v", "л": "l", "г": "g", "д": "d",
+    # заглавные
+    "А": "A", "Е": "E", "О": "O", "Р": "R", "С": "C", "Х": "X", "У": "Y", "К": "K",
+    "Т": "T", "М": "M", "Н": "N", "В": "V", "Л": "L", "Г": "G", "Д": "D",
+})
+
+def _strip_zero_width(s: str) -> str:
+    return _ZW_RE.sub("", s)
+
+def _normalize_for_url_detection(s: str) -> str:
+    if not s:
+        return s
+    s = unicodedata.normalize("NFKC", s)
+    s = _strip_zero_width(s)
+    s = _BRACKETED_DOT_RE.sub(".", s)
+    s = _DOT_WORD_RE.sub(".", s)
+    for ch in _DOT_LIKE:
+        s = s.replace(ch, ".")
+    s = s.translate(_CYR_TO_LAT)
+    return s
+
+def contains_telegram_obfuscated(text: str) -> bool:
+    if not text:
+        return False
+    s = _normalize_for_url_detection(text)
+    sep = r"[\s_\-\(\)\[\]\{\}]*"
+    tg_domain = rf"(?:t{sep}\.{sep}me|telegram{sep}\.{sep}me|telegram{sep}\.{sep}dog)"
+    tg_proto  = rf"(?:tg{sep}:{sep}//)"
+    pat = re.compile(rf"(?<![a-z0-9])(?:{tg_domain}|{tg_proto})(?![a-z0-9])", re.IGNORECASE)
+    return bool(pat.search(s))
+
+def sanitize_for_context(text: str, entities: List[dict] | None = None) -> str:
+    if not text:
+        return text
+    s = text
+
+    try:
+        if entities:
+            spans = []
+            for ent in entities:
+                t = str(ent.get("type") or "").lower()
+                off = int(ent.get("offset", -1))
+                ln  = int(ent.get("length", 0))
+                if off < 0 or ln <= 0:
+                    continue
+                if t in ("text_link", "url"):
+                    repl = SANITIZE_REPLACE_ANY_LINK
+                    if t == "text_link":
+                        url = str(ent.get("url") or "")
+                        repl = SANITIZE_REPLACE_TG_LINK if is_telegram_link(url) else SANITIZE_REPLACE_ANY_LINK
+                    spans.append((off, ln, repl))
+            for off, ln, repl in sorted(spans, key=lambda x: x[0], reverse=True):
+                s = s[:off] + repl + s[off+ln:]
+    except Exception:
+        pass
+
+    s = _strip_zero_width(s)
+
+    sep = r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*"
+    tg_pat = re.compile(rf"(?i)(?:tg{sep}:{sep}//|t{sep}\.{sep}me|telegram{sep}\.{sep}(?:me|dog))")
+    s = tg_pat.sub(SANITIZE_REPLACE_TG_LINK, s)
+
+    url_pat = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>'\"]+")
+    s = url_pat.sub(SANITIZE_REPLACE_ANY_LINK, s)
+
+    try:
+        found = extract_urls(text, entities)
+        for u in found:
+            repl = SANITIZE_REPLACE_TG_LINK if is_telegram_link(u) else SANITIZE_REPLACE_ANY_LINK
+            s = s.replace(u, repl)
+    except Exception:
+        pass
+
+    return s
+
 
 async def is_flooding(chat_id: int, user_id: int) -> bool:
 
@@ -65,43 +170,104 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
 
 
 def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
-
-    pattern = r"https?://[\w\-\.\?=/#%]+|www\.[\w\-\.\?=/#%]+"
+    pattern = r"(?:https?://[^\s<>'\"]+|www\.[^\s<>'\"]+|t\.me/[^\s<>'\"]+|telegram\.me/[^\s<>'\"]+|tg://[^\s<>'\"]+)"
     strip_trail = '.,;!?)]}\'"'
-    urls = [m.group(0).rstrip(strip_trail) for m in re.finditer(pattern, text)]
+    urls = [m.group(0).rstrip(strip_trail) for m in re.finditer(pattern, text or "", flags=re.IGNORECASE)]
     if entities:
         for ent in entities:
-            if ent.get("type") == "url":
+            t = (str(ent.get("type") or "")).lower()
+            if t == "url":
                 off, length = ent["offset"], ent["length"]
                 snippet = text[off:off + length].rstrip(strip_trail)
                 if snippet and snippet not in urls:
                     urls.append(snippet)
+            elif t == "text_link" and ent.get("url"):
+                u = str(ent["url"]).rstrip(strip_trail)
+                if u and u not in urls:
+                    urls.append(u)
+    norm = _normalize_for_url_detection(text or "")
+
+    hidden_tg = re.findall(r"(?:t\.me/[^\s<>'\"]+|telegram\.me/[^\s<>'\"]+|tg://[^\s<>'\"]+)", norm, flags=re.IGNORECASE)
+    for u in hidden_tg:
+        if u not in urls:
+            urls.append(u)
+
+    domain_re = re.compile(
+        r"(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,60})"
+        r"(?:/[^\s<>'\"]*)?",
+        re.IGNORECASE,
+    )
+    for m in domain_re.finditer(norm):
+        candidate = m.group(0).rstrip(strip_trail)
+
+        if len(candidate) < 4:
+            continue
+        if candidate not in urls:
+            urls.append(candidate)
+
     return list(dict.fromkeys(urls))[:MAX_URLS]
 
 
-def url_is_unwanted(url: str) -> bool:
+def contains_any_link_obfuscated(text: str) -> bool:
 
+    if not text:
+        return False
+    norm = _normalize_for_url_detection(text)
+
+    if contains_telegram_obfuscated(text):
+        return True
+
+    domain_re = re.compile(
+        r"(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,60})",
+        re.IGNORECASE,
+    )
+    return bool(domain_re.search(norm))
+
+
+def url_is_unwanted(url: str) -> bool:
     try:
         u = url if '://' in url else f'http://{url}'
         netloc = urlparse(u).netloc.lower().split(':', 1)[0]
     except Exception:
         return True
+    if any(netloc == d or netloc.endswith("." + d) for d in TELEGRAM_DOMAINS):
+        return True
     for kw in getattr(settings, "MODERATION_ALLOWED_LINK_KEYWORDS", []):
-        if kw and kw.lower() in netloc:
+        kw = (kw or "").lower().strip(".")
+        if not kw:
+            continue
+        if netloc == kw or netloc.endswith("." + kw):
             return False
     return True
 
 
-async def moderate_with_openai(text: str) -> bool:
+async def moderate_with_openai(
+    text: str,
+    *,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+) -> bool:
+
+    if not settings.ENABLE_AI_MODERATION:
+        return False
 
     if not text or not text.strip():
-        return False
+        if not image_b64:
+            return False
+        text = ""
     trimmed = text[:MAX_PROMPT_TEXT]
 
-    model_tag = str(getattr(settings, "MODERATION_MODEL", "default"))
+    model_tag = settings.MODERATION_MODEL
     tox_tag = str(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", ""))
+    img_tag = ""
+    if image_b64:
+        try:
+            img_tag = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()[:16]
+        except Exception:
+            img_tag = "img"
+
     cache_key = "mod:cache:" + hashlib.sha256(
-        (model_tag + "|" + tox_tag + "|" + trimmed).encode("utf-8")
+        (model_tag + "|" + tox_tag + "|" + trimmed + "|" + img_tag).encode("utf-8")
     ).hexdigest()[:48]
 
     redis = get_redis()
@@ -114,57 +280,56 @@ async def moderate_with_openai(text: str) -> bool:
     except Exception:
         logger.debug("moderate_with_openai: cache lookup failed")
 
+    client = get_openai()
+
+    if image_b64:
+        input_payload = [
+            {"type": "text", "text": trimmed or "(no text)"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}",
+                },
+            },
+        ]
+    else:
+        input_payload = trimmed
+
     async with _LIGHT_SEMAPHORE:
-        client = get_openai()
-        resp = None
-        for attempt in range(2):
-            try:
-                resp = await asyncio.wait_for(
-                    client.moderations.create(
-                        model=settings.MODERATION_MODEL,
-                        input=trimmed,
-                    ),
-                    timeout=10.0
-                )
-                break
-            except asyncio.TimeoutError:
-                logger.warning("moderate_with_openai: timeout, attempt %d", attempt + 1)
-                if attempt == 1:
-                    return False
-            except Exception:
-                logger.exception("moderate_with_openai: API error, attempt %d", attempt + 1)
-                if attempt == 1:
-                    return False
+        try:
+            resp = await asyncio.wait_for(
+                client.moderations.create(
+                    model=settings.MODERATION_MODEL,
+                    input=input_payload,
+                ),
+                timeout=10.0,
+            )
+        except Exception:
+            logger.exception("moderate_with_openai: moderation API error")
+            return False
 
-    results = getattr(resp, 'results', None)
-
+    results = getattr(resp, "results", None)
     if not results or not isinstance(results, list):
         logger.error("moderate_with_openai: unexpected response %r", resp)
         return False
 
     result = results[0]
     flagged = bool(getattr(result, "flagged", False))
+
     try:
         ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
         await asyncio.wait_for(
-            redis.set(
-                cache_key,
-                "1" if flagged else "0",
-                ex=ttl,
-                nx=True
-            ),
-            timeout=0.5
+            redis.set(cache_key, "1" if flagged else "0", ex=ttl, nx=True),
+            timeout=0.5,
         )
-    except asyncio.TimeoutError:
-        logger.warning("moderate_with_openai: cache write timeout")
     except Exception:
         logger.debug("moderate_with_openai: failed to cache result")
 
     if flagged:
         return True
 
-    scores = getattr(result, 'category_scores', None)
-    items = scores.dict().items() if hasattr(scores, 'dict') else getattr(scores, 'items', lambda: [])()
+    scores = getattr(result, "category_scores", None)
+    items = scores.dict().items() if hasattr(scores, "dict") else getattr(scores, "items", lambda: [])()
     for category, score in items:
         if isinstance(score, (int, float)) and score >= settings.MODERATION_TOXICITY_THRESHOLD:
             logger.debug("moderation: flagged by %s=%.2f", category, score)
@@ -179,6 +344,9 @@ async def moderate_with_openai(text: str) -> bool:
 
 
 async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
+
+    if not settings.ENABLE_AI_MODERATION:
+        return False
 
     if not urls:
         return False
@@ -224,29 +392,35 @@ async def check_light(
     user_id: int,
     text: str,
     entities: List[dict] | None = None,
-    source: Literal["user", "bot"] = "user"
-) -> Literal["clean", "flood", "spam_links", "promo", "toxic"]:
+    source: Literal["user", "bot"] = "user",
+    *,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+) -> Literal["clean", "flood", "spam_links", "link_violation", "promo", "toxic"]:
 
-    if not settings.ENABLE_MODERATION or not text:
+    if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
 
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
 
-    urls = extract_urls(text, entities)
+    urls = extract_urls(text or "", entities)
     logger.debug("check_light: urls=%r", urls)
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 
+    if any(is_telegram_link(u) for u in urls) or contains_telegram_obfuscated(text or ""):
+        return "link_violation"
+
     for u in urls:
         if url_is_unwanted(u):
-            return "promo"
+            return "link_violation"
 
     if source == "user" and urls and await is_promo_via_ai(text, urls):
         return "promo"
 
-    if source == "user" and await moderate_with_openai(text):
+    if source == "user" and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"
 
     return "clean"
@@ -256,8 +430,14 @@ async def check_deep(
     chat_id: int,
     user_id: int,
     text: str,
-    source: Literal["user", "bot"] = "user"
+    source: Literal["user", "bot"] = "user",
+    *,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
 ) -> bool:
+
+    if not settings.ENABLE_AI_MODERATION:
+        return False
 
     if source != "user":
         return False
@@ -285,6 +465,12 @@ async def check_deep(
 
     async with _DEEP_SEMAPHORE:
         client = get_openai()
+        user_content = [{"type": "input_text", "text": text}]
+        if image_b64:
+            user_content.append({
+                "type": "input_image",
+                "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"
+            })
         try:
             resp = await asyncio.wait_for(
                 client.responses.create(
@@ -296,7 +482,7 @@ async def check_deep(
                             "otherwise respond ONLY 'ALLOW'."
                         )},
                         *snippet,
-                        {"role": "user", "content": text},
+                        {"role": "user", "content": user_content},
                     ],
                     max_output_tokens=16,
                 ),

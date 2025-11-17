@@ -4,40 +4,48 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
-import json
-import hashlib
-import math
 import re
 import unicodedata
 
-from typing import Dict, List
+from typing import Dict, List, Any
 from aiohttp import ClientError
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.config import settings
 from app.core.memory import (
     load_context, push_message,
     get_redis, get_cached_gender, cache_gender,
-    _k_g_sum, _k_p_sum, _k_g_sum_u,
-    extract_summary_data, pack_summary_data,
-    set_summary_if_newer, MEMORY_TTL,
+    get_ltm_text, get_all_mtm_texts,
+    get_ltm_slices, get_group_stm_tail, push_group_stm,
 )
 from app.emo_engine import get_persona
-from app.core.db import AsyncSessionLocal
+from app.core.db import session_scope
 from app.core.models import User
 from .prompt_builder import build_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
+import app.bot.components.constants as consts
+from app.services.addons.analytics import (
+    record_context, record_ping_response,
+    record_assistant_reply, record_latency, record_timeout
+)
 from .rag import _KB_ENTRIES, _init_kb, is_relevant
+from .context_select import (
+    compose_mtm_snippet,
+    select_ltm_snippet,
+    select_snippets_via_nano,
+    preselect_mtm_candidates,
+    summarize_mtm_topic
+)
 
 
 logger = logging.getLogger(__name__)
 
-ON_TOPIC_MAX_TOKENS = 800
-OFF_TOPIC_MAX_TOKENS = 600
+MAX_TOKENS = 1000
 MAX_TEMPERATURE = 0.8
-MIN_TEMPERATURE = 0.6
+MIN_TEMPERATURE = 0.5
 TOP_P_MIN = 0.8
 TOP_P_MAX = 1.0
 EMOJI_OR_SYMBOLS_ONLY = re.compile(r'^[\W_]+$', flags=re.UNICODE)
@@ -52,8 +60,31 @@ DEFAULT_MODS = {
     "fatigue_mod":    0.0,
     "stress_mod":     0.0,
     "curiosity_mod":  0.5,
+    "valence_mod":    0.0,
 }
 
+def _get_default_tz() -> timezone:
+    try:
+        name = getattr(settings, "DEFAULT_TZ", "UTC") or "UTC"
+        return ZoneInfo(name)
+    except Exception:
+        return timezone.utc
+
+def _tz_name() -> str:
+    try:
+        return getattr(settings, "DEFAULT_TZ", "UTC") or "UTC"
+    except Exception:
+        return "UTC"
+
+def _fmt_ts_local(ts: float | None = None) -> str:
+    try:
+        if ts is None:
+            dt = datetime.now(timezone.utc)
+        else:
+            dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        return dt.astimezone(_get_default_tz()).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M") + " UTC"
 
 def _b2s(x) -> str:
     if x is None:
@@ -65,63 +96,6 @@ def _b2s(x) -> str:
             return ""
     return x if isinstance(x, str) else str(x)
 
-def _sha1_u(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8", "ignore")).hexdigest()
-
-def _cosine(u: List[float], v: List[float]) -> float:
-    if not u or not v or len(u) != len(v):
-        return 0.0
-    dot = 0.0; nu = 0.0; nv = 0.0
-    for a, b in zip(u, v):
-        dot += a * b; nu += a * a; nv += b * b
-    if nu <= 0 or nv <= 0:
-        return 0.0
-    return dot / (math.sqrt(nu) * math.sqrt(nv))
-
-async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
-
-    redis = get_redis()
-    outs: List[List[float]] = []
-
-    to_query: List[tuple[int, str]] = []
-    cached: Dict[int, List[float]] = {}
-    for i, t in enumerate(texts):
-        t_norm = (t or "").strip()
-        key = f"emb:{model}:{_sha1_u(t_norm)}"
-        try:
-            raw = await redis.get(key)
-            if raw:
-                cached[i] = json.loads(raw)
-            else:
-                to_query.append((i, t_norm))
-        except Exception:
-            to_query.append((i, t_norm))
-
-    if to_query:
-        try:
-            ordered_idx = [idx for idx, _ in to_query]
-            payload = [txt for _, txt in to_query]
-            resp = await _call_openai_with_retry(
-                model=model,
-                endpoint="embeddings.create",
-                input=payload,
-            )
-            vecs = [d.embedding for d in getattr(resp, "data", [])]
-            for (i, t_norm), vec in zip(to_query, vecs):
-                cached[i] = vec
-                try:
-                    key = f"emb:{model}:{_sha1_u(t_norm)}"
-                    await redis.set(key, json.dumps(vec, separators=(",", ":")), ex=86_400)
-                except Exception:
-                    pass
-        except Exception:
-            for i, _ in to_query:
-                cached[i] = []
-
-    for i in range(len(texts)):
-        outs.append(cached.get(i, []))
-    return outs
-
 def _hget(d: dict, key: str):
     if d is None:
         return None
@@ -132,6 +106,7 @@ def _hget(d: dict, key: str):
         except Exception:
             v = None
     return v
+
 
 def _compact_for_llm(msgs: List[Dict]) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
@@ -147,22 +122,28 @@ def _compact_for_llm(msgs: List[Dict]) -> List[Dict[str, str]]:
             c = re.sub(r"\s+", " ", c).strip()
             if not c:
                 continue
+            if role == "system" and c.startswith("[Delivery]"):
+                continue
             out.append({"role": role, "content": c})
         except Exception:
             continue
     return out
 
+
 def _mk_kb_prompt(chunks: List[str]) -> str:
     snippets = "\n".join(f"{i+1}. {c}" for i, c in enumerate(chunks))
     return (
-        "Below are knowledge snippets relevant to the user's query.\n"
-        "Respond to the user based on these knowledge snippets without adding false information.\n"
-        "If knowledge snippets are written in the first-person style, use them in your responses in the first person as if they were your biography.\n"
+        "KNOWLEDGE SNIPPETS GUIDANCE\n\n"
+        "- Below are knowledge snippets or/and instructions relevant to the user's query.\n"
+        "- STRICT: Respond naturally based *only* on these knowledge snippets without adding information that is not contained in these knowledge snippets.\n"
+        "- Give preference *only* to those snippets that best fit the current meaning of the context and situation.\n"
+        "- If a snippets is written in the first person, treat it as your biography when answering.\n"
+        "- If a snippets explicitly instructs you how to respond, follow that instruction.\n"
         "______________\n"
         f"Snippets:\n{snippets}\n"
         "______________\n"
-        "Your answer:"
     )
+
 
 def _get_last_assistant_text(history_msgs: List[Dict]) -> str | None:
     for m in reversed(history_msgs):
@@ -172,6 +153,16 @@ def _get_last_assistant_text(history_msgs: List[Dict]) -> str | None:
                 return txt
     return None
 
+async def _await_or_cancel(task: asyncio.Task, timeout: float):
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return await task
+    try:
+        task.cancel()
+    except Exception:
+        pass
+    return asyncio.CancelledError
+
 def _build_responses_messages(
     system_prompt_content: str,
     history_llm: List[Dict[str, str]],
@@ -180,20 +171,33 @@ def _build_responses_messages(
     user_text: str | None = None,
     image_data_url: str | None = None,
     include_image_hint: bool = False,
+    extra_system_blocks: List[str] | None = None,
 ) -> List[Dict]:
 
-    sys_blocks = [{"type": "input_text", "text": system_prompt_content}]
-    if include_image_hint:
-        sys_blocks.append({
-            "type": "input_text",
-            "text": (
-                "The user sent you an image. "
-                "Analyze this image: it is part of your dialogue with this user. "
-                "Respond naturally as a continuation of the conversation."
-            ),
-        })
+    now_local = _fmt_ts_local()
+    tz_label = _tz_name()
+    time_hint = (
+        "TIME CONTEXT:\n"
+        f"- Current date and time: {now_local} {tz_label}.\n"
+        "- Timestamps you may see in system/meta messages are INTERNAL. Use them only for reasoning and NEVER include them in your replies."
+    )
 
-    messages: List[Dict] = [{"role": "system", "content": sys_blocks}]
+    parts_sys: List[str] = [time_hint, system_prompt_content]
+    if extra_system_blocks:
+        parts_sys.extend([b for b in extra_system_blocks if (b or "").strip()])
+    if include_image_hint:
+        parts_sys.append(
+            "The user sent you an image. Analyze it as part of the dialogue and continue naturally."
+        )
+    if kb_chunks:
+        kb_prompt = _mk_kb_prompt(kb_chunks)
+        parts_sys.append(kb_prompt)
+
+    system_text = "\n\n".join([p for p in parts_sys if (p or "").strip()])
+    messages: List[Dict] = [{
+        "role": "system",
+        "content": [{"type": "input_text", "text": system_text}],
+    }]
 
     for m in history_llm:
         role = m["role"]
@@ -202,13 +206,6 @@ def _build_responses_messages(
         messages.append({
             "role": role,
             "content": [{"type": part_type, "text": text}],
-        })
-
-    if kb_chunks:
-        kb_prompt = _mk_kb_prompt(kb_chunks)
-        messages.append({
-            "role": "system",
-            "content": [{"type": "input_text", "text": kb_prompt}],
         })
 
     curr: List[Dict] = []
@@ -226,6 +223,7 @@ async def respond_to_user(
     chat_id: int,
     user_id: int,
     *,
+    trigger: str | None = None,
     group_mode: bool = False,
     is_channel_post: bool = False,
     channel_title: str | None = None,
@@ -235,38 +233,58 @@ async def respond_to_user(
     image_b64: str | None = None,
     image_mime: str | None = None,
     allow_web: bool = False,
+    enforce_on_topic: bool = False,
+    expect_voice_out: bool = False,
+    billing_tier: str | None = None,
+    persona_owner_id: int | None = None,
+    memory_uid: int | None = None,
 ) -> str:
 
     redis = get_redis()
 
     t0 = time.time()
-    logger.info("▶ respond_to_user START chat=%s user=%s len=%d",
-                chat_id, user_id, len(text))
+    txt = text or ""
+    is_api = (trigger == "api")
+    mem_ns = "api" if is_api else "default"
+
+    if persona_owner_id is None:
+        persona_owner_id = user_id
+
+    if memory_uid is None:
+        memory_uid = user_id
+
+    logger.info(
+        "▶ respond_to_user START chat=%s persona_owner=%s memory_uid=%s len=%d",
+        chat_id,
+        persona_owner_id,
+        memory_uid,
+        len(txt),
+    )
 
     try:
         persona = await get_persona(
             chat_id,
-            user_id=user_id,
+            user_id=persona_owner_id,
             group_mode=group_mode or is_channel_post,
         )
     except Exception:
         logger.exception("Failed to get_persona", exc_info=True)
-        await push_message(chat_id, "assistant",
-                           "I’m sorry, something went wrong.", user_id=user_id)
+        await push_message(
+            chat_id, "assistant", "I’m sorry, something went wrong.",
+            user_id=memory_uid or persona_owner_id or user_id, namespace=mem_ns
+        )
         return "I’m sorry, something went wrong."
     else:
         logger.info("   ↳ get_persona END (t=%.3fs)", time.time() - t0)
 
     try:
-        logger.debug("▶ respond_to_user: waiting for persona._restored_evt (with timeout)")
-        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
-        logger.debug("▶ respond_to_user: persona._restored_evt is set, continue processing")
-    except asyncio.TimeoutError:
-        logger.warning("persona._restored_evt.wait() timed out — continue without hard fail")
+        ok_ready = await persona.ready(timeout=5.0)
+        if not ok_ready:
+            logger.debug("persona not fully ready yet; proceeding without hard fail")
+        else:
+            logger.debug("persona ready")
     except Exception:
-        logger.exception("✖ Error while waiting for persona._restored_evt", exc_info=True)
-    else:
-        logger.info("   ↳ persona._restored_evt END (t=%.3fs)", time.time() - t0)
+        logger.exception("Error in persona.ready()", exc_info=True)
 
     for _m, _d in (
         ("valence", 0.0),
@@ -278,61 +296,116 @@ async def respond_to_user(
         persona.state.setdefault(_m, _d)
 
     gender = None
-    async with AsyncSessionLocal() as db:
-        user = await db.get(User, user_id)
-        if user and user.gender in ("male", "female"):
-            gender = user.gender
-        if gender is None:
-            gender = await get_cached_gender(user_id)
-        if gender is None:
-            ui = await redis.hgetall(f"tg_user:{user_id}") or {}
+    eff_response_model = settings.RESPONSE_MODEL
+    req_tier = "unknown"
+    free_left = 0
+    paid_left = 0
+    user = None
+
+    if not is_api:
+        async with session_scope(stmt_timeout_ms=2000, read_only=True) as db:
+            user = await db.get(User, user_id)
+
+    if gender is None and user and user.gender in ("male", "female"):
+        gender = user.gender
+    if gender is None:
+        gender = await get_cached_gender(memory_uid)
+    if gender is None and redis:
+        try:
+            ui = await redis.hgetall(f"tg_user:{memory_uid}") or {}
+        except Exception:
+            ui = {}
+        if ui:
             first = ui.get("first_name") or ui.get(b"first_name") or ""
             nick = ui.get("username") or ui.get(b"username") or ""
             raw_name = first or nick
-            if isinstance(raw_name, (bytes, bytearray)):
-                name = raw_name.decode(errors="ignore")
-            else:
-                name = str(raw_name)
+            name = (
+                raw_name.decode(errors="ignore")
+                if isinstance(raw_name, (bytes, bytearray))
+                else str(raw_name)
+            )
             gender = await detect_gender(name, text) or "unknown"
             if gender in ("male", "female"):
-                await cache_gender(user_id, gender)
+                await cache_gender(memory_uid, gender)
 
-    local_gender = gender if gender in ("male", "female") else "unknown"
+    if billing_tier in ("paid", "free", "none"):
+        if billing_tier == "paid":
+            eff_response_model = settings.RESPONSE_MODEL
+            req_tier = "paid"
+        elif billing_tier == "free":
+            eff_response_model = settings.RESPONSE_FREE_MODEL
+            req_tier = "free"
+        else:
+            eff_response_model = settings.BASE_MODEL
+            req_tier = "none"
+    else:
+        try:
+            free_left = int(getattr(user, "free_requests", 0) or 0) if user else 0
+            paid_left = int(getattr(user, "paid_requests", 0) or 0) if user else 0
+        except Exception:
+            free_left = 0
+            paid_left = 0
+
+        if paid_left > 0:
+            eff_response_model = settings.RESPONSE_MODEL
+            req_tier = "paid"
+        elif free_left > 0:
+            eff_response_model = settings.RESPONSE_FREE_MODEL
+            req_tier = "free"
+        else:
+            eff_response_model = settings.BASE_MODEL
+            req_tier = "none"
+
+    logger.info("   ↳ model selection: %s (tier=%s, free=%s, paid=%s)",
+                eff_response_model, req_tier, free_left, paid_left)
+
+    local_gender = gender if gender in ("male", "female") else None
 
     try:
-        await persona.process_interaction(user_id, text, user_gender=local_gender)
+        await persona.process_interaction(memory_uid, text, user_gender=local_gender)
     except Exception:
         logger.exception("Failed persona.process_interaction", exc_info=True)
     else:
         logger.info("   ↳ process_interaction END (t=%.3fs)", time.time() - t0)
 
-    try:
-        _ = await persona.summary()
-    except Exception:
-        logger.exception("Failed to get persona.summary", exc_info=True)
+    summ_t = asyncio.create_task(asyncio.wait_for(persona.summary(), 5.0))
+    guid_t = asyncio.create_task(asyncio.wait_for(persona.style_guidelines(memory_uid), 5.0))
+    mods_t = asyncio.create_task(asyncio.wait_for(persona.style_modifiers(), 5.0))
+    summ_res, guid_res, mods_res = await asyncio.gather(summ_t, guid_t, mods_t, return_exceptions=True)
+    if isinstance(summ_res, Exception):
+        logger.debug("persona.summary skipped/failed: %r", summ_res)
     else:
         logger.info("   ↳ persona.summary END (t=%.3fs)", time.time() - t0)
-
-    guidelines: List[str] = []
-    try:
-        guidelines = await persona.style_guidelines(user_id)
-    except Exception:
-        logger.exception("Failed to get style_guidelines", exc_info=True)
-    else:
+    guidelines: List[str] = [] if isinstance(guid_res, Exception) else (guid_res or [])
+    if not isinstance(guid_res, Exception):
         logger.info("   ↳ style_guidelines END (t=%.3fs)", time.time() - t0)
-
-    try:
-        style_mods = persona._mods_cache or await asyncio.wait_for(
-            persona.style_modifiers(), 30
-        )
-    except Exception:
-        logger.exception("style_modifiers acquisition failed")
+    if isinstance(mods_res, Exception):
+        logger.debug("style_modifiers skipped/failed: %r", mods_res)
         style_mods = {}
+    else:
+        style_mods = mods_res or {}
 
-    mods = {k: style_mods.get(k, v) for k, v in DEFAULT_MODS.items()}
+    mods = DEFAULT_MODS.copy()
+    if isinstance(style_mods, dict):
+        for k in mods.keys():
+            try:
+                if k == "valence_mod":
+                    raw = style_mods.get("valence_mod", style_mods.get("valence", mods[k]))
+                    mods[k] = max(-1.0, min(1.0, float(raw)))
+                else:
+                    raw = style_mods.get(k, mods[k])
+                    mods[k] = max(0.0, min(1.0, float(raw)))
+            except Exception:
+                pass
 
     draft_msg = None
-    if getattr(settings, "ENABLE_INTERNAL_PLAN", False):
+
+    internal_plan_enabled = (
+        (not is_api and getattr(settings, "ENABLE_INTERNAL_PLAN", False))
+        or (is_api and getattr(settings, "API_ENABLE_INTERNAL_PLAN", False))
+    )
+
+    if internal_plan_enabled:
         try:
             reasoning_model = settings.REASONING_MODEL if mods.get("technical_mod", 0) > 0.6 else settings.BASE_MODEL
             resp = await asyncio.wait_for(
@@ -346,7 +419,7 @@ async def respond_to_user(
                     max_output_tokens=300,
                     temperature=0,
                 ),
-                timeout=60.0,
+                timeout=settings.REASONING_MODEL_TIMEOUT,
             )
             draft_msg = (_get_output_text(resp) or "").strip()
         except Exception:
@@ -365,24 +438,25 @@ async def respond_to_user(
     )
     alpha = 1.8
     dynamic_temperature = MIN_TEMPERATURE + (MAX_TEMPERATURE - MIN_TEMPERATURE) * (novelty ** alpha)
-    dynamic_temperature = min(MAX_TEMPERATURE, max(MIN_TEMPERATURE, dynamic_temperature))
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
-    dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
+    try:
+        dynamic_temperature *= (1.0 + 0.10 * float(mods.get("valence_mod", 0.0)))
+    except Exception:
+        pass
+    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
 
+    # Build initial history from STM only
     query = re.sub(r"(?<!\S)@\w+\b", "", text).strip()
     if getattr(settings, "LLM_AUDIT", False):
         logger.info("[TRACE] raw=%r query=%r", text[:200], query[:200])
+
     personal_msgs: List[Dict] = []
     try:
-        summary_group = None
-        if group_mode:
-            g_raw = await redis.get(_k_g_sum(chat_id))
-            g_sum = extract_summary_data(g_raw) if g_raw else ""
-            if g_sum:
-                summary_group = {"role": "system", "content": f"Summary: {g_sum}"}
-
         try:
-            raw_personal = await load_context(chat_id, user_id)
+            raw_personal = await load_context(chat_id, memory_uid, namespace=mem_ns)  # STM: last 35 dialog pairs (roles+timestamps)
         except asyncio.TimeoutError:
             logger.warning("load_context(chat,user) timeout for %s/%s", chat_id, user_id)
             raw_personal = []
@@ -392,19 +466,19 @@ async def respond_to_user(
             r = m.get("role")
             uid = m.get("user_id")
             if r == "system":
+                c = (m.get("content") or "")
+                if isinstance(c, str):
+                    personal_msgs.append(m)
+            elif r == "assistant" and uid == memory_uid:
                 personal_msgs.append(m)
-            elif r == "assistant" and uid == user_id:
-                personal_msgs.append(m)
-            elif r == "user" and uid == user_id:
+            elif r == "user" and uid == memory_uid:
                 personal_msgs.append(m)
         personal_msgs = sorted(personal_msgs, key=lambda m: m.get("ts", 0))
 
         history: List[Dict] = []
-        if summary_group:
-            history.append(summary_group)
         history.extend(personal_msgs)
     except Exception:
-        logger.exception("Error building history for chat_id=%s user_id=%s", chat_id, user_id, exc_info=True)
+        logger.exception("Error building history for chat_id=%s user_id=%s", chat_id, memory_uid, exc_info=True)
         history = []
 
     if voice_in:
@@ -412,15 +486,36 @@ async def respond_to_user(
             "role": "system",
             "content": "The user's message was transcribed from a voice note they just sent. Do not ask them to send audio again; answer the transcribed content directly. You may briefly acknowledge that you received a voice note only if helpful."
         })
+    if expect_voice_out:
+        history.insert(0, {
+            "role": "system",
+            "content": (
+                "Your reply will be delivered to the user as a voice message. "
+                "Write for speech: natural spoken language, short sentences, no markdown, no lists, no links. "
+                "Do NOT explicitly say that you are sending a voice message; just speak naturally."
+            ),
+        })
 
-    if reply_to is not None:
-        orig = _b2s(await redis.get(f"msg:{chat_id}:{reply_to}"))
+
+    if reply_to is not None and redis:
+        try:
+            orig = _b2s(await redis.get(f"msg:{chat_id}:{reply_to}"))
+        except Exception:
+            orig = ""
         if orig:
-            history.append({
-                "role": "system",
-                "content": f"[ReplyContext] The user replied to: «{orig}». Keep this in mind when replying to their current message."
-            })
-    elif chat_id != user_id:
+            orig = re.sub(
+                r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} [^\]]+\]\s*", "", orig
+            )
+            history.append(
+                {
+                    "role": "system",
+                    "content": (
+                        f"[ReplyContext] The user replied to: «{orig}». "
+                        "Keep this in mind when replying to their current message."
+                    ),
+                }
+            )
+    elif chat_id != user_id and not is_api and redis:
         try:
             lp = await redis.hgetall(f"last_ping:{chat_id}:{user_id}") or {}
         except Exception:
@@ -438,6 +533,10 @@ async def respond_to_user(
                         "role": "system",
                         "content": f"[ReplyContext] Your recent message was: «{txt}». The user may be answering that ping; keep continuity."
                     })
+                    try:
+                        await record_ping_response(chat_id, "group")
+                    except Exception:
+                        logger.debug("analytics(record_ping_response) failed", exc_info=True)
 
     pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((query or "").strip()))
     try:
@@ -469,7 +568,6 @@ async def respond_to_user(
 
     push_allowed = True
     push_guard_key = None
-
     if msg_id is not None:
         try:
             ttl_days = getattr(settings, "MEMORY_TTL_DAYS", 7)
@@ -488,9 +586,16 @@ async def respond_to_user(
         if push_allowed and not is_channel_post:
             if image_b64:
                 marker = "[Image attached]" + (f" {safe_resolved}" if not is_empty_after_strip else "")
-                await push_message(chat_id, "user", marker, user_id=user_id)
+                await push_message(chat_id, "user", marker, user_id=memory_uid, namespace=mem_ns)
             elif not is_empty_after_strip:
-                await push_message(chat_id, "user", safe_resolved, user_id=user_id)
+                await push_message(chat_id, "user", safe_resolved, user_id=memory_uid, namespace=mem_ns)
+                if chat_id != user_id and not is_api:
+                    try:
+                        asyncio.create_task(
+                            push_group_stm(chat_id, "user", safe_resolved, user_id=user_id)
+                        )
+                    except Exception:
+                        logger.debug("push_group_stm (user) failed chat=%s", chat_id, exc_info=True)
     except Exception:
         logger.exception("push_message user failed for chat_id=%s", chat_id, exc_info=True)
         if push_guard_key:
@@ -529,322 +634,114 @@ async def respond_to_user(
         history.insert(0, header)
         if safe_resolved:
             history.append({
-                "role": "user", "content": safe_resolved
+                "role": "user",
+                "content": safe_resolved
             })
 
     query_to_model = safe_resolved
     if draft_msg and is_channel_post:
         history.append({
             "role": "system",
-            "content": f"INTERNAL_PLAN: {draft_msg}"
+            "content": "Use the following plan only for internal structuring. Do not quote or reveal it.\n" + draft_msg
         })
 
-    try:
-        raw_mode = await redis.get(f"user_mode:{user_id}")
-        if isinstance(raw_mode, (bytes, bytearray)):
-            raw_mode = raw_mode.decode()
-        user_mode = (raw_mode or "auto").strip().lower()
-        mode_effective = "auto" if (group_mode or is_channel_post) else user_mode
-
-        on_topic_flag, on_topic_hits = (False, None)
-        off_topic_flag, off_topic_hits = (False, None)
-
-        q_ok = bool((query_to_model or "").strip())
-        if q_ok:
-            if mode_effective == "on_topic":
-                on_topic_flag, on_topic_hits = await is_relevant(
-                    query_to_model,
-                    model=settings.EMBEDDING_MODEL,
-                    threshold=settings.RELEVANCE_THRESHOLD,
-                    return_hits=True,
-                )
-            elif mode_effective == "off_topic":
-                off_topic_flag, off_topic_hits = await is_relevant(
-                    query_to_model,
-                    model=settings.OFFTOPIC_EMBEDDING_MODEL,
-                    threshold=settings.OFFTOPIC_RELEVANCE_THRESHOLD,
-                    return_hits=True,
-                )
-            else:
-                on_topic_flag, on_topic_hits = await is_relevant(
-                    query_to_model,
-                    model=settings.EMBEDDING_MODEL,
-                    threshold=settings.RELEVANCE_THRESHOLD,
-                    return_hits=True,
-                )
-                if not on_topic_flag:
-                    off_topic_flag, off_topic_hits = await is_relevant(
-                        query_to_model,
-                        model=settings.OFFTOPIC_EMBEDDING_MODEL,
-                        threshold=settings.OFFTOPIC_RELEVANCE_THRESHOLD,
-                        return_hits=True,
-                    )
-    except Exception:
-        logger.exception("is_on_topic error for chat_id=%s", chat_id, exc_info=True)
-        on_topic_flag = off_topic_flag = False
-
-    logger.info("↳ build_system_prompt START chat=%s user=%s", chat_id, user_id)
-    system_prompt_content = await build_system_prompt(
-        persona,
-        guidelines,
-        user_gender=local_gender,
-    )
-    if not (system_prompt_content or "").strip():
-        system_prompt_content = "You are a helpful assistant. Keep replies concise and accurate."
-    logger.info("↳ build_system_prompt END chat=%s user=%s (got %d chars)", chat_id, user_id, len(system_prompt_content))
-
-    def _approx_tokens(s: str) -> int:
-        cpt = getattr(settings, "APPROX_CHARS_PER_TOKEN", 3.5)
+    reply = None
+    on_topic_flag = False
+    on_topic_hits = None
+    if reply is None and (query_to_model or "").strip():
         try:
-            cpt = float(cpt)
-            if not (0.5 <= cpt <= 10):
-                cpt = 3.5
-        except Exception:
-            cpt = 3.5
-        return max(1, int(len(s) / max(1e-9, cpt)))
-
-    def _count_tokens(msgs: List[Dict[str, str]]) -> int:
-        tot = 0
-        for m in msgs:
-            tot += _approx_tokens(m.get("content", "")) + 6
-        return tot
-
-    async def _summarize_chunk(prev_summary: str, msgs_chunk: List[Dict[str, str]]) -> str:
-        def _as_json_or_empty(s: str) -> str:
-            if not s:
-                return "{}"
-            try:
-                json.loads(s)
-                return s
-            except Exception:
-                return "{}"
-        lines = []
-        for m in msgs_chunk:
-            r = (m.get("role") or "").strip()
-            content = (m.get("content") or "").strip()
-            if r == "system" and (
-                content.startswith("Summary:") or
-                content.startswith("INTERNAL_PLAN:") or
-                content.startswith("The user's message was transcribed from a voice note") or
-                content.startswith("[ReplyContext]") or
-                content.startswith("This message was forwarded from")
-            ):
-                continue
-            speaker = "Assistant" if r == "assistant" else ("System" if r == "system" else "User")
-            if content:
-                lines.append(f"{speaker}: {content}")
-        body = "\n".join(lines)
-        system_prompt = (
-            "You update a structured rolling conversation memory.\n"
-            "Return ONLY minified JSON that EXACTLY matches the provided schema. "
-            "No prose, no markdown, no code fences.\n"
-            "Rules:\n"
-            "- Preserve concrete numbers, dates, names, links, and identifiers.\n"
-            "- Keep only durable information; drop chit-chat and ephemeral details.\n"
-            "- Facts are short atomic strings; decisions are commitments with who/when; "
-            "open_questions are unresolved questions; todos are explicit action items; "
-            "preferences are stable user likes/constraints; entities are names/ids.\n"
-            "- Merge with the previous summary and deduplicate.\n"
-            "- If a field has nothing to add, keep it as an empty string/array per schema.\n"
-        )
-        user_prompt = (
-            "PREVIOUS_SUMMARY_JSON:\n"
-            f"{_as_json_or_empty(prev_summary)}\n\n"
-            "NEW_MESSAGES:\n"
-            f"{body}\n\n"
-            "Return ONLY a single minified JSON object."
-        )
-        summary_schema = {
-            "type": "object",
-            "properties": {
-                "topic": {"type": "string"},
-                "facts": {"type": "array", "items": {"type": "string"}},
-                "decisions": {"type": "array", "items": {"type": "string"}},
-                "open_questions": {"type": "array", "items": {"type": "string"}},
-                "todos": {"type": "array", "items": {"type": "string"}},
-                "preferences": {"type": "array", "items": {"type": "string"}},
-                "entities": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["topic","facts","decisions","open_questions","todos","preferences","entities"],
-            "additionalProperties": False,
-        }
-        try:
-            resp = await asyncio.wait_for(
-                _call_openai_with_retry(
-                    endpoint="responses.create",
-                    model=settings.REASONING_MODEL,
-                    instructions=system_prompt,
-                    input=user_prompt,
-                    text={
-                        "format": {
-                            "type": "json_schema",
-                            "name": "rolling_summary",
-                            "schema": summary_schema,
-                            "strict": True
-                        }
-                    },
-                    temperature=0,
-                    max_output_tokens=800,
-                ),
-                timeout=60.0,
+            on_topic_flag, on_topic_hits = await is_relevant(
+                query_to_model,
+                model=settings.EMBEDDING_MODEL,
+                threshold=settings.RELEVANCE_THRESHOLD,
+                return_hits=True,
             )
-            return (_get_output_text(resp) or "{}").strip()
         except Exception:
-            logger.exception("inline summarization failed")
-            return prev_summary or "{}"
-
-    async def _ensure_budget(
-        history_msgs: List[Dict[str, str]],
-        extra_overhead_tokens: int = 0,
-        ref_text: str | None = None,
-    ) -> List[Dict[str, str]]:
-
-        sys_block = [{"role": "system", "content": system_prompt_content}]
-        budget = int(getattr(settings, "CONTEXT_TOKEN_BUDGET", 8192))
-        reserve = int(getattr(settings, "RESPONSES_TOKEN_RESERVE", 1024))
-        reserve = max(1, min(reserve, max(1, budget - 1)))
-        prompt_budget = max(1, budget - reserve)
-        anchors = max(0, int(getattr(settings, "ANCHOR_TURNS", 8)))
-
-        def _fits(msgs: List[Dict[str, str]]) -> bool:
-            return (_count_tokens(sys_block + msgs) + extra_overhead_tokens) <= prompt_budget
-
-        if _fits(history_msgs):
-            return history_msgs
-
-        ts_now = time.time()
-        GAP_SEC = 8 * 60
-        cand_indices = []
-        for i in range(1, len(history_msgs) - 1):
-            prev = history_msgs[i - 1]; cur = history_msgs[i]
-            if prev.get("role") == "assistant":
-                cand_indices.append(i)
-                continue
-            try:
-                t0 = float(prev.get("ts", ts_now)); t1 = float(cur.get("ts", ts_now))
-                if (t1 - t0) >= GAP_SEC:
-                    cand_indices.append(i); continue
-            except Exception:
-                pass
+            logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
         try:
-            start = max(1, len(history_msgs) - (anchors + 12))
-            for i in range(start, max(1, len(history_msgs) - anchors)):
-                cand_indices.append(i)
+            await record_context(chat_id, checked=True, on_topic=bool(on_topic_flag))
         except Exception:
-            pass
-        cand_indices = sorted(set(cand_indices))
-        if not cand_indices:
-            cand_indices = [max(1, len(history_msgs) - anchors)]
-
-        USE_EMBED_SEG = not bool(int(getattr(settings, "DISABLE_INLINE_BUDGET_EMBED", "1")))
-
-        redis = get_redis()
-        is_private = chat_id == user_id
-        sum_key = _k_p_sum(user_id) if is_private else _k_g_sum_u(chat_id, user_id)
-        prev_summary = extract_summary_data((await redis.get(sum_key)) or "")
-
-        best = None
-        if USE_EMBED_SEG and ref_text and not best:
-            anchors_tail = max(1, anchors)
-            protected = set([0])
-            for j in range(max(0, len(history_msgs) - anchors_tail), len(history_msgs)):
-                protected.add(j)
-
-            candidates = [i for i in cand_indices if i not in protected and 0 <= i < len(history_msgs)-1]
-
-            ref_vec = (await _embed_texts([ref_text[:1000]], settings.EMBEDDING_MODEL))[0]
-            if ref_vec:
-                cand_texts = []
-                for i in candidates:
-                    content = (history_msgs[i].get("content") or "").strip()
-                    cand_texts.append(content[:1000])
-                cand_vecs = await _embed_texts(cand_texts, settings.EMBEDDING_MODEL) if cand_texts else []
-
-                scored = []
-                for idx, vec in zip(candidates, cand_vecs):
-                    sim = _cosine(ref_vec, vec) if vec else -1.0
-                    scored.append((sim, idx))
-                scored.sort(key=lambda x: x[0])
-
-                kept = list(history_msgs)
-                for _sim, rm_idx in sorted(scored, key=lambda x: x[1], reverse=True):
-                    if 0 <= rm_idx < len(kept):
-                        del kept[rm_idx]
-                        if _fits(kept):
-                            best = (0.9, rm_idx, prev_summary)
-                            history_msgs = kept
-                            break
-        if not best:
-            for idx in reversed(cand_indices):
-                head = history_msgs[:idx]
-                tail = history_msgs[idx:]
-                summary_json = await _summarize_chunk(prev_summary, head)
-                new_hist = [{"role": "system", "content": f"Summary: {summary_json}"}] + tail[-anchors:]
-                if _fits(new_hist):
-                    best = (1.0, idx, summary_json)
-                    break
-
-        if not best:
-            idx = max(0, len(history_msgs) - anchors)
-            head = history_msgs[:idx]; tail = history_msgs[idx:]
-            summary_json = await _summarize_chunk(prev_summary, head)
-            best = (1.0, idx, summary_json)
-
-        _, cut_idx, final_summary = best
-        try:
-            await set_summary_if_newer(sum_key, pack_summary_data(final_summary), MEMORY_TTL)
-        except Exception:
-            logger.warning("Failed to persist rolling summary (set_if_newer)")
-
-        new_hist = [{"role": "system", "content": f"Summary: {final_summary}"}] + history_msgs[cut_idx:][-anchors:]
-        while not _fits(new_hist) and len(new_hist) > 2:
-            head2 = new_hist[1: 1 + max(1, (len(new_hist) - 1) // 2)]
-            tail2 = new_hist[1 + max(1, (len(new_hist) - 1) // 2):]
-            final_summary = await _summarize_chunk(final_summary, head2)
-            new_hist = [{"role": "system", "content": f"Summary: {final_summary}"}] + tail2
-        if not _fits(new_hist):
+            logger.debug("analytics(record_context check) failed", exc_info=True)
+        if enforce_on_topic and not on_topic_flag:
+            logger.info("RAG gating: no hits → suppress reply (chat=%s user=%s)", chat_id, user_id)
             try:
-                tiny = await _summarize_chunk("{}", [{"role": "system", "content": f"{final_summary}"}])
-                new_hist = [{"role":"system","content": f"Summary: {tiny}"}]
+                await record_context(chat_id, checked=True, on_topic=False, suppressed=True)
             except Exception:
-                new_hist = [{"role":"system","content": f"Summary: {final_summary}"}]
-        return new_hist
+                logger.debug("analytics(record_context suppress) failed", exc_info=True)
+            return ""
+
+    if reply is None:
+        try:
+            logger.info(
+                "↳ build_system_prompt START chat=%s user=%s",
+                chat_id,
+                user_id,
+            )
+            system_prompt_content = await build_system_prompt(
+                persona,
+                guidelines,
+                user_gender=local_gender,
+            )
+            if not (system_prompt_content or "").strip():
+                system_prompt_content = "Keep replies concise and accurate."
+            logger.info(
+                "↳ build_system_prompt END chat=%s user=%s (got %d chars)",
+                chat_id,
+                user_id,
+                len(system_prompt_content),
+            )
+        except Exception:
+            logger.exception(
+                "build_system_prompt failed for chat_id=%s user_id=%s; using fallback",
+                chat_id,
+                user_id,
+            )
+            system_prompt_content = "Keep replies concise and accurate."
 
     def _safe_max_tokens(suggested: int) -> int:
         try:
-            reserve = int(getattr(settings, "RESPONSES_TOKEN_RESERVE", suggested))
+            reserve = int(getattr(settings, "RESPONSES_TOKEN_RESERVE", 0) or 0)
         except Exception:
-            reserve = suggested
-        margin = max(16, min(64, reserve // 8))
-        clamped = max(1, min(int(suggested), max(1, reserve - margin)))
-        if clamped < int(suggested):
-            logger.debug("max_output_tokens clamped: suggested=%s, result=%s, reserve=%s, margin=%s",
-                         suggested, clamped, reserve, margin)
-        return clamped
+            reserve = 0
 
-    top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 3))
-    hits = []
+        if reserve and suggested > reserve:
+            margin = max(16, min(64, reserve // 8))
+            return max(1, reserve - margin)
+        return int(suggested)
+
+    def _kb_chunks_from_hits(hits_obj: List[Any]) -> List[str] | None:
+        if not hits_obj:
+            return None
+        res: List[str] = []
+        for h in hits_obj:
+            try:
+                if isinstance(h, (list, tuple)):
+                    res.append(h[2] if len(h) >= 3 else str(h[-1]))
+                elif isinstance(h, dict):
+                    res.append(h.get("text") or h.get("chunk") or h.get("content") or "")
+                else:
+                    res.append(str(h))
+            except Exception:
+                continue
+        res = [c for c in res if (c or "").strip()]
+        return res or None
+
+    hits: List[Any] = []
     emb_model = None
-    if on_topic_flag and on_topic_hits:
-        emb_model = settings.EMBEDDING_MODEL
-        hits = (on_topic_hits or [])[:top_k]
-        logger.info("RAG: using ON-TOPIC KB (hits=%d)", len(hits))
-    elif off_topic_flag and off_topic_hits:
-        emb_model = settings.OFFTOPIC_EMBEDDING_MODEL
-        hits = (off_topic_hits or [])[:top_k]
-        logger.info("RAG: using OFF-TOPIC KB (hits=%d)", len(hits))
-    else:
-        logger.info("RAG: disabled for this turn (no similarity pass)")
+    if reply is None:
+        top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 3))
+        if on_topic_flag and on_topic_hits:
+            emb_model = settings.EMBEDDING_MODEL
+            hits = on_topic_hits[:top_k]
+            logger.info(
+                "RAG: on_topic; hits=%d; top_scores=%s",
+                len(hits), [round(h[0], 3) for h in hits[:3]]
+            )
+        else:
+            logger.info("RAG: skipped (no tag/text hits)")
 
-    extra_overhead = 0
-    if hits:
-        rag_snippets_text = "\n".join(f"{i+1}. {h[2]}" for i, h in enumerate(hits))
-        extra_overhead += _approx_tokens(
-            "Below are knowledge snippets relevant to the user's question.\n"
-            + rag_snippets_text + "\nYour answer:"
-        ) + 12
 
-    if emb_model:
+    if reply is None and emb_model:
         if emb_model not in _KB_ENTRIES:
             try:
                 await _init_kb(emb_model)
@@ -854,16 +751,225 @@ async def respond_to_user(
     temperature = dynamic_temperature
     top_p = dynamic_top_p
 
-    if emb_model is None:
-        max_tokens = _safe_max_tokens(ON_TOPIC_MAX_TOKENS)
-    else:
-        max_tokens = _safe_max_tokens(
-            ON_TOPIC_MAX_TOKENS if emb_model == settings.EMBEDDING_MODEL
-            else OFF_TOPIC_MAX_TOKENS
-        )
+    extra_sys: List[str] = []
+    max_tokens = _safe_max_tokens(MAX_TOKENS)
 
+    if reply is None:
+        try:
+            ltm_snippets = ""
+            mtm_snippets = ""
+            mtm_lines = []
+            group_snippets = ""
+            tail_lines: List[str] = []
+            topic_key = f"mtm_topic_cache:{chat_id}"
+            topic_for_mtm = None
+            if redis is not None:
+                try:
+                    cached = await redis.get(topic_key)
+                    if cached:
+                        topic_for_mtm = _b2s(cached).strip() or None
+                except Exception:
+                    topic_for_mtm = None
+            if not topic_for_mtm:
+                topic_for_mtm = (await summarize_mtm_topic(history)) or (query_to_model or "")
+                if redis is not None:
+                    try:
+                        await redis.set(
+                            topic_key,
+                            topic_for_mtm,
+                            ex=settings.MTM_TOPIC_CACHE_TTL_SEC
+                        )
+                    except Exception:
+                        pass
+            if getattr(settings, "LAYERED_MEMORY_ENABLED", True):
+                ltm_frags_t = asyncio.create_task(get_ltm_slices(chat_id, memory_uid, cap_items=120, namespace=mem_ns))
+                ltm_text_t  = asyncio.create_task(get_ltm_text(chat_id, memory_uid, namespace=mem_ns))
+                mtm_budget = (
+                    int(getattr(settings, "MTM_BUDGET_TOKENS_PRIVATE", ""))
+                    if (chat_id == user_id)
+                    else int(getattr(settings, "MTM_BUDGET_TOKENS_GROUP", ""))
+                )
+                mtm_lines_t = asyncio.create_task(get_all_mtm_texts(chat_id, memory_uid, cap_tokens=mtm_budget, namespace=mem_ns))
+
+                async def _group_snip(topic: str) -> tuple[str, list[str]]:
+                    try:
+                        tail = await get_group_stm_tail(
+                            chat_id,
+                            cap_tokens=settings.GROUP_STM_TAIL_TOKENS,
+                            max_lines=settings.GROUP_STM_TAIL_MAX_LINES,
+                        )
+                        if not tail:
+                            return ("", [])
+                        snip = await compose_mtm_snippet(
+                            topic or "",
+                            tail,
+                            settings.SNIPPETS_MAX_TOKENS_GROUP
+                        )
+                        return (snip or "", tail)
+                    except Exception as e:
+                        logger.debug("group STM selection failed chat=%s: %r", chat_id, e)
+                        return ("", [])
+
+                group_snip_t = None
+                if (not is_api) and (chat_id != user_id):
+                    group_snip_t = asyncio.create_task(_group_snip(topic_for_mtm or ""))
+
+                ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
+                    ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
+                )
+                if isinstance(ltm_frags, Exception): ltm_frags = []
+                if isinstance(ltm_text,  Exception): ltm_text  = ""
+                if isinstance(mtm_lines,  Exception): mtm_lines = []
+                logger.info("Retrieval[LTM]: available_fragments=%d", len(ltm_frags) if ltm_frags else 0)
+
+                ltm_snip_t = None
+                if ltm_frags:
+                    ltm_snip_t = asyncio.create_task(
+                        select_ltm_snippet(
+                            (topic_for_mtm or query_to_model or ""),
+                            ltm_frags,
+                            settings.LTM_SNIPPETS_MAX_TOKENS
+                        )
+                    )
+                elif (ltm_text or "").strip():
+                    ltm_snip_t = asyncio.create_task(
+                        select_snippets_via_nano(
+                            "LTM",
+                            query_to_model or "",
+                            [ltm_text],
+                            settings.LTM_SNIPPETS_MAX_TOKENS
+                        )
+                    )
+
+                mtm_snip_t = None
+                mtm_hints_t = None
+                if mtm_lines:
+                    mtm_snip_t = asyncio.create_task(
+                        compose_mtm_snippet(
+                            topic_for_mtm or "",
+                            mtm_lines,
+                            settings.MTM_SNIPPETS_MAX_TOKENS
+                        )
+                    )
+                    mtm_hints_t = asyncio.create_task(
+                        preselect_mtm_candidates(
+                            topic_for_mtm or "", mtm_lines,
+                            topn=settings.MEMORY_HINTS_MAX
+                        )
+                    )
+
+                def _or_empty(x): 
+                    return "" if isinstance(x, Exception) or x is None else (x or "")
+
+                ltm_timeout = settings.LTM_COMPOSE_TIMEOUT_SEC
+                mtm_timeout = settings.MTM_COMPOSE_TIMEOUT_SEC
+
+                if ltm_snip_t and mtm_snip_t:
+                    ltm_res, mtm_res = await asyncio.gather(
+                        _await_or_cancel(ltm_snip_t, ltm_timeout),
+                        _await_or_cancel(mtm_snip_t, mtm_timeout),
+                    )
+                    if ltm_res is asyncio.CancelledError:
+                        logger.debug("LTM snippet timeout (%.1fs) — skipping LTM", ltm_timeout)
+                        ltm_snippets = ""
+                    else:
+                        ltm_snippets = _or_empty(ltm_res)
+                    if mtm_res is asyncio.CancelledError:
+                        logger.debug("MTM snippet timeout (%.1fs) — skipping MTM", mtm_timeout)
+                        mtm_snippets = ""
+                    else:
+                        mtm_snippets = _or_empty(mtm_res)
+                elif ltm_snip_t:
+                    ltm_res = await _await_or_cancel(ltm_snip_t, ltm_timeout)
+                    if ltm_res is asyncio.CancelledError:
+                        logger.debug("LTM snippet timeout (%.1fs) — skipping LTM", ltm_timeout)
+                        ltm_snippets = ""
+                    else:
+                        ltm_snippets = _or_empty(ltm_res)
+                elif mtm_snip_t:
+                    mtm_res = await _await_or_cancel(mtm_snip_t, mtm_timeout)
+                    if mtm_res is asyncio.CancelledError:
+                        logger.debug("MTM snippet timeout (%.1fs) — skipping MTM", mtm_timeout)
+                        mtm_snippets = ""
+                    else:
+                        mtm_snippets = _or_empty(mtm_res)
+
+                group_timeout = settings.MTM_COMPOSE_TIMEOUT_SEC
+                group_snippets, tail_lines = "", []
+                if group_snip_t is not None:
+                    res = await _await_or_cancel(group_snip_t, group_timeout)
+                    if res is not asyncio.CancelledError:
+                        try:
+                            group_snippets, tail_lines = res
+                        except Exception:
+                            pass
+
+            if (ltm_snippets or "").strip():
+                extra_sys.append(
+                    "LONG-TERM MEMORY GUIDANCE\n"
+                    "- Use LTM snippets only if directly relevant to the current message; otherwise ignore.\n"
+                    "- Do NOT say that you “remembered” anything; avoid long quotes (short quotes are ok).\n"
+                    "- Prefer the user's current message to these cues; if uncertain, ask one brief clarifying question.\n"
+                    + "\n" + ltm_snippets
+                )
+            if (group_snippets or "").strip():
+                extra_sys.append(
+                    "GROUP CONTEXT GUIDANCE\n"
+                    "- The following fragments come from the recent group conversation. Use them ONLY if directly relevant.\n"
+                    "- Do NOT quote verbatim or say that you “remembered” something. Prefer the user's current message.\n"
+                    + group_snippets
+                )
+
+            if chat_id != user_id and not is_api and tail_lines and getattr(settings, "GROUP_STM_TRANSCRIPT_ENABLED", False):
+                extra_sys.append(
+                    "GROUP STM TRANSCRIPT (newest → older)\n"
+                    + "\n".join(f"- {ln}" for ln in reversed(tail_lines))
+                )
+
+            if mtm_lines and mtm_hints_t:
+                try:
+                    mtm_hints = await mtm_hints_t
+                except Exception:
+                    mtm_hints = []
+                if mtm_hints:
+                    clean = []
+                    seen = set()
+                    for s in mtm_hints:
+                        txt = s
+                        if txt.startswith("[date="):
+                            try:
+                                end = txt.index("]")
+                                date_val = txt[len("[date="):end]
+                                rest = txt[end+1:].strip()
+                                txt = f"[{date_val}] {rest}"
+                            except Exception:
+                                pass
+                        k = txt.casefold()
+                        if k in seen: continue
+                        seen.add(k)
+                        clean.append(f"- {txt}")
+                    extra_sys.append(
+                        "MID-TERM MEMORY GUIDANCE\n"
+                        "- Use MTM snippets only if directly relevant to the current message; otherwise ignore.\n"
+                        "- Do NOT say that you “remembered” anything; avoid long quotes (short quotes are ok).\n"
+                        "- Prefer the user's current message to these cues; if uncertain, ask one brief clarifying question.\n"
+                        + "\n".join(clean[:settings.MEMORY_HINTS_MAX])
+                    )
+        except Exception:
+            pass
+
+    if (history and (query_to_model or "").strip()):
+        try:
+            last = history[-1]
+            if last.get("role") == "user":
+                if re.sub(r"\s+", " ", last.get("content","")).strip() == re.sub(r"\s+", " ", query_to_model).strip():
+                    history = history[:-1]
+                    logger.info("De-dup: dropped last user from history to avoid duplication in messages")
+        except Exception:
+            logger.debug("De-dup failed (ignored)", exc_info=True)
+ 
     resp = None
-    reply = None
+
     try:
         if reply_to is None and chat_id == user_id:
             last_assist_txt = _get_last_assistant_text(history)
@@ -878,33 +984,27 @@ async def respond_to_user(
                         lp_ts = int(ts_raw or 0)
                     except Exception:
                         lp_ts = 0
-                    if lp_ts and (time.time() - lp_ts) < getattr(settings, "PERSONAL_PING_RETENTION_SECONDS", 86_400):
+                    if lp_ts and (time.time() - lp_ts) < settings.PERSONAL_PING_RETENTION_SECONDS:
                         txt = (_b2s(_hget(lp, "text")) or "").strip()
                         if txt:
                             last_assist_txt = txt
+
             if last_assist_txt:
                 history.append({
                     "role": "system",
                     "content": f"[ReplyContext] Your recent message was: «{last_assist_txt}». The user may be answering it; keep continuity."
                 })
 
-        if image_b64:
+                if not is_api:
+                    try:
+                        await record_ping_response(chat_id, "group" if chat_id != user_id else "pm")
+                    except Exception:
+                        logger.debug("analytics(record_ping_response) failed", exc_info=True)
 
+        if image_b64 and reply is None:
             data_url = f"data:{(image_mime or 'image/jpeg')};base64,{image_b64}"
-
-            kb_prompt = None; overhead = 0
-            chunks = None
-            if hits:
-                chunks = [h[2] for h in hits]
-                kb_prompt = _mk_kb_prompt(chunks)
-                overhead = _approx_tokens(kb_prompt) + 12
-
-            before = len(history)
-            history = await _ensure_budget(history, extra_overhead_tokens=overhead, ref_text=query_to_model)
-            if getattr(settings, "LLM_AUDIT", False) and len(history) < before:
-                logger.info("[TRACE] history shrunk via Summary (ensure_budget)")
             history_llm = _compact_for_llm(history)
-
+            chunks = _kb_chunks_from_hits(hits)
             messages = _build_responses_messages(
                 system_prompt_content,
                 history_llm,
@@ -912,15 +1012,14 @@ async def respond_to_user(
                 user_text=(query_to_model or "").strip() or None,
                 image_data_url=data_url,
                 include_image_hint=True,
+                extra_system_blocks=extra_sys or None,
             )
-
-            browse_kwargs = {}
+            browse_kwargs: Dict[str, Any] = {}
             if allow_web:
                 browse_kwargs = {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
-
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
-                    model=settings.RESPONSE_MODEL,
+                    model=eff_response_model,
                     endpoint="responses.create",
                     input=messages,
                     max_output_tokens=max_tokens,
@@ -928,33 +1027,26 @@ async def respond_to_user(
                     top_p=top_p,
                     **browse_kwargs,
                 ),
-                timeout=30.0,
+                timeout=settings.RESPONSE_MODEL_TIMEOUT,
             )
-        else:
-            if not (is_emoji_only and not is_channel_post):
-                before = len(history)
-                history = await _ensure_budget(history, extra_overhead_tokens=extra_overhead, ref_text=query_to_model)
-                if getattr(settings, "LLM_AUDIT", False) and len(history) < before:
-                    logger.info("[TRACE] history shrunk via Summary (ensure_budget)")
-            if is_emoji_only and not is_channel_post:
-                reply = query_to_model
-            else:
+        elif reply is None:
                 history_llm = _compact_for_llm(history)
-                chunks = [h[2] for h in hits] if hits else None
+                chunks = _kb_chunks_from_hits(hits)
                 messages = _build_responses_messages(
                     system_prompt_content,
                     history_llm,
                     kb_chunks=(chunks or None),
-                    user_text=None,
+                    user_text=(query_to_model or "").strip() or None,
+                    extra_system_blocks=extra_sys or None,
                 )
 
-                browse_kwargs = {}
+                browse_kwargs: Dict[str, Any] = {}
                 if allow_web:
                     browse_kwargs = {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
 
                 resp = await asyncio.wait_for(
                     _call_openai_with_retry(
-                        model=settings.RESPONSE_MODEL,
+                        model=eff_response_model,
                         endpoint="responses.create",
                         input=messages,
                         max_output_tokens=max_tokens,
@@ -962,10 +1054,14 @@ async def respond_to_user(
                         top_p=top_p,
                         **browse_kwargs,
                     ),
-                    timeout=30.0,
+                    timeout=settings.RESPONSE_MODEL_TIMEOUT,
                 )
     except (ClientError, asyncio.TimeoutError, ValueError):
         logger.exception("OpenAI chat error", exc_info=True)
+        try:
+            await record_timeout(chat_id)
+        except Exception:
+            logger.debug("analytics(record_timeout) failed", exc_info=True)
         if reply is None:
             reply = "I’m sorry, something went wrong."
     except Exception:
@@ -977,16 +1073,21 @@ async def respond_to_user(
             logger.info("   ↳ OpenAI chat END (t=%.3fs)", time.time() - t0)
             reply = (_get_output_text(resp) or "").strip()
             reply = re.sub(
-                r"(?m)^\s*\[(?:имя|name)\s*:[^\]]*\]\s*\n?",
+                r"(?m)^\s*\[(?:name|имя)\s*:[^\]]*\]\s*\n?",
                 "", reply, flags=re.I).strip()
         if not (reply or "").strip():
             reply = "…"
 
+        if group_mode and enforce_on_topic:
+            rt = (reply or "").strip()
+            if (rt == "" or rt == "…" or rt.startswith("⏳") or "something went wrong" in rt.lower()):
+                return ""
+                
     assistant_allowed = True
     assistant_guard_key = None
     if msg_id is not None:
         try:
-            ttl_days = getattr(settings, "MEMORY_TTL_DAYS", 7)
+            ttl_days = settings.MEMORY_TTL_DAYS
             assistant_guard_key = f"assistant_pushed:{chat_id}:{msg_id}"
             ok2 = await redis.set(
                 assistant_guard_key,
@@ -1000,7 +1101,27 @@ async def respond_to_user(
 
     try:
         if assistant_allowed:
-            await push_message(chat_id, "assistant", reply, user_id=user_id)
+            await push_message(chat_id, "assistant", reply, user_id=memory_uid, namespace=mem_ns)
+            try:
+                await record_assistant_reply(chat_id, (trigger or "unknown"))
+            except Exception:
+                logger.debug("analytics(record_assistant_reply) failed", exc_info=True)
+            try:
+                await record_latency(chat_id, float((time.time() - t0) * 1000.0))
+            except Exception:
+                logger.debug("analytics(record_latency) failed", exc_info=True)
+            try:
+                if (reply or "").strip() and (group_mode or is_channel_post):
+                    asyncio.create_task(
+                        push_group_stm(
+                            chat_id,
+                            "assistant",
+                            reply,
+                            user_id=int(getattr(consts, "BOT_ID", 0) or 0)
+                        )
+                    )
+            except Exception:
+                logger.debug("push_group_stm (assistant) failed chat=%s", chat_id, exc_info=True)
     except Exception:
         logger.exception("push_message assistant failed for chat_id=%s", chat_id, exc_info=True)
         if assistant_guard_key:
@@ -1010,5 +1131,5 @@ async def respond_to_user(
                 pass
 
     logger.info("✔ respond_to_user END   chat=%s user=%s dt=%.2fs",
-                chat_id, user_id, time.time() - t0)
+                chat_id, memory_uid, time.time() - t0)
     return reply

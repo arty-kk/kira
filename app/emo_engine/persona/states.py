@@ -27,7 +27,7 @@ from .utils.emotion_math import(
 )
 from .utils.emotion_math import EMO_MATRIX_A as A, EMO_MATRIX_B as B
 from .constants.emotions import (
-    ALL_METRICS, PRIMARY_EMOTIONS, ANALYSIS_METRICS, FAT_CLAMP,
+    ALL_METRICS, PRIMARY_EMOTIONS, PRIMARY_ORDER, ANALYSIS_METRICS, FAT_CLAMP,
 )
 
 
@@ -76,22 +76,26 @@ def _recompute_rates(self) -> None:
             base[m] *= (prof.get(m, 1.0) ** w)
 
     zmod = ZODIAC_MODIFIERS.get(self.zodiac, {})
-    self.change_rates = {m: base[m] * zmod.get(m, 1.0) for m in ALL_METRICS}
+    self.change_rates = {
+        m: max(0.25, min(2.5, base[m] * zmod.get(m, 1.0)))
+        for m in ALL_METRICS
+    }
 
 
 def _compute_salience(self, readings: Dict[str, float], text: str) -> float:
 
+    core = PRIMARY_ORDER
     numer = (
-        abs(readings.get("valence", 0.0))
-        + sum(abs(readings.get(e, 0.5) - 0.5) for e in PRIMARY_EMOTIONS if e != "valence")
+        abs(readings.get("valence", 0.0))  # уже [-1..1]
+        + sum(abs(readings.get(e, 0.5) - 0.5) for e in core)
     )
-    base = (numer / (len(PRIMARY_EMOTIONS) + 1)) / max(1.0, len(text) ** 0.5)
+    base = (numer / (len(core) + 1)) / max(1.0, len(text) ** 0.5)
     bonus = (
-        text.count("!") * 0.02
-      + text.count("?") * 0.01
-      + sum(text.count(e) for e in ("😀","😂","😢","😡","😱","👍","👎","❤️")) * 0.01
+        text.count("!") * 0.01
+      + text.count("?") * 0.005
+      + sum(text.count(e) for e in ("😀","😂","😢","😡","😱","👍","👎","❤️")) * 0.005
     )
-    salience = min(1.0, base + min(0.15, bonus))
+    salience = min(1.0, base + min(0.08, bonus))
     salience = pow(salience, 1.07)
     floor = getattr(settings, "MEMORY_MIN_SALIENCE", 0.0)
     return max(floor, salience)
@@ -168,12 +172,12 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
 
     dist = abs(target - cur)
     if dist > 0.8:
-        influence = min(1.0, influence * 1.5)
+        influence = min(1.0, influence * 1.35)
 
     raw_val = cur * (1.0 - influence) + target * influence
 
-    cr = self.change_rates.get(metric, 1.0) or 1e-3
-    alpha_dyn = min(settings.STATE_EMA_MAX_ALPHA, settings.STATE_EMA_ALPHA / cr)
+    cr = max(1e-3, float(self.change_rates.get(metric, 1.0)))
+    alpha_dyn = min(settings.STATE_EMA_MAX_ALPHA, settings.STATE_EMA_ALPHA * cr)
     if dist > 0.33:
         alpha_dyn = settings.STATE_EMA_MAX_ALPHA
 
@@ -198,14 +202,19 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
 
 def _update_mood_label(self) -> None:
     
-    x = self.state.get("valence", 0.0)
-    y = self.state.get("arousal", 0.5) * 2 - 1
+    x = float(self.state.get("valence", 0.0))
+    y = float(self.state.get("arousal", 0.5)) * 2 - 1
+    r = sqrt(x * x + y * y)
+    neutral_r = float(getattr(settings, "MOOD_NEUTRAL_RADIUS", 0.18))
+    if r < neutral_r:
+        self.mood = "steady"
+        return
+
     theta = atan2(y, x) % (2 * pi)
 
-    prims = list(PRIMARY_EMOTIONS)
+    prims = list(PRIMARY_ORDER)
     idx   = round(theta / (2 * pi) * len(prims)) % len(prims)
     base  = prims[idx]
-    r     = sqrt(x*x + y*y)
     
     if r > 0.75:
         strength = "strong"
@@ -219,13 +228,13 @@ def _update_mood_label(self) -> None:
 
 def _attachment_label(x: float) -> str:
     thresholds = [
-        (0.05, "Stranger"),
-        (0.15, "Familiar"),
-        (0.30, "CasualFriend"),
-        (0.45, "Friendly"),
-        (0.60, "Warm"),
-        (0.75, "Trusted"),
-        (0.88, "Close"),
+        (0.32, "Stranger"),
+        (0.44, "Familiar"),
+        (0.55, "Casual"),
+        (0.65, "Friendly"),
+        (0.74, "Warm"),
+        (0.82, "Trust"),
+        (0.89, "Close"),
         (0.95, "VeryClose"),
         (0.99, "Attached"),
     ]
@@ -400,7 +409,7 @@ def _update_attachment(self, uid: int, readings: Dict[str, float], imp: float, w
 
     if getattr(settings, "ATTACHMENT_PERSIST", False) and hasattr(self, "_persist_attachment"):
         try:
-            self._spawn(self._persist_attachment(uid))
+            self.spawn_coro(self._persist_attachment, uid, name="persist-attachment")
         except Exception:
             logger.debug("persist_attachment schedule failed", exc_info=True)
 
@@ -442,11 +451,12 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
         "required": ["apology", "promise", "fulfill", "clingy", "boundary"],
         "additionalProperties": False,
     }
+    t0 = time.perf_counter()
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.BASE_MODEL,
+                model=settings.REASONING_MODEL,
                 instructions=system_prompt,
                 input=user_prompt,
                 text={
@@ -461,6 +471,14 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
                 max_output_tokens=200,
             ),
             timeout=timeout or 30.0,
+        )
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        logger.info(
+            "openai.request endpoint=responses.create model=%s duration_ms=%.2f timeout_s=%.2f chat_id=%s",
+            getattr(settings, "REASONING_MODEL", None),
+            dt_ms,
+            (timeout or 30.0),
+            getattr(self, "chat_id", None),
         )
         raw = (_get_output_text(resp) or "").strip()
         if raw.startswith("```"):
@@ -496,6 +514,16 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
             out[k] = 1 if out.get(k, 0) else 0
         return {k: bool(v) for k, v in out.items()}
     except Exception:
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        logger.warning(
+            "openai.request endpoint=responses.create model=%s failed_after_ms=%.2f timeout_s=%.2f chat_id=%s",
+            getattr(settings, "REASONING_MODEL", None),
+            dt_ms,
+            (timeout or 30.0),
+            getattr(self, "chat_id", None),
+            exc_info=True,
+        )
+        logger.debug("_detect_social_signals_llm failed — returning empty signals", exc_info=True)
         return {}
 
 
@@ -515,38 +543,55 @@ async def process_interaction(
     self.user_gender = local_gender
 
     defaults = {
-        "valence":         0.28,
-        "arousal":         0.54,
-        "dominance":       0.42,
-        "energy":          0.36,
-        "fatigue":         0.00,
-        "stress":          0.05,
-        "anxiety":         0.05,
-
-        "civility":        0.52,
-        "confidence":      0.52,
-        "friendliness":    0.56,
-        "humor":           0.48,
-        "wit":             0.52,
-        "patience":        0.45,
-        "self_reflection": 0.40,
-        "precision":       0.46,
-        "charisma":        0.56,
-        "persuasion":      0.46,
-        "authority":       0.42,
-        "empathy":         0.48,
-        "engagement":      0.50,
-        "curiosity":       0.52,
-
-        "sexual_arousal":  0.00,
-        "aggressiveness":  0.06,
-        "sarcasm":         0.12,
-        "profanity":       0.01,
-        "self_deprecation":0.18,
-        "flirtation":      0.08,
+        "valence":          0.60,
+        "arousal":          0.56,
+        "dominance":        0.50,
+        "energy":           0.55,
+        "fatigue":          0.02,
+        "stress":           0.03,
+        "anxiety":          0.04,
+        "joy":              0.55,
+        "optimism":         0.58,
+        "trust":            0.42,
+        "civility":         0.62,
+        "confidence":       0.58,
+        "friendliness":     0.62,
+        "humor":            0.58,
+        "wit":              0.58,
+        "patience":         0.48,
+        "self_reflection":  0.42,
+        "precision":        0.52,
+        "charisma":         0.60,
+        "persuasion":       0.52,
+        "authority":        0.46,
+        "empathy":          0.50,
+        "engagement":       0.60,
+        "curiosity":        0.62,
+        "sexual_arousal":   0.02,
+        "aggressiveness":   0.02,
+        "sarcasm":          0.12,
+        "profanity":        0.02,
+        "self_deprecation": 0.08,
+        "flirtation":       0.06,
     }
-    for k in ALL_METRICS:
-        self.state.setdefault(k, defaults.get(k, 0.0))
+    if self.state_version == 0 and not getattr(self, "_startup_tuned", False):
+        for k in ALL_METRICS:
+            if k == "valence":
+                v = defaults.get(k, 0.0)
+                v = (v * 2.0 - 1.0) if (0.0 <= v <= 1.0) else v
+                self.state[k] = self._clamp(v, -1.0, 1.0)
+            else:
+                self.state[k] = self._clamp(defaults.get(k, self.state.get(k, 0.0)))
+        try:
+            for e in PRIMARY_EMOTIONS:
+                self.ema[e] = self.state.get(e, self.ema.get(e, 0.5))
+            for e in ("arousal","energy","fatigue"):
+                self.ema[e] = self.state.get(e, self.ema.get(e, 0.5))
+            self.ema["valence"] = self.state.get("valence", 0.0)
+        except Exception:
+            pass
+        self._dirty_metrics.update(defaults.keys())
+        self._startup_tuned = True
 
     curr = id(asyncio.get_running_loop())
     if self._loop_id != curr:
@@ -563,16 +608,14 @@ async def process_interaction(
     except asyncio.TimeoutError:
         raw_hist = []
     except Exception:
-        logger.warning("load_context failed", exc_info=True)
+        logger.debug("load_context failed", exc_info=True)
         raw_hist = []
 
     ROLE = {"user": "USER", "assistant": "ASSISTANT"}
-    ctx_lines: list[str] = []
-    cur_snippet = self._safe_snippet(text)
-    now_tag = time.strftime("%H:%M", time.localtime())
-    ctx_lines.append(f"USER[{now_tag}]: {cur_snippet}")
+    MAX_CTX = 11
+    ctx_lines: list[str] = [f"USER[{time.strftime('%H:%M', time.localtime())}]: {self._safe_snippet(text)}"]
     for m in reversed(raw_hist):
-        if len(ctx_lines) >= 10:
+        if len(ctx_lines) >= MAX_CTX:
             break
         r = m.get("role")
         if r not in ROLE:
@@ -584,26 +627,29 @@ async def process_interaction(
         if snippet:
             ctx_lines.append(f"{ROLE[r]}: {snippet}")
 
-    ctx_lines = ctx_lines[:11]
-    ctx_dialog = "\n".join(reversed(ctx_lines)) if ctx_lines else None
+    ctx_dialog = "\n".join(reversed(ctx_lines))
 
     readings = await self._text_analyzer.analyze_text(text, ctx_dialog=ctx_dialog)
 
-    now = time.time()
-    idle = now - getattr(self, "_last_ts", now)
-    self._last_ts = now
+    idle = time.monotonic() - getattr(self, "_last_mono", time.monotonic())
+    self._last_mono = time.monotonic()
 
-    self.state["arousal"] = self.state.get("arousal", 0.5) * pow(0.97, idle / 60)
+    self.state["arousal"] = 0.5 + (self.state.get("arousal", 0.5) - 0.5) * pow(getattr(settings, "AROUSAL_HOMEOSTASIS_DECAY", 0.97), idle/60)
     self._dirty_metrics.add("arousal")
 
-    self.state["energy"] = self.state.get("energy", 0.0) * pow(0.98, idle / 60)
+    self.state["energy"] = 0.5 + (self.state.get("energy", 0.5) - 0.5) * pow(getattr(settings, "ENERGY_HOMEOSTASIS_DECAY", 0.98), idle/60)
     self._dirty_metrics.add("energy")
 
     self.state["fatigue"] = self.state.get("fatigue", 0.0) * pow(settings.FATIGUE_RECOVERY_RATE, idle / 60)
     self._dirty_metrics.add("fatigue")
 
     val_homeo = pow(settings.VALENCE_HOMEOSTASIS_DECAY, idle / 60)
-    self.state["valence"] = self.state.get("valence", 0.0) * val_homeo
+    try:
+        v_base = float(getattr(settings, "VALENCE_BASELINE", 0.15))
+    except Exception:
+        v_base = 0.15
+    cur_v = float(self.state.get("valence", 0.0))
+    self.state["valence"] = self._clamp(cur_v * val_homeo + (1.0 - val_homeo) * v_base, -1.0, 1.0)
     self._dirty_metrics.add("valence")
 
     decay_neg = pow(settings.EMO_PASSIVE_DECAY, idle / 60)
@@ -618,12 +664,13 @@ async def process_interaction(
     except Exception:
         tz_hour  = (time.time() / 3600) % 24
     circadian = settings.CIRCADIAN_AMPLITUDE * math.sin((tz_hour - 3) / 24 * 2 * pi)
-    self.state["arousal"] = self._clamp(self.state.get("arousal", 0.5) + circadian)
+    self.ema.setdefault("arousal", self.state.get("arousal", 0.5))
+    self.ema["arousal"] = self._clamp(self.ema["arousal"] + circadian * 0.5)
     self._dirty_metrics.add("arousal")
 
     idle = now - getattr(self, "_last_mood_change_ts", now)
     if idle > 300:
-        v = self.state.get("valence", 0.0) * settings.VALENCE_HOMEOSTASIS_DECAY ** (idle/60) * 1.2
+        v = self.state.get("valence", 0.0) * settings.VALENCE_HOMEOSTASIS_DECAY ** (idle/60)
         self.state["valence"] = self._clamp(v, -1.0, 1.0)
     if self.mood != getattr(self, "_prev_mood", None):
         self._last_mood_change_ts = now
@@ -633,7 +680,7 @@ async def process_interaction(
     self._last_user_msg = text
 
     try:
-        self._last_msg_emb = await asyncio.wait_for(get_embedding(text), timeout=8.0)
+        self._last_msg_emb = await asyncio.wait_for(get_embedding(text), timeout=15.0)
     except Exception:
         try:
             self._last_msg_emb = None
@@ -642,10 +689,18 @@ async def process_interaction(
 
     imp = self._compute_salience(readings, text)
 
+    try:
+        tau = float(getattr(settings, "FLOWSTATE_TAU", 90.0))
+        decay = math.exp(-max(0.0, idle) / max(1.0, tau))
+        self.flowstate = self._clamp(self.flowstate * decay + (1.0 - decay) * imp)
+    except Exception:
+        pass
+
     weight_eff = 0.0
     signals_llm: Dict[str, bool] = {}
     do_signals = False
     now_ts = time.time()
+    cur_snippet = self._safe_snippet(text)
     if (imp >= 0.25) or (self.state_version % 6 == 0):
         try:
             async with self._user_lock(uid):
@@ -657,7 +712,7 @@ async def process_interaction(
                     do_signals = True
         except Exception:
             do_signals = False
-    if do_signals and len(cur_snippet) < 12:
+    if do_signals and len(cur_snippet) < 3:
         do_signals = False
     if do_signals:
         try:
@@ -677,12 +732,14 @@ async def process_interaction(
 
     try:
         cur_v = readings.get("valence", 0.0)
+        if 0.0 < cur_v < 1.0:
+            cur_v = cur_v * 2.0 - 1.0
         if "valence" not in self.ema:
-            self.ema["valence"] = 0.5
+            self.ema["valence"] = 0.0
         delta_v = abs(cur_v - self.ema["valence"])
         alpha_v = max(0.10, min(0.25, settings.EMO_EMA_ALPHA * (1 + 1.5 * delta_v)))
         self.ema["valence"] = self.ema["valence"] * (1 - alpha_v) + cur_v * alpha_v
-        readings["valence"] = self._clamp(self.ema["valence"])
+        readings["valence"] = self._clamp(self.ema["valence"], -1.0, 1.0)
     except Exception:
         pass
 
@@ -698,22 +755,36 @@ async def process_interaction(
         r = []
         for m in ALL_METRICS:
             rv = readings.get(m, state.get(m, 0.0))
-            if m == "valence" and 0.0 <= rv <= 1.0:
+            if m == "valence" and 0.0 < rv < 1.0:
                 rv = rv * 2.0 - 1.0
             r.append(rv)
         N = len(s)
         new = {}
+        integrator = getattr(settings, "EMO_INTEGRATOR", "euler")
         for i, m in enumerate(ALL_METRICS):
             base = EMO_DT_BASE.get(m, EMO_DT_DEFAULT)
             rate = change_rates.get(m, 1.0)
+
+            if base <= 0.0:
+                new[m] = s[i]
+                continue
+
             if m == "valence":
                 dt = base * rate * (1.0 - min(1.0, abs(s[i])))
             else:
                 dt = base * rate * (1.0 - s[i])
-            dt = max(0.0, min(dt, 1.0))
-            dotA = sum(A[i][j] * s[j] for j in range(N))
-            dotB = sum(B[i][j] * (r[j] - s[j]) for j in range(N))
-            x = s[i] + dt * (dotA + dotB)
+            DT_MIN = 1e-3
+            dt = max(DT_MIN, min(dt, 1.0))
+            dotA_full = sum(A[i][j] * s[j] for j in range(N))
+            dotB      = sum(B[i][j] * r[j] for j in range(N))
+            if integrator == "semi_implicit":
+                a_diag = A[i][i]
+                dotA_wo_diag = dotA_full - a_diag * s[i]
+                numer = s[i] + dt * (dotA_wo_diag + dotB)
+                denom = max(1e-6, 1.0 - dt * a_diag)
+                x = numer / denom
+            else:
+                x = s[i] + dt * (dotA_full + dotB)
             if m == "valence":
                 new[m] = max(-1.0, min(1.0, x))
             else:
@@ -721,13 +792,18 @@ async def process_interaction(
         return new
 
     loop = asyncio.get_running_loop()
+    snapshot_version = self.state_version
     computed = await loop.run_in_executor(
         EXECUTOR, _compute_states, dict(self.state), readings, self.change_rates
     )
 
     raw_deltas = apply_triggers(text)
     trigger_deltas = {m: d for m, d in raw_deltas.items() if m in ALL_METRICS}
-    factor_imp = settings.APPRAISAL_IMPORTANCE_FACTOR * (1 - self.state.get("fatigue", 0.0))
+    factor_imp = (
+        settings.APPRAISAL_IMPORTANCE_FACTOR
+        * (1 - self.state.get("fatigue", 0.0))
+        * (1.0 + 0.35 * float(getattr(self, "flowstate", 0.0)))
+    )
 
     schedule_ltm = False
     async with self._user_lock(uid):
@@ -775,13 +851,13 @@ async def process_interaction(
             self._curr_signals = dict(signals_llm or {})
         except Exception:
             self._curr_signals = {}
-        weight = self._update_weight(uid, readings.get("valence", 0.5)*2 - 1.0, imp)
+        weight = self._update_weight(uid, readings.get("valence", 0.0), imp)
         self._update_attachment(uid, readings, imp, weight)
         weight_eff = self._effective_person_weight(uid, weight)
 
     if schedule_ltm:
         try:
-            self._spawn(self.ltm.extract_and_upsert(uid, text))
+            self.spawn_coro(self.ltm.extract_and_upsert, uid, text, name="ltm-extract-upsert")
         except Exception:
             logger.debug("ltm.extract_and_upsert scheduling failed", exc_info=True)
 
@@ -791,14 +867,23 @@ async def process_interaction(
         except Exception:
             MAX_ATTACH = 10000
         if len(self.attachments) > MAX_ATTACH:
-            by_ts = sorted(self.attachments.items(), key=lambda kv: kv[1].get("ts", 0.0), reverse=True)
-            keep = dict(by_ts[:MAX_ATTACH])
-            self.attachments = keep
+            async with self._lock:
+                by_ts = sorted(self.attachments.items(), key=lambda kv: kv[1].get("ts", 0.0), reverse=True)
+                self.attachments = dict(by_ts[:MAX_ATTACH])
 
+        delta_ticks = self.state_version - snapshot_version
+        if delta_ticks <= 1:
+            atten = 1.0
+        else:
+            atten = 0.9 if delta_ticks == 2 else 0.8
         for m, val in computed.items():
+            if atten != 1.0:
+                cur = self.state.get(m, val)
+                val = cur + atten * (val - cur)
             self.state[m] = val
             self._dirty_metrics.add(m)
-        suppress_opposite(None, self.state)
+        for m in list(self._dirty_metrics):
+            suppress_opposite(m, self.state)
 
         for metric, delta in trigger_deltas.items():
             if imp > 0.8:
@@ -821,8 +906,7 @@ async def process_interaction(
             self._compute_tertiary()
 
         self.state["arousal"] = self._clamp(
-            self.state.get("arousal", 0.5)
-            + factor_imp * imp * (0.9 + 0.4 * (weight_eff or 0.0))
+            self.state.get("arousal", 0.5) + factor_imp * imp * (0.4 + 0.2 * (weight_eff or 0.0))
         )
         self._dirty_metrics.add("arousal")
 
@@ -854,7 +938,7 @@ async def process_interaction(
             self.ema["arousal"] + (text.count("!") * 0.02 + text.count("?") * 0.01)
         )
 
-        em_list = [(e, self.ema[e]) for e in PRIMARY_EMOTIONS]
+        em_list = [(e, self.ema[e]) for e in PRIMARY_ORDER]
         mean_  = sum(v for _, v in em_list) / len(em_list)
         std_   = (sum((v - mean_)**2 for _, v in em_list) / len(em_list))**0.5
 
@@ -885,6 +969,22 @@ async def process_interaction(
     try:
         if self._bg_queue.full() and imp < 0.30:
             logger.warning("BG-queue full → dropped low-salience item (imp=%.2f)", imp)
+            try:
+                max_len = int(getattr(settings, "MEM_MAX_TEXT_LEN", 1000))
+            except Exception:
+                max_len = 1000
+            text_norm = re.sub(r"\s+", " ", text or "").strip()
+            if len(text_norm) > max_len:
+                text_norm = text_norm[:max_len]
+            try:
+                self._recent_sketch.append({
+                    "t": time.time(),
+                    "uid": uid,
+                    "imp": float(imp),
+                    "text": text_norm,
+                })
+            except Exception:
+                pass
         else:
             try:
                 max_len = int(getattr(settings, "MEM_MAX_TEXT_LEN", 1000))
@@ -898,6 +998,15 @@ async def process_interaction(
             self._bg_queue.put_nowait((text_norm, readings, emb_val, imp, uid))
     except asyncio.QueueFull:
         logger.warning("BG-queue full → memory save skipped")
+        try:
+            self._recent_sketch.append({
+                "t": time.time(),
+                "uid": uid,
+                "imp": float(imp),
+                "text": text_norm if 'text_norm' in locals() else (text or "")[:1000],
+            })
+        except Exception:
+            pass
     finally:
         self.state_version += 1
 
@@ -909,7 +1018,7 @@ async def process_interaction(
 
 async def _bg_worker(self) -> None:
     await self.enhanced_memory.ready()
-    n = int(getattr(settings, "BG_WORKER_CONCURRENCY", 4))
+    n = int(getattr(settings, "BG_WORKER_CONCURRENCY", 8))
     if n < 1:
         n = 1
 
@@ -927,6 +1036,11 @@ async def _bg_worker(self) -> None:
             min_store = max(0.05, min(0.70, min_store - 0.06*att))
         except Exception:
             pass
+        try:
+            fs = float(getattr(self, "flowstate", 0.0))
+            min_store = max(0.05, min(0.90, min_store - 0.05 * fs))
+        except Exception:
+            pass
         if imp < min_store:
             return
         try:
@@ -937,7 +1051,7 @@ async def _bg_worker(self) -> None:
         if len(text_n) > max_len:
             text_n = text_n[:max_len]
         try:
-            emb = emb_opt or await asyncio.wait_for(get_embedding(text_n), timeout=8)
+            emb = emb_opt or await asyncio.wait_for(get_embedding(text_n), timeout=15.0)
         except asyncio.TimeoutError:
             emb = b""
         if (not emb) or (isinstance(emb, (bytes, bytearray)) and not any(emb)):
@@ -952,23 +1066,32 @@ async def _bg_worker(self) -> None:
                 state_slice["attachment"] = float(self.attachments[uid_cur].get("value", 0.0))
             except Exception:
                 pass
+        val01 = (readings["valence"] + 1.0) * 0.5
         await self.enhanced_memory.record(
             text=text_n,
             embedding=emb,
-            emotions={e: readings.get(e, 0.0) for e in PRIMARY_EMOTIONS},
+            emotions = {e: (val01 if e=="valence" else readings.get(e, 0.0)) for e in PRIMARY_EMOTIONS},
             state_metrics=state_slice,
             uid=uid_cur,
             salience=imp,
         )
         try:
             if uid_cur is not None and getattr(self, "ltm", None):
-                self._spawn(self.ltm.maybe_prune(uid_cur))
+                self.spawn_coro(self.ltm.maybe_prune, uid_cur, name="ltm-maybe-prune")
         except Exception:
             logger.debug("schedule maybe_prune failed", exc_info=True)
 
     async def _consumer(worker_id: int):
         while True:
-            text, readings, emb_opt, imp, uid_cur = await self._bg_queue.get()
+            item = await self._bg_queue.get()
+            try:
+                text, readings, emb_opt, imp, uid_cur = item
+            except Exception:
+                self._bg_queue.task_done()
+                continue
+            if text is None and readings is None:
+                self._bg_queue.task_done()
+                break
             try:
                 await _process_bg_item(text, readings, emb_opt, imp, uid_cur)
             except Exception:

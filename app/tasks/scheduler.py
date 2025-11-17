@@ -5,34 +5,45 @@ import asyncio
 import logging
 import os
 import random
+
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from app.config import settings
-from app.clients.telegram_client import get_bot
-from app.services.addons import (
-    start_battle_job,
-    price_fetcher,
-    group_ping,
-    personal_ping,
-    generate_and_post_tweet,
+from app.tasks.periodic import (
+    cleanup_nonbuyers_task,
+    analytics_daily_task,
+    battle_job_task,
+    prices_post_task,
+    group_ping_job_task,
+    personal_ping_job_task,
+    tweet_once_task,
+    tg_channel_post_task,
 )
 
 logger = logging.getLogger(__name__)
 
 
-_TWITTER_SEMA = asyncio.Semaphore(1)
-_PRICES_SEMA = asyncio.Semaphore(1)
-_GROUP_SEMA = asyncio.Semaphore(1)
-_PERSONAL_SEMA = asyncio.Semaphore(1)
+cpu_count = os.cpu_count() or 1
 
-cpu_count = os.cpu_count()
-LOCAL_TZ = ZoneInfo(settings.SCHEDULER_TIMEZONE)
+try:
+    tz_raw = getattr(settings, "DEFAULT_TZ", "UTC")
+
+    try:
+        offset_hours = int(tz_raw)
+    except (TypeError, ValueError):
+        offset_hours = None
+
+    if offset_hours is not None:
+        LOCAL_TZ = timezone(timedelta(hours=offset_hours))
+    else:
+        LOCAL_TZ = ZoneInfo(str(tz_raw))
+except Exception:
+    LOCAL_TZ = timezone.utc
 
 _sched: AsyncIOScheduler | None = None
 
@@ -40,6 +51,14 @@ _sched: AsyncIOScheduler | None = None
 def get_scheduler() -> AsyncIOScheduler | None:
     return _sched
 
+
+def stop_scheduler() -> None:
+    global _sched
+    if _sched and _sched.running:
+        try:
+            _sched.shutdown(wait=False)
+        except Exception:
+            logger.exception("Failed to shutdown scheduler cleanly")
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -64,32 +83,6 @@ def _dynamic_tweet_job_ids() -> list[str]:
     if _sched is None:
         return []
     return [j.id for j in _sched.get_jobs() if j.id.startswith("dynamic_tweet_")]
-
-
-async def _send_telegram_with_retry(chat_id: int, html: str) -> None:
-    bot = get_bot()
-    attempt = 1
-    while True:
-        try:
-            await bot.send_message(
-                chat_id,
-                html,
-                disable_web_page_preview=True,
-                parse_mode="HTML",
-            )
-            return
-        except TelegramRetryAfter as e:
-            delay = max(1, int(getattr(e, "retry_after", 5)))
-            logger.warning("TelegramRetryAfter: sleeping %ss (attempt %d)", delay, attempt)
-            await asyncio.sleep(delay); attempt += 1
-        except TelegramBadRequest as e:
-            logger.warning("Telegram BadRequest: %s", e)
-            return
-        except Exception as e:
-            if attempt >= 3:
-                logger.exception("send_message failed after %d attempts: %s", attempt, e)
-                return
-            await asyncio.sleep(1.5 * attempt); attempt += 1
 
 
 def _schedule_dynamic_tweets(count_min: int = 6, count_max: int = 10) -> None:
@@ -123,12 +116,8 @@ def _schedule_dynamic_tweets(count_min: int = 6, count_max: int = 10) -> None:
 
         job_id = f"dynamic_tweet_{run_dt.strftime('%Y%m%d%H%M%S')}_{i}"
 
-        async def _tweet_wrapper():
-            async with _TWITTER_SEMA:
-                await generate_and_post_tweet()
-
         _sched.add_job(
-            _tweet_wrapper,
+            lambda: tweet_once_task.delay(),
             trigger=DateTrigger(run_date=run_dt),
             id=job_id,
             replace_existing=True,
@@ -137,6 +126,93 @@ def _schedule_dynamic_tweets(count_min: int = 6, count_max: int = 10) -> None:
         created.append(run_dt.isoformat())
 
     logger.info("Scheduled %d tweet(s) UTC: %s", len(created), ", ".join(created))
+
+
+def _tg_window_today_to_utc() -> tuple[datetime, datetime]:
+
+    today_local = _now_local().date()
+
+    start_local = datetime.combine(
+        today_local,
+        time(settings.SCHED_TG_START_HOUR, 0),
+        tzinfo=LOCAL_TZ,
+    )
+    end_local = datetime.combine(
+        today_local,
+        time(settings.SCHED_TG_END_HOUR, 0),
+        tzinfo=LOCAL_TZ,
+    )
+
+    if _now_local() >= end_local:
+        tomorrow = today_local + timedelta(days=1)
+        start_local = datetime.combine(
+            tomorrow,
+            time(settings.SCHED_TG_START_HOUR, 0),
+            tzinfo=LOCAL_TZ,
+        )
+        end_local = datetime.combine(
+            tomorrow,
+            time(settings.SCHED_TG_END_HOUR, 0),
+            tzinfo=LOCAL_TZ,
+        )
+
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
+def _dynamic_tg_job_ids() -> list[str]:
+    if _sched is None:
+        return []
+    return [j.id for j in _sched.get_jobs() if j.id.startswith("dynamic_tg_")]
+
+
+def _schedule_dynamic_tg_posts(count_min: int | None = None, count_max: int | None = None) -> None:
+
+    if _sched is None or not _sched.running:
+        logger.warning("Scheduler is not running; skip dynamic tg scheduling")
+        return
+
+    for jid in _dynamic_tg_job_ids():
+        try:
+            _sched.remove_job(jid)
+        except Exception:
+            logger.warning("Failed to remove TG job %s", jid, exc_info=True)
+
+    now = _now_utc()
+    window_start, window_end = _tg_window_today_to_utc()
+    total_sec = (window_end - window_start).total_seconds()
+    if total_sec <= 0:
+        logger.warning("TG window length <= 0; skip scheduling")
+        return
+
+    if count_min is None:
+        count_min = settings.SCHED_TG_MIN_POSTS
+    if count_max is None:
+        count_max = settings.SCHED_TG_MAX_POSTS
+    if count_max < count_min:
+        count_max = count_min
+
+    count = max(1, random.randint(count_min, count_max))
+    segment = total_sec / count
+
+    created = []
+    for i in range(count):
+        offset = random.uniform(0, segment)
+        run_dt = window_start + timedelta(seconds=segment * i + offset)
+        if run_dt <= now:
+            run_dt += timedelta(days=1)
+
+        job_id = f"dynamic_tg_{run_dt.strftime('%Y%m%d%H%M%S')}_{i}"
+
+        _sched.add_job(
+            lambda: tg_channel_post_task.delay(),
+            trigger=DateTrigger(run_date=run_dt),
+            id=job_id,
+            replace_existing=True,
+            max_instances=1,
+        )
+        created.append(run_dt.isoformat())
+
+    logger.info("Scheduled %d TG post(s) UTC: %s", len(created), ", ".join(created))
 
 
 def _listener(event):
@@ -149,95 +225,96 @@ def _listener(event):
         logger.warning("Job %s MISSED at %s", event.job_id, when)
 
 
-async def tweet_scheduler_job():
-    logger.info("→ tweet_scheduler_job start")
-    try:
-        _schedule_dynamic_tweets()
-    except Exception:
-        logger.exception("tweet_scheduler_job error")
-    logger.info("← tweet_scheduler_job done")
-
-async def battle_job():
-    logger.info("→ battle_job start")
-    try:
-        await start_battle_job()
-    except Exception:
-        logger.exception("battle_job error")
-    logger.info("← battle_job done")
-
-async def prices_post():
-    logger.info("→ prices_post start")
-    try:
-        try:
-            data = await asyncio.wait_for(price_fetcher(), timeout=60)
-        except asyncio.TimeoutError:
-            logger.warning("price_fetcher() timed out after 60s")
-            return
-
-        async with _PRICES_SEMA:
-            for msg in data:
-                await _send_telegram_with_retry(settings.ALLOWED_GROUP_ID, msg)
-
-        logger.info("prices_post done (%d message(s))", len(data))
-    except Exception:
-        logger.exception("prices_post error")
-    logger.info("← prices_post end")
-
-async def group_ping_job():
-    logger.info("→ group_ping_job start")
-    try:
-        async with _GROUP_SEMA:
-            await group_ping()
-    except Exception:
-        logger.exception("group_ping_job error")
-    logger.info("← group_ping_job done")
-
-async def personal_ping_job():
-    logger.info("→ personal_ping_job start")
-    try:
-        async with _PERSONAL_SEMA:
-            await personal_ping()
-    except Exception:
-        logger.exception("personal_ping_job error")
-    logger.info("← personal_ping_job done")
-
-
 def start_scheduler() -> None:
-
     global _sched
 
+    if _sched is not None and _sched.running:
+        logger.info("Scheduler already running; skip second start")
+        return
+
     logger.info("Starting scheduler in timezone %s", LOCAL_TZ)
-    loop = asyncio.get_running_loop()
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
 
     _sched = AsyncIOScheduler(
         event_loop=loop,
         timezone=LOCAL_TZ,
         job_defaults={
-            "misfire_grace_time": getattr(settings, "SCHEDULER_MISFIRE_GRACE_TIME", 600),
+            "misfire_grace_time": settings.SCHEDULER_MISFIRE_GRACE_TIME,
             "coalesce": True,
             "max_instances": cpu_count * 2,
         },
     )
 
     _sched.add_listener(_listener, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
-
     eager = _now_local() + timedelta(seconds=5)
 
-    if settings.SCHED_ENABLE_TWEETS:
+    _sched.add_job(
+        lambda: cleanup_nonbuyers_task.delay(),
+        "cron",
+        hour=3, minute=30,
+        id="cleanup_nonbuyers_job",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
+    _sched.add_job(
+        lambda: analytics_daily_task.delay(),
+        "cron",
+        hour=0, minute=5,
+        timezone=timezone.utc,
+        id="analytics_daily_job",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
+    twitter_enabled = (
+        settings.SCHED_ENABLE_TWEETS
+        and bool(getattr(settings, "TWITTER_API_KEY", ""))
+        and bool(getattr(settings, "TWITTER_API_SECRET", ""))
+        and bool(getattr(settings, "TWITTER_ACCESS_TOKEN", ""))
+        and bool(getattr(settings, "TWITTER_ACCESS_TOKEN_SECRET", ""))
+    )
+
+    if twitter_enabled:
         _sched.add_job(
-            tweet_scheduler_job, "cron",
+            _schedule_dynamic_tweets,
+            "cron",
             hour=0, minute=0,
             id="tweet_scheduler_job",
             max_instances=1,
             coalesce=True,
             replace_existing=True,
         )
+    elif settings.SCHED_ENABLE_TWEETS:
+        logger.warning(
+            "tweet_scheduler_job not started: SCHED_ENABLE_TWEETS=true but Twitter credentials are missing"
+        )
     else:
         logger.info("tweet_scheduler_job disabled by SCHED_ENABLE_TWEETS=false")
 
+    if settings.SCHED_ENABLE_TG_POSTS:
+        _sched.add_job(
+            _schedule_dynamic_tg_posts,
+            "cron",
+            hour=0, minute=1,
+            id="tg_scheduler_job",
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+        )
+    else:
+        logger.info("tg_scheduler_job disabled by SCHED_ENABLE_TG_POSTS=false")
+
     if settings.SCHED_ENABLE_BATTLE:
         _sched.add_job(
-            battle_job, "interval",
+            lambda: battle_job_task.delay(),
+            "interval",
             hours=1,
             id="battle_job",
             max_instances=1,
@@ -250,13 +327,13 @@ def start_scheduler() -> None:
 
     if settings.SCHED_ENABLE_PRICES:
         _sched.add_job(
-            prices_post, "interval",
+            lambda: prices_post_task.delay(),
+            "interval",
             hours=8,
             id="prices_post",
             max_instances=1,
             coalesce=True,
             replace_existing=True,
-            jitter=int(4 * 60 * 60 * 0.05),
             next_run_time=eager,
         )
     else:
@@ -264,13 +341,13 @@ def start_scheduler() -> None:
 
     if settings.SCHED_ENABLE_GROUP_PING:
         _sched.add_job(
-            group_ping_job, "interval",
+            lambda: group_ping_job_task.delay(),
+            "interval",
             minutes=settings.GROUP_PING_INTERVAL_MINUTES,
             id="group_ping_job",
             max_instances=1,
             coalesce=True,
             replace_existing=True,
-            jitter=int(settings.GROUP_PING_INTERVAL_MINUTES * 60 * 0.1),
             next_run_time=eager,
         )
     else:
@@ -279,13 +356,13 @@ def start_scheduler() -> None:
     if settings.SCHED_ENABLE_PERSONAL_PING:
         interval_secs = settings.PERSONAL_PING_INTERVAL_SEC
         _sched.add_job(
-            personal_ping_job, "interval",
+            lambda: personal_ping_job_task.delay(),
+            "interval",
             seconds=interval_secs,
             id="personal_ping_job",
             max_instances=1,
             coalesce=True,
             replace_existing=True,
-            jitter=int(interval_secs * 0.1),
             next_run_time=eager,
         )
     else:
@@ -293,11 +370,17 @@ def start_scheduler() -> None:
 
     _sched.start()
 
-    if settings.SCHED_ENABLE_TWEETS and not _dynamic_tweet_job_ids():
+    if twitter_enabled and not _dynamic_tweet_job_ids():
         logger.info("No dynamic tweet jobs at startup — scheduling for today.")
         _schedule_dynamic_tweets()
-    elif not settings.SCHED_ENABLE_TWEETS:
-        logger.info("Tweet jobs are disabled; skipping initial scheduling.")
+    elif not twitter_enabled:
+        logger.info("Dynamic tweet jobs are disabled; skipping initial scheduling.")
+
+    if settings.SCHED_ENABLE_TG_POSTS and not _dynamic_tg_job_ids():
+        logger.info("No dynamic TG jobs at startup — scheduling for today.")
+        _schedule_dynamic_tg_posts()
+    elif not settings.SCHED_ENABLE_TG_POSTS:
+        logger.info("Dynamic TG jobs are disabled; skipping initial TG scheduling.")
 
     for job in _sched.get_jobs():
         logger.info("Job %s → next run at %s", job.id, job.next_run_time)

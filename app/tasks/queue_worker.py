@@ -1,15 +1,17 @@
 #app/tasks/queue_worker.py
+from __future__ import annotations
+
 import asyncio
 import json
 import signal
 import random
-import sys
 import time
 import html
 import traceback
 import logging
 import os
 import re
+import tempfile
 
 from contextlib import suppress
 from typing import Optional, Dict
@@ -22,40 +24,57 @@ from redis.exceptions import RedisError
 
 from app.config import settings
 from app.clients.telegram_client import get_bot
+from app.clients.openai_client import get_openai
 from app.services.responder import respond_to_user
-from app.core.memory import get_redis_queue, close_redis_pools, SafeRedis
+from app.services.addons.voice_generator import (
+    maybe_tts_and_send, shutdown_tts,
+    will_speak, is_tts_eligible_short
+)
+from app.services.addons.passive_moderation import sanitize_for_context
+from app.services.addons.analytics import record_timeout, record_assistant_reply, record_latency
+from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 
 
 logger = logging.getLogger(__name__)
 
+BOT = get_bot()
+
+ENABLE_RICH_HTML = bool(getattr(settings, "ENABLE_RICH_HTML", True))
+_SANITIZE_CONTEXT = bool(getattr(settings, "MODERATION_SANITIZE_CONTEXT_ALWAYS", True))
+_IS_MENTION_RE = re.compile(r'(?<!\S)@\w+\b')
 
 TG_TEXT_LIMIT: int = int(getattr(settings, "TG_TEXT_LIMIT", 4096))
 
 REDIS_QUEUE: SafeRedis = get_redis_queue()
 logger.info("Configured Redis queue at %s", getattr(settings, "REDIS_URL_QUEUE", settings.REDIS_URL))
 
-BOT = get_bot()
-
 PROCESSING_TASKS: set[asyncio.Task] = set()
 MAX_INFLIGHT_TASKS: int = int(getattr(settings, "WORKER_MAX_INFLIGHT_TASKS", settings.OPENAI_MAX_CONCURRENT_REQUESTS * 2))
-openai_sem = asyncio.Semaphore(settings.OPENAI_MAX_CONCURRENT_REQUESTS)
+
 chat_locks: Dict[int, asyncio.Lock] = {}
 chat_locks_last_used: Dict[int, float] = {}
 pending_per_chat: Dict[int, int] = defaultdict(int)
-MAX_PENDING_PER_CHAT: int = int(getattr(settings, "MAX_PENDING_PER_CHAT", 3))
+MAX_PENDING_PER_CHAT: int = int(getattr(settings, "MAX_PENDING_PER_CHAT", 15))
 
 CHAT_LOCK_TTL = int(getattr(settings, "CHAT_LOCK_TTL", 3600))
 PROCESSING_SWEEP_INTERVAL = int(getattr(settings, "PROCESSING_SWEEP_INTERVAL_SEC", 5))
 PROCESSING_SWEEP_BATCH = int(getattr(settings, "PROCESSING_SWEEP_BATCH", 200))
 JOB_RECLAIM_TTL = int(getattr(settings, "JOB_RECLAIM_TTL", 120))
 TYPING_ENABLED = bool(getattr(settings, "TYPING_ENABLED", True))
-TYPING_SKIP_BACKLOG = int(getattr(settings, "TYPING_SKIP_BACKLOG", 0))
-TYPING_SKIP_GROUPS = bool(getattr(settings, "TYPING_SKIP_GROUPS", True))
+TYPING_SKIP_BACKLOG = int(getattr(settings, "TYPING_SKIP_BACKLOG", 30))
+TYPING_SKIP_GROUPS = bool(getattr(settings, "TYPING_SKIP_GROUPS", False))
 
+VOICE_TRANSCRIPTION_TIMEOUT = int(getattr(settings, "VOICE_TRANSCRIPTION_TIMEOUT", 90))
+
+TTS_SKIP_BACKLOG = int(getattr(settings, "TTS_SKIP_BACKLOG", 0))
+TTS_TIMEOUT_SEC = float(os.environ.get("TTS_TIMEOUT_SEC", "12"))
 JOB_KEY_PREFIX = "q:job:"
-JOB_PROCESSING_TTL = int(getattr(settings, "JOB_PROCESSING_TTL", 300))
+RESPOND_TIMEOUT = int(getattr(settings, "RESPOND_TIMEOUT", 150))
+JOB_PROCESSING_TTL = max(int(getattr(settings, "JOB_PROCESSING_TTL", 0)), RESPOND_TIMEOUT + 30)
+TTS_REPLY_TO_VOICE_IN_GROUPS = bool(getattr(
+    settings, "TTS_REPLY_TO_VOICE_IN_GROUPS", os.environ.get("TTS_REPLY_TO_VOICE_IN_GROUPS", "0") not in ("0","false","False")))
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
-JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 25))
+JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 
 TG_GLOBAL_RPS = int(getattr(settings, "TG_GLOBAL_RPS", 27))
 TG_GLOBAL_BURST = int(getattr(settings, "TG_GLOBAL_BURST", 45))
@@ -82,6 +101,7 @@ local tokens = tonumber(data[1]) or burst
 local ts     = tonumber(data[2]) or now
 if now > ts then
   local delta = now - ts
+  if delta < 0 then delta = 0 end
   tokens = math.min(burst, tokens + (delta * rate / 1000.0))
 end
 
@@ -98,8 +118,44 @@ return allowed
 """
 _CHAT_BUCKET_LUA = _TG_BUCKET_LUA
 
+def _is_effectively_empty(s: str) -> bool:
+    t = _IS_MENTION_RE.sub(' ', (s or ''))
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t == ''
+
+async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> str:
+    tmp_path = None
+    try:
+        model = model or getattr(settings, "TRANSCRIPTION_MODEL", "whisper-1")
+        f = await asyncio.wait_for(BOT.get_file(file_id), timeout=60)
+        with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
+            tmp_path = tmp.name
+        await asyncio.wait_for(BOT.download(f, tmp_path), timeout=120)
+        client = get_openai()
+
+        async def _do_transcribe() -> str:
+            with open(tmp_path, "rb") as audio:
+                resp = await client.audio.transcriptions.create(
+                    model=model,
+                    file=audio,
+                    response_format="text"
+                )
+            text_inner = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
+            return text_inner
+
+        resp_text = await asyncio.wait_for(_do_transcribe(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
+        return resp_text
+    except Exception as e:
+        logger.warning("voice transcription failed: %s", e)
+        return ""
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            with suppress(Exception):
+                os.remove(tmp_path)
+
 async def _tg_acquire_permit() -> None:
     key = "ratelimit:tg:global"
+    delay = 0.02
     for _ in range(100):
         now_ms = int(time.time() * 1000)
         try:
@@ -108,10 +164,12 @@ async def _tg_acquire_permit() -> None:
             ok = 1
         if ok == 1:
             return
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, 1.0)
 
 async def _tg_acquire_chat_permit(chat_id: int) -> None:
     key = f"ratelimit:tg:chat:{chat_id}"
+    delay = 0.02
     for _ in range(50):
         now_ms = int(time.time() * 1000)
         try:
@@ -120,7 +178,8 @@ async def _tg_acquire_chat_permit(chat_id: int) -> None:
             ok = 1
         if ok == 1:
             return
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(delay)
+        delay = min(delay * 1.5, 0.5)
 
 def _get_chat_lock(chat_id: int) -> asyncio.Lock:
     chat_locks_last_used[chat_id] = time.time()
@@ -177,22 +236,39 @@ async def _claim_if_reclaimed(redis: Redis, key: str, new_value: str, ttl: int) 
     except Exception:
         return 0
 
-async def _typing_loop(chat_id: int) -> None:
+async def _action_loop(chat_id: int, action: ChatAction = ChatAction.TYPING) -> None:
+
+    max_duration = int(getattr(settings, "TYPING_MAX_DURATION_SEC", 60))
+    if max_duration <= 0:
+        max_duration = 60
+    started = time.time()
 
     try:
         while True:
+            if (time.time() - started) > max_duration:
+                break
             try:
-                await BOT.send_chat_action(chat_id, ChatAction.TYPING)
+                await _tg_acquire_permit()
+                await _tg_acquire_chat_permit(chat_id)
+                await BOT.send_chat_action(chat_id, action)
                 await asyncio.sleep(5)
             except TelegramRetryAfter as e:
                 delay = max(1.0, float(getattr(e, "retry_after", 1)))
                 logger.debug("Typing rate-limited for chat_id=%s, sleeping %ss", chat_id, delay)
                 await asyncio.sleep(_jitter(delay, 0.25))
-            except (TelegramNetworkError, asyncio.TimeoutError, TimeoutError):
+            except (TelegramNetworkError, asyncio.TimeoutError):
                 await asyncio.sleep(_jitter(2.0, 0.5))
             except (TelegramBadRequest, TelegramForbiddenError) as e:
                 logger.debug("Typing stopped for chat_id=%s: %s", chat_id, e)
                 break
+            try:
+                if TYPING_SKIP_BACKLOG > 0:
+                    q = await REDIS_QUEUE.llen(settings.QUEUE_KEY)
+                    p = await REDIS_QUEUE.llen(settings.QUEUE_KEY + ":processing")
+                    if (q or 0) + (p or 0) > TYPING_SKIP_BACKLOG:
+                        break
+            except Exception:
+                pass
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -205,11 +281,10 @@ async def _get_backlog(redis: Redis, queue_key: str, processing_key: str) -> int
     except Exception:
         return 0
 
-async def _delayed_typing(chat_id: int, delay: float = 1.5) -> None:
-    
+async def _delayed_typing(chat_id: int, delay: float = 1.5, action: ChatAction = ChatAction.TYPING) -> None:
     try:
         await asyncio.sleep(_jitter(delay, 0.25))
-        await _typing_loop(chat_id)
+        await _action_loop(chat_id, action)
     except asyncio.CancelledError:
         raise
 
@@ -224,28 +299,58 @@ async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, inter
     end
     """
     try:
+        start = time.time()
         while True:
             await asyncio.sleep(interval)
+            if time.time() - start > ttl:
+                return
             try:
-                await redis.eval(script, 1, key, expected_value, ttl)
+                ok = await redis.eval(script, 1, key, expected_value, ttl)
+                if not ok:
+                    return
             except Exception as e:
                 logger.warning("heartbeat eval failed for %s: %s", key, e)
+                return
     except asyncio.CancelledError:
         pass
 
+async def _heartbeat_key(redis: Redis, key: str, interval: int, ttl: int) -> None:
+    script = """
+    if redis.call('EXISTS', KEYS[1]) == 1 then
+        return redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+    else
+        return 0
+    end
+    """
+    try:
+        start = time.time()
+        while True:
+            await asyncio.sleep(interval)
+            if time.time() - start > ttl:
+                return
+            try:
+                res = await redis.eval(script, 1, key, ttl)
+                if not res:
+                    return
+            except Exception as e:
+                logger.warning("heartbeat key eval failed for %s: %s", key, e)
+                return
+    except asyncio.CancelledError:
+        pass
 
 def _allow_telegram_html(escaped: str) -> str:
 
-    simple_tags = ["b", "strong", "i", "em", "u", "s", "del", "code", "pre"]
+    simple_tags = ["b", "strong", "i", "em", "u", "s", "del", "code", "pre", "tg-spoiler"]
     for tag in simple_tags:
         escaped = re.sub(fr"&lt;{tag}&gt;", f"<{tag}>", escaped, flags=re.IGNORECASE)
         escaped = re.sub(fr"&lt;/{tag}&gt;", f"</{tag}>", escaped, flags=re.IGNORECASE)
 
     def _unescape_a(m):
         url = m.group(1)
-        if url.startswith(("http://", "https://", "tg://")):
-            return f'<a href="{url}">'
-        return m.group(0)
+        if not re.match(r"^(https?|tg)://[^\s\"'<>]{1,200}$", url, re.I):
+            return m.group(0)
+        safe_url = html.escape(url, quote=True)
+        return f'<a href="{safe_url}">'
 
     escaped = re.sub(
         r"&lt;a href=(?:&quot;|&#39;)((?:[Hh][Tt][Tt][Pp][Ss]?|[Tt][Gg])://[^\"'<>\s]{1,200})(?:&quot;|&#39;)&gt;",
@@ -262,28 +367,24 @@ async def _send_reply(
     reply_to: Optional[int],
     msg_id: Optional[int],
     merged_ids: Optional[list[int]] = None,
+    user_id: Optional[int] = None,
 ) -> None:
    
     try:
         if msg_id is not None:
-            try:
-                sent = await REDIS_QUEUE.set(
-                    f"sent_reply:{chat_id}:{msg_id}",
-                    1,
-                    nx=True,
-                    ex=JOB_DONE_TTL,
-                )
-                if not sent:
-                    logger.info("Skip duplicate reply chat=%s msg_id=%s", chat_id, msg_id)
-                    return
-            except Exception as e:
-                logger.warning("failed to set sent_reply key: %s", e)
+            sent = await REDIS_QUEUE.set(
+                f"sent_reply:{chat_id}:{msg_id}", 1, nx=True, ex=JOB_DONE_TTL
+            )
+            if not sent:
+                logger.info("Skip duplicate reply chat=%s msg_id=%s", chat_id, msg_id)
+                return
 
         if len(text) > TG_TEXT_LIMIT - 10:
             text = text[: TG_TEXT_LIMIT - 10] + "…"
 
         text_safe = html.escape(text)
-        text_safe = _allow_telegram_html(text_safe)
+        if ENABLE_RICH_HTML:
+            text_safe = _allow_telegram_html(text_safe)
 
         if len(text_safe) > TG_TEXT_LIMIT:
             text_safe = text_safe[: TG_TEXT_LIMIT - 1] + "…"
@@ -324,8 +425,14 @@ async def _send_reply(
                     raise
                 except TelegramForbiddenError as e:
                     logger.info("Forbidden for chat_id=%s, skipping send and marking done: %s", chat_id, e)
+                    try:
+                        if user_id is not None and (int(chat_id) == int(user_id)):
+                            from app.services.addons.personal_ping import purge_user_state
+                            asyncio.create_task(purge_user_state(int(user_id), "blocked bot (reply)"))
+                    except Exception:
+                        logger.debug("schedule purge_user_state failed", exc_info=True)
                     return True
-                except (TelegramNetworkError, asyncio.TimeoutError, TimeoutError) as e:
+                except (TelegramNetworkError, asyncio.TimeoutError) as e:
                     backoff = _jitter(min(4.0, 2.0 ** i), 0.35)
                     logger.warning("Network error (%s), backoff %ss, attempt %d/%d", e, backoff, i+1, attempts)
                     await asyncio.sleep(backoff)
@@ -335,9 +442,9 @@ async def _send_reply(
         await _tg_acquire_permit()
         await _tg_acquire_chat_permit(chat_id)
 
-        ok = await _send_with_retries("HTML", dict(kwargs), text)
-        if not ok:
-            ok = await _send_with_retries(None, dict(kwargs), text)
+        plain = text if len(text) <= TG_TEXT_LIMIT - 1 else (text[:TG_TEXT_LIMIT - 1] + "…")
+        ok = await _send_with_retries("HTML", dict(kwargs), text) or \
+             await _send_with_retries(None,  dict(kwargs), plain)
         if not ok:
             raise RuntimeError("Message send failed in both HTML and plain modes")
 
@@ -376,6 +483,31 @@ async def _send_reply(
                 pass
         logger.debug(traceback.format_exc())
 
+async def _mark_sent_reply_keys(chat_id: int, msg_id: int | None, merged_ids: list[int] | None) -> None:
+    if msg_id is None:
+        return
+    try:
+        await REDIS_QUEUE.set(f"sent_reply:{chat_id}:{msg_id}", 1, nx=True, ex=JOB_DONE_TTL)
+    except Exception:
+        pass
+    try:
+        raw_mids = merged_ids if isinstance(merged_ids, (list, tuple)) else []
+        mids: list[int] = []
+        for mid in raw_mids:
+            try:
+                mi = int(mid)
+                if mi != msg_id:
+                    mids.append(mi)
+            except Exception:
+                continue
+        if mids:
+            async with REDIS_QUEUE.pipeline() as p:
+                for mi in mids[:200]:
+                    p.set(f"sent_reply:{chat_id}:{mi}", 1, nx=True, ex=JOB_DONE_TTL)
+                await p.execute()
+    except Exception:
+        pass
+
 def _register_task(chat_id: Optional[int], t: asyncio.Task) -> None:
     if chat_id is not None:
         pending_per_chat[chat_id] += 1
@@ -387,31 +519,56 @@ def _register_task(chat_id: Optional[int], t: asyncio.Task) -> None:
                 pending_per_chat.pop(_chat_id, None)
     t.add_done_callback(_done)
 
-async def _try_start_task_or_requeue(raw: str, queue_key: str, processing_key: str) -> bool:
+async def _try_start_task_or_requeue(raw, queue_key: str, processing_key: str) -> bool:
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except Exception:
+            logger.error("Failed to decode queue item (bytes)"); return False
+
     chat_id: Optional[int] = None
     try:
         job = json.loads(raw)
         chat_id = int(job.get("chat_id"))
     except Exception:
         chat_id = None
-    if (chat_id is not None) and (pending_per_chat.get(chat_id, 0) >= MAX_PENDING_PER_CHAT):
+    if chat_id is not None and pending_per_chat.get(chat_id, 0) >= MAX_PENDING_PER_CHAT:
         try:
             async with REDIS_QUEUE.pipeline() as p:
                 p.lrem(processing_key, 1, raw)
-                p.rpush(queue_key, raw)
+                p.lpush(queue_key, raw)
                 await p.execute()
             logger.debug("Requeued (cap-per-chat) chat_id=%s back to %s", chat_id, queue_key)
         except Exception as e:
             logger.warning("Failed to requeue (cap-per-chat) chat_id=%s: %s", chat_id, e)
         return False
-    t = asyncio.create_task(handle_job(raw, processing_key))
+    try:
+        t = asyncio.create_task(handle_job(raw, processing_key))
+    except Exception:
+        if chat_id is not None:
+            await REDIS_QUEUE.delete(f"chatbusy:{chat_id}")
+            pending_per_chat.pop(chat_id, None)
+        raise
+
     PROCESSING_TASKS.add(t)
     _register_task(chat_id, t)
     return True
 
-async def handle_job(raw: str, processing_key: str) -> None:
+async def handle_job(raw, processing_key: str) -> None:
 
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except Exception:
+            logger.error("Invalid queue payload (bytes)"); 
+            with suppress(Exception):
+                await REDIS_QUEUE.lrem(processing_key, 1, raw)
+            return
+    
+    redis = get_redis()
     queue_key = settings.QUEUE_KEY
+    t_start_ms = int(time.time() * 1000)
+    analytics_fallback = False
 
     try:
         job = json.loads(raw)
@@ -433,19 +590,32 @@ async def handle_job(raw: str, processing_key: str) -> None:
     chan_title = job.get("channel_title")
     msg_id     = job.get("msg_id")
     voice_in   = bool(job.get("voice_in"))
+    voice_file_id = job.get("voice_file_id")
     merged_ids = job.get("merged_msg_ids")
     image_b64  = job.get("image_b64")
     image_mime = job.get("image_mime")
+    trigger    = job.get("trigger")  # 'mention' | 'check_on_topic' | 'channel_post'
+    enforce_on_topic = bool(job.get("enforce_on_topic", False))
+    allow_web  = bool(job.get("allow_web", False))
+    entities   = job.get("entities") or []
 
     try:
         msg_id = int(msg_id) if msg_id is not None else None
     except Exception:
         msg_id = None
 
-    if not (isinstance(chat_id, int) and isinstance(user_id, int) and (text or image_b64)):
+    try:
+        reply_to = int(reply_to) if reply_to is not None else None
+    except Exception:
+        reply_to = None
+
+    pm_chat = (chat_id == user_id)
+    reply_target = reply_to if pm_chat else msg_id
+
+    if not (isinstance(chat_id, int) and isinstance(user_id, int) and (text is not None or image_b64 or voice_file_id)):
         logger.error(
             "Skipping job with missing fields: chat_id=%s user_id=%s text_len=%d has_image=%s",
-            chat_id, user_id, len(text), bool(image_b64),
+            chat_id, user_id, len(text or "") if isinstance(text, str) else -1, bool(image_b64),
         )
         await REDIS_QUEUE.lrem(processing_key, 1, raw)
         return
@@ -458,8 +628,21 @@ async def handle_job(raw: str, processing_key: str) -> None:
         with suppress(Exception):
             await REDIS_QUEUE.lrem(processing_key, 1, raw)
         return
+
+    try:
+        sent_key = f"sent_reply:{chat_id}:{msg_id}"
+        if await REDIS_QUEUE.get(sent_key):
+            with suppress(Exception):
+                await REDIS_QUEUE.lrem(processing_key, 1, raw)
+            logger.debug("Drop job as already answered: chat=%s msg_id=%s", chat_id, msg_id)
+            return
+    except Exception:
+        pass
+
     dedupe_id = f"{chat_id}:{msg_id}"
     job_key = JOB_KEY_PREFIX + dedupe_id
+    if trigger:
+        logger.debug("queue_worker picked job %s trigger=%s", dedupe_id, trigger)
 
     token = f"{os.getpid()}:{id(asyncio.current_task())}:{time.time():.3f}"
     remove_from_processing = True
@@ -494,63 +677,242 @@ async def handle_job(raw: str, processing_key: str) -> None:
                 logger.debug("Defer job %s: job_key is None/absent; keep in :processing for sweeper", dedupe_id)
             return
 
+
+    lock_started: float | None = None
+    busy_key = f"chatbusy:{chat_id}"
+    if not await REDIS_QUEUE.set(busy_key, 1, nx=True, ex=JOB_PROCESSING_TTL):
+        await _delete_if_inflight(REDIS_QUEUE, job_key, value)
+        await REDIS_QUEUE.lrem(processing_key, 1, raw)
+        await REDIS_QUEUE.lpush(queue_key, raw)
+        return
+
+    busy_hb: Optional[asyncio.Task] = None
     lock = _get_chat_lock(chat_id)
 
     async with lock:
+        lock_started = time.monotonic()
+        busy_hb = asyncio.create_task(
+            _heartbeat_key(
+                REDIS_QUEUE,
+                busy_key,
+                JOB_HEARTBEAT_INTERVAL,
+                JOB_PROCESSING_TTL,
+            )
+        )
         typing_task = None
         hb_task = asyncio.create_task(
             _heartbeat_inflight(REDIS_QUEUE, job_key, value, JOB_HEARTBEAT_INTERVAL, JOB_PROCESSING_TTL)
         )
         try:
-            async with openai_sem:
-                if TYPING_ENABLED and not (TYPING_SKIP_GROUPS and (is_group or is_channel)):
-                    try:
-                        backlog = await _get_backlog(REDIS_QUEUE, settings.QUEUE_KEY, processing_key)
-                    except Exception:
-                        backlog = 0
-                    if (TYPING_SKIP_BACKLOG <= 0) or (backlog <= TYPING_SKIP_BACKLOG):
-                        with suppress(Exception):
-                            await BOT.send_chat_action(chat_id, ChatAction.TYPING)
-                        typing_task = asyncio.create_task(_delayed_typing(chat_id, delay=0.0))
-                reply_text = await asyncio.wait_for(
-                    respond_to_user(
-                        text, chat_id, user_id,
-                        group_mode=is_group,
-                        is_channel_post=is_channel,
-                        channel_title=chan_title,
-                        reply_to=reply_to,
-                        msg_id=msg_id,
-                        voice_in=voice_in,
-                        image_b64=image_b64,
-                        image_mime=image_mime,
-                    ),
-                    timeout=180,
-                )
-                reply_text = (reply_text or "").strip() or "Sorry, I’ve got nothing to add 😅"
+            backlog = 0
+            if TYPING_ENABLED and not (TYPING_SKIP_GROUPS and (is_group or is_channel)):
                 try:
-                    await _send_reply(chat_id, reply_text, reply_to, msg_id, merged_ids)
+                    backlog = await _get_backlog(REDIS_QUEUE, settings.QUEUE_KEY, processing_key)
+                except Exception:
+                    backlog = 0
+
+
+            try:
+                pref = await REDIS_QUEUE.get(f"tts:pref:{user_id}") or ""
+                if isinstance(pref, (bytes, bytearray)):
+                    pref = pref.decode()
+                pref = pref.strip().lower()
+            except Exception:
+                pref = ""
+            base_expect_voice = True if pref == "always" else (False if pref == "never" else will_speak(voice_in=voice_in))
+            chat_voice_disabled = bool(await REDIS_QUEUE.get(f"vmsg:disabled:chat:{chat_id}") or 0)
+            expect_voice_out_flag = base_expect_voice and (not chat_voice_disabled)
+
+            if is_channel or (not (pm_chat or voice_in)) or (is_group and voice_in and not TTS_REPLY_TO_VOICE_IN_GROUPS):
+                expect_voice_out_flag = False
+
+            if (TTS_SKIP_BACKLOG > 0) and (backlog > TTS_SKIP_BACKLOG) and not voice_in:
+                expect_voice_out_flag = False
+
+            if (not expect_voice_out_flag) and ((TYPING_SKIP_BACKLOG <= 0) or (backlog <= TYPING_SKIP_BACKLOG)) \
+               and not (is_group and ((trigger == "check_on_topic") or enforce_on_topic)):
+                try:
+                    await _tg_acquire_permit()
+                    await _tg_acquire_chat_permit(chat_id)
+                    await BOT.send_chat_action(chat_id, ChatAction.TYPING)
+                    typing_task = asyncio.create_task(_delayed_typing(chat_id, delay=0.0))
+                except (TelegramForbiddenError, TelegramBadRequest):
+                    if typing_task:
+                        typing_task.cancel()
+                        typing_task = None
+                except Exception:
+                    pass
+
+            if (not isinstance(text, str) or not text.strip()) and voice_file_id:
+                text = await _transcribe_voice_file_id(
+                    voice_file_id,
+                    getattr(settings, "TRANSCRIPTION_MODEL", "whisper-1"),
+                )
+                if not text:
+                    if pm_chat or (trigger == "mention") or is_channel:
+                        await _send_reply(
+                            chat_id,
+                            "⚠️ Voice recognition failed. Please try again.",
+                            reply_target,
+                            msg_id,
+                            merged_ids,
+                            user_id=user_id,
+                        )
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    return
+
+            if isinstance(text, str) and _SANITIZE_CONTEXT:
+                try:
+                    text = sanitize_for_context(text, entities)
                 except Exception:
+                    pass
+
+            if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
+                if _is_effectively_empty(text or ""):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    return
+
+            try:
+                if voice_in and isinstance(text, str) and text.strip():
+                    await redis.set(
+                        f"msg:{chat_id}:{msg_id}",
+                        text.strip(),
+                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+                    )
+            except Exception:
+                logger.debug("worker: failed to store voice context", exc_info=True)
+
+            resp_task = asyncio.create_task(
+                respond_to_user(
+                    text, chat_id, user_id,
+                    trigger=trigger,
+                    group_mode=is_group,
+                    is_channel_post=is_channel,
+                    channel_title=chan_title,
+                    reply_to=reply_to,
+                    msg_id=msg_id,
+                    voice_in=voice_in,
+                    image_b64=image_b64,
+                    image_mime=image_mime,
+                    allow_web=allow_web,
+                    enforce_on_topic=enforce_on_topic,
+                    expect_voice_out=expect_voice_out_flag,
+                )
+            )
+
+            resp_task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+            
+            try:
+                reply_text = await asyncio.wait_for(resp_task, timeout=RESPOND_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(
+                    "respond_to_user timeout after %ss (chat=%s user=%s)",
+                    RESPOND_TIMEOUT, chat_id, user_id
+                )
+                resp_task.cancel()
+                with suppress(Exception):
+                    await asyncio.wait({resp_task}, timeout=2)
+                reply_text = (
+                    "⏳ Sorry, I was thinking longer than usual. "
+                    "Try asking the question again."
+                )
+                analytics_fallback = True
+                with suppress(Exception):
+                    await record_timeout(chat_id)
+
+            if is_group and ((trigger == "check_on_topic") or enforce_on_topic):
+                rt = (reply_text or "").strip()
+                if (rt == "" or rt == "…" or rt.startswith("⏳") or "something went wrong" in rt.lower()):
                     with suppress(Exception):
-                        await _delete_if_inflight(REDIS_QUEUE, job_key, value)
-                    requeue_guard_key = f"{job_key}:requeued"
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    return
+
+            reply_text = (reply_text or "").strip() or "Sorry, I’ve got nothing to add 😅"
+            try:
+                eligible_short = is_tts_eligible_short(reply_text)
+                if expect_voice_out_flag and typing_task and eligible_short:
+                    typing_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await typing_task
+                    typing_task = None
+            
+                want_caption = bool(getattr(settings, "TTS_VOICE_CAPTION_ENABLED",
+                                   os.environ.get("TTS_VOICE_CAPTION_ENABLED", "0") not in ("0","false","False")))
+                caption_len = int(getattr(settings, "TTS_VOICE_CAPTION_LEN",
+                                   os.environ.get("TTS_VOICE_CAPTION_LEN", 160)))
+
+                sent_voice = False
+                if expect_voice_out_flag and eligible_short:
+                    effective_voice_in = voice_in and (not is_group or TTS_REPLY_TO_VOICE_IN_GROUPS)
                     try:
-                        did_set = await REDIS_QUEUE.set(requeue_guard_key, 1, ex=300, nx=True)
+                        sent_voice = await asyncio.wait_for(
+                            maybe_tts_and_send(
+                                chat_id=chat_id,
+                                user_id=user_id,
+                                reply_text=reply_text,
+                                voice_in=effective_voice_in,
+                                force=True,
+                                reply_to=reply_target,
+                                exclusive=not want_caption,
+                                caption_max=(caption_len if want_caption else 0),
+                                user_text_hint=text,
+                            ),
+                            timeout=TTS_TIMEOUT_SEC,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("TTS timed out for chat_id=%s; falling back to text", chat_id)
+                        sent_voice = False
+                    except Exception as e:
+                        logger.warning("TTS error: %s; falling back to text", e)
+                        sent_voice = False
+                if sent_voice:
+                    await _mark_sent_reply_keys(chat_id, msg_id, merged_ids)
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    try:
+                        await push_message(
+                            chat_id,
+                            "system",
+                            "[Delivery] The previous assistant reply was sent as a voice message.",
+                            user_id=user_id,
+                        )
                     except Exception:
-                        did_set = False
-                    if did_set:
-                        try:
-                            async with REDIS_QUEUE.pipeline() as p:
-                                p.lrem(processing_key, 1, raw)
-                                p.rpush(queue_key, raw)
-                                await p.execute()
-                            logger.warning("Requeued job after send failure %s", dedupe_id)
-                            remove_from_processing = False
-                            return
-                        except Exception as ex:
-                            logger.error("Failed to requeue after send failure: %s", ex)
-                            remove_from_processing = False
+                        logger.debug("Failed to push voice-delivery meta", exc_info=True)
+                    try:
+                        await REDIS_QUEUE.set(f"last_out_mode:{chat_id}:{user_id}", "voice", ex=3600)
+                    except Exception:
+                        pass
+                else:
+                    with suppress(Exception):
+                        pass
+                    await _send_reply(chat_id, reply_text, reply_target, msg_id, merged_ids, user_id=user_id)
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    try:
+                        await REDIS_QUEUE.set(f"last_out_mode:{chat_id}:{user_id}", "text", ex=3600)
+                    except Exception:
+                        pass
+            except Exception:
+                with suppress(Exception):
+                    await _delete_if_inflight(REDIS_QUEUE, job_key, value)
+                requeue_guard_key = f"{job_key}:requeued"
+                try:
+                    did_set = await REDIS_QUEUE.set(requeue_guard_key, 1, ex=300, nx=True)
+                except Exception:
+                    did_set = False
+                if did_set:
+                    try:
+                        async with REDIS_QUEUE.pipeline() as p:
+                            p.lrem(processing_key, 1, raw)
+                            p.lpush(queue_key, raw)
+                            await p.execute()
+                        logger.warning("Requeued job after send failure %s", dedupe_id)
+                        remove_from_processing = False
+                        return
+                    except Exception as ex:
+                        logger.error("Failed to requeue after send failure: %s", ex)
+                        remove_from_processing = False
         except asyncio.CancelledError:
             remove_from_processing = False
             with suppress(Exception):
@@ -565,8 +927,13 @@ async def handle_job(raw: str, processing_key: str) -> None:
                 "⏳ Sorry, I was thinking longer than usual. "
                 "Try asking the question again."
             )
+            analytics_fallback = True
+            if is_group and ((trigger == "check_on_topic") or enforce_on_topic):
+                with suppress(Exception):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                return
             try:
-                await _send_reply(chat_id, reply_text, reply_to, msg_id, merged_ids)
+                await _send_reply(chat_id, reply_text, reply_target, msg_id, merged_ids, user_id=user_id)
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
             except Exception:
@@ -581,7 +948,7 @@ async def handle_job(raw: str, processing_key: str) -> None:
                     try:
                         async with REDIS_QUEUE.pipeline() as p:
                             p.lrem(processing_key, 1, raw)
-                            p.rpush(queue_key, raw)
+                            p.lpush(queue_key, raw)
                             await p.execute()
                         logger.warning("Requeued job after fallback send failure %s", dedupe_id)
                         remove_from_processing = False
@@ -598,6 +965,10 @@ async def handle_job(raw: str, processing_key: str) -> None:
             hb_task.cancel()
             with suppress(asyncio.CancelledError):
                 await hb_task
+            if busy_hb:
+                busy_hb.cancel()
+                with suppress(asyncio.CancelledError):
+                    await busy_hb
 
             if remove_from_processing:
                 try:
@@ -605,8 +976,19 @@ async def handle_job(raw: str, processing_key: str) -> None:
                 except Exception as exc:
                     logger.warning("Failed to lrem processed job: %s", exc)
 
-async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
+            if lock_started is not None:
+                hold = time.monotonic() - lock_started
+                if hold > (RESPOND_TIMEOUT + 30):
+                    logger.warning(
+                        "Chat lock held too long: %.2fs (chat_id=%s)",
+                        hold,
+                        chat_id,
+                    )
 
+            if busy_key:
+                await REDIS_QUEUE.delete(busy_key)
+
+async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
     try:
         plen = await redis.llen(processing_key)
         if not plen:
@@ -616,6 +998,13 @@ async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, b
         if not items:
             return
         for raw in items:
+            if isinstance(raw, (bytes, bytearray)):
+                try:
+                    raw = raw.decode("utf-8")
+                except Exception:
+                    with suppress(Exception):
+                        await redis.lrem(processing_key, 1, raw)
+                    continue
             try:
                 job = json.loads(raw)
                 chat_id = int(job.get("chat_id"))
@@ -632,10 +1021,19 @@ async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, b
             except Exception:
                 val = None
 
+            busy_key = f"chatbusy:{chat_id}"
+            try:
+                chat_is_busy = bool(await redis.exists(busy_key))
+            except Exception:
+                chat_is_busy = False
+
+            if chat_is_busy:
+                continue
+
             if not val:
                 token = f"reclaim:{os.getpid()}:{time.time():.3f}"
                 try:
-                    ok = await redis.set(job_key, f"inflight:{token}", ex=JOB_RECLAIM_TTL, nx=True)
+                    ok = await redis.set(job_key, f"inflight:reclaim:{token}", ex=JOB_RECLAIM_TTL, nx=True)
                 except Exception:
                     ok = False
                 if not ok:
@@ -657,10 +1055,31 @@ async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, b
     except Exception as e:
         logger.warning("sweep_processing error: %s", e)
 
+async def _sweep_chatbusy(redis: Redis) -> None:
+    async for key in redis.scan_iter(match="chatbusy:*", count=500):
+        ttl_ms = await redis.pttl(key)
+        if ttl_ms > 0:
+            continue
+        try:
+            chat_id = int(key.split(":")[1])
+        except Exception:
+            await redis.delete(key)
+            continue
+
+        exists = False
+        async for _ in redis.scan_iter(match=f"q:job:{chat_id}:*", count=1):
+            exists = True
+            break
+        if not exists:
+            await redis.delete(key)
+
 async def _sweeper_loop(stop_evt: asyncio.Event, queue_key: str, processing_key: str) -> None:
     try:
         while not stop_evt.is_set():
-            await _sweep_processing(REDIS_QUEUE, queue_key, processing_key, PROCESSING_SWEEP_BATCH)
+            await _sweep_processing(
+                REDIS_QUEUE, queue_key, processing_key, PROCESSING_SWEEP_BATCH
+            )
+            await _sweep_chatbusy(REDIS_QUEUE)
             await asyncio.sleep(_jitter(PROCESSING_SWEEP_INTERVAL, 0.1))
     except asyncio.CancelledError:
         pass
@@ -670,7 +1089,8 @@ async def _cleanup_chat_locks_loop(stop_evt: asyncio.Event) -> None:
         while not stop_evt.is_set():
             await asyncio.sleep(60)
             now = time.time()
-            stale = [cid for cid, ts in list(chat_locks_last_used.items()) if (now - ts) > CHAT_LOCK_TTL]
+            stale = [cid for cid, ts in list(chat_locks_last_used.items())
+                     if (now - ts) > CHAT_LOCK_TTL and pending_per_chat.get(cid, 0) == 0]
             for cid in stale:
                 lock = chat_locks.get(cid)
                 if lock and not lock.locked():
@@ -718,17 +1138,6 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
                 logger.debug("BRPOPLPUSH → %r", raw)
                 await _try_start_task_or_requeue(raw, queue_key, processing_key)
 
-                filled = 0
-                while (len(PROCESSING_TASKS) < MAX_INFLIGHT_TASKS) and (not stop_evt.is_set()):
-                    extra = await REDIS_QUEUE.rpoplpush(queue_key, processing_key)
-                    if not extra:
-                        break
-                    started = await _try_start_task_or_requeue(extra, queue_key, processing_key)
-                    if started:
-                        filled += 1
-                        if (filled % 50) == 0:
-                            await asyncio.sleep(0)
-
             except RedisError as e:
                 logger.error("RedisError in queue_worker: %s — reconnecting", e)
                 with suppress(Exception):
@@ -751,7 +1160,6 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
         sweeper.cancel()
         with suppress(asyncio.CancelledError):
             await sweeper
-
 
 async def _async_main() -> None:
 
@@ -793,20 +1201,22 @@ async def _async_main() -> None:
     with suppress(Exception):
         await BOT.session.close()
 
-    await REDIS_QUEUE.close()
-    await REDIS_QUEUE.connection_pool.disconnect(inuse_connections=True)
-    logger.info("Redis connection closed, bye!")
-
+    try:
+        await shutdown_tts()
+    except Exception:
+        pass
+    with suppress(Exception):
+        await close_redis_pools()
+    logger.info("Redis connections closed, bye!")
 
 def main() -> None:
-    level = os.environ.get("QUEUE_LOG_LEVEL", "DEBUG").upper()
+    level = os.environ.get("QUEUE_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d  %(message)s",
         force=True,
     )
     asyncio.run(_async_main())
-
 
 if __name__ == "__main__":
     main()

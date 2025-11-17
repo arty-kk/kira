@@ -16,6 +16,7 @@ from ..constants.extra_devices import EXTRA_DEVICES, BOT_SIGNATURES
 from ..constants.tone_map import TONE_MAP
 from ..constants.emotional_state import compute_emotional_state
 from ..memory import get_embedding
+from ..executor import EXECUTOR
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +53,42 @@ def _remove_conflicts(devices: List[str]) -> None:
 
 def _compute_hostility(state: Dict[str, float], mods: Dict[str, float]) -> float:
 
-    V        = state.get("valence", 0.0)
-    neg      = max(0.0, -V)
-    arousal  = float(mods.get("arousal_mod",  state.get("arousal",  0.5)))
+    if "valence_mod" in mods:
+        V_signed = 2.0 * float(mods.get("valence_mod", 0.5)) - 1.0
+    else:
+        V_signed = float(state.get("valence", 0.0))
+    neg_val  = max(0.0, -V_signed)
+    arousal  = float(mods.get("arousal_mod",   state.get("arousal",   0.5)))
     dom      = float(mods.get("dominance_mod", state.get("dominance", 0.33)))
-    fatigue  = float(mods.get("fatigue_mod",  state.get("fatigue",  0.0)))
-
-    h = neg * (0.5 + 0.5 * arousal) * (0.5 + 0.5 * dom) * (1.0 - 0.3 * fatigue)
+    fatigue  = float(mods.get("fatigue_mod",   state.get("fatigue",   0.0)))
+    anger    = float(mods.get("anger_mod",     state.get("anger",     0.0)))
+    contempt = float(mods.get("contempt_mod",  state.get("contempt",  0.0)))
+    disgust  = float(mods.get("disgust_mod",   state.get("disgust",   0.0)))
+    rage     = float(mods.get("rage_mod",      state.get("rage",      0.0)))
+    neg_affect = max(
+        neg_val,
+        0.6 * anger + 0.4 * contempt + 0.3 * disgust + 0.5 * rage
+    )
+    h = neg_affect * (0.5 + 0.5 * arousal) * (0.5 + 0.5 * dom) * (1.0 - 0.3 * fatigue)
     return max(0.0, min(1.0, h))
 
+def _ei_code(pct: float) -> str:
+    p = max(0.0, min(100.0, float(pct)))
+    if p <= 25: return "VeryLow"
+    if p <= 40: return "Low"
+    if p <= 54: return "Normal"
+    if p <= 67: return "Moderate"
+    if p <= 79: return "High"
+    if p <= 90: return "VeryHigh"
+    return "Extreme"
+
+def _hostility_code(h: float) -> str:
+    x = max(0.0, min(1.0, float(h)))
+    if x < 0.15: return "FriendlyAttitude"
+    if x < 0.33: return "PositiveAttitude"
+    if x < 0.66: return "NeutralAttitude"
+    if x < 0.85: return "NegativeAttitude"
+    return "HostileAttitude"
 
 def _gather_extras(
     self,
@@ -78,7 +106,13 @@ def _gather_extras(
     chosen: List[str] = []
 
     for device in devices:
-        if device.should_apply(_metric(state, mods, device.metric_key), rng):
+        key = getattr(device, "metric_key", None)
+        value = _metric(state, mods, key) if key else 0.5
+        try:
+            ok = device.should_apply(value, rng)
+        except Exception:
+            ok = False
+        if ok:
             chosen.append(device.name)
             _remove_conflicts(chosen)
             if len(chosen) >= max(2, max_items // 3):
@@ -162,7 +196,8 @@ async def style_guidelines(
 
     snapshot["tone_hist"] = getattr(self, "_tone_hist", [])
 
-    result = await asyncio.to_thread(_compute_guidelines_sync, snapshot)
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(EXECUTOR, _compute_guidelines_sync, snapshot)
 
     chosen_tone = result.get("chosen_tone")
     if chosen_tone:
@@ -178,9 +213,8 @@ async def style_guidelines(
     base_flags = result["flags"]
     extras = _gather_extras(self, state, max_items, mods)
     hostility = _compute_hostility(state, mods)
-    _set_flag(base_flags, "HostilityLevel", f"HostilityLevel={hostility:.2f}")
+    _set_flag(base_flags, "HostilityLevel", f"HostilityLevel={_hostility_code(hostility)}")
 
-    # Offer a follow-up question only when assistance is actually allowed and there is prior context
     def _low_info(s: str) -> bool:
         if not s:
             return True
@@ -190,6 +224,15 @@ async def style_guidelines(
         return bool(re.fullmatch(r"[\W_]+", s2))
 
     allow_mem_fu = (n > 0) and bool(last_msg) and (not _low_info(last_msg))
+    trust_ema = None
+    if uid is not None:
+        try:
+            trust_ema = float(getattr(self, "attachments", {}).get(uid, {}).get("trust_ema", 0.5))
+        except Exception:
+            trust_ema = None
+    min_trust = float(getattr(settings, "MEMORYFOLLOWUP_MIN_TRUST", 0.35))
+    if trust_ema is not None and trust_ema < min_trust:
+        allow_mem_fu = False
     if allow_mem_fu:
         try:
             extras.append("MemoryFollowUp")
@@ -199,7 +242,15 @@ async def style_guidelines(
 
     try:
         if last_msg and (not _low_info(last_msg)):
-            emb = await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
+            emb = getattr(self, "_last_msg_emb", None)
+            if not emb:
+                _t1 = time.perf_counter()
+                try:
+                    emb = await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
+                    logger.info("openai_request name=get_embedding duration_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
+                except asyncio.TimeoutError:
+                    logger.warning("openai_timeout name=get_embedding after_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
+                    raise
             if emb and any(emb):
                 try:
                     hits = await asyncio.wait_for(
@@ -218,7 +269,7 @@ async def style_guidelines(
 
     PRIORITY: Tuple[str, ...] = (
         "EmotionalState", "EmotionalIntensity", "Tone", "AddressTone", "AddressToneScore",
-        "HostilityLevel", "RhetoricalDevices", "EmojiTouch", "VarySentenceLength",
+        "HostilityLevel", "MemoryFollowUp", "RhetoricalDevices", "EmojiTouch", "VarySentenceLength",
     )
     ordered_base: List[str] = []
     for pref in PRIORITY:
@@ -237,9 +288,10 @@ async def style_guidelines(
     seen: Set[str] = set()
     ordered: List[str] = []
     for itm in final:
-        if itm not in seen:
-            seen.add(itm)
-            ordered.append(itm)
+        if itm in seen:
+            continue
+        seen.add(itm)
+        ordered.append(itm)
 
     device_names = {d.name for d in EXTRA_DEVICES}
     rhet = [f for f in ordered if f in device_names and f != "MemoryFollowUp"]
@@ -250,6 +302,15 @@ async def style_guidelines(
         ordered.append("RhetoricalDevices=" + ",".join(rhet))
     if mem:
         ordered.append("MemoryFollowUp")
+
+    PRIORITY_ORDER = (
+        "EmotionalState", "EmotionalIntensity", "Tone", "AddressTone", "AddressToneScore",
+        "HostilityLevel", "MemoryFollowUp", "RhetoricalDevices", "EmojiTouch", "VarySentenceLength",
+    )
+    ordered = sorted(
+        ordered,
+        key=lambda f: next((i for i, p in enumerate(PRIORITY_ORDER) if f.startswith(p)), 999)
+    )
 
     logger.debug("Final style_guidelines (human_mode=%s): %s", human_mode, ordered)
     return ordered[:max_items]
@@ -276,14 +337,18 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     tone_items = [
         (TONE_MAP[k], max(0.0, min(1.0, mods.get(k, state.get(k.replace("_mod",""), 0.0)))))
         for k in TONE_MAP
+        if k != "valence_mod"
     ]
     tone_items.sort(key=lambda t: t[1], reverse=True)
     topk = tone_items[:3] if len(tone_items) >= 3 else tone_items
 
-    valence_mod = float(mods.get("valence_mod", 0.0))
-    arousal_mod = float(mods.get("arousal_mod", 0.5))
+    if "valence_mod" in mods:
+        v_signed = 2.0 * float(mods.get("valence_mod", 0.5)) - 1.0
+    else:
+        v_signed = float(state.get("valence", 0.0))
+    arousal_mod = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
     fatigue     = float(mods.get("fatigue_mod", state.get("fatigue", 0.0)))
-    surprise    = float(state.get("surprise", 0.0))
+    surprise    = float(mods.get("surprise_mod", state.get("surprise", 0.0)))
 
     T = 0.80 + 0.25*(arousal_mod - 0.5) + 0.15*surprise - 0.20*fatigue
     T = max(0.50, min(1.10, T))
@@ -351,6 +416,8 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         selected = [topk[0][0].name]
 
     for name in selected:
+        if name == "Valence":
+            continue
         _append_once(gl, f"Tone+={name}")
 
     emo_state = compute_emotional_state(state, mods, dominant, allow_mixed=True)
@@ -358,13 +425,20 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
 
     # ─── Emotional Intensity (human-like) ─────────────
     avg_tone = (sum(val for _, val in topk) / max(1, len(topk)))
-    ar_mod   = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
-    v_abs    = abs(state.get("valence", 0.0))
-    surprise = float(state.get("surprise", 0.0))
-    fatigue  = float(mods.get("fatigue_mod", state.get("fatigue", 0.0)))
+    ar_mod   = arousal_mod
+    v_abs    = abs(v_signed)
+    surprise = float(mods.get("surprise_mod", state.get("surprise", 0.0)))
+    fatigue  = float(mods.get("fatigue_mod",  state.get("fatigue",  0.0)))
     salience = base_weight if base_weight is not None else 0.0
 
+    calm_pack = (
+        float(mods.get("calm_mod",         state.get("calm",         0.0))) +
+        float(mods.get("tranquility_mod",  state.get("tranquility",  0.0))) +
+        float(mods.get("peace_mod",        state.get("peace",        0.0))) +
+        float(mods.get("comfort_mod",      state.get("comfort",      0.0)))
+    ) / 4.0
     raw_norm = 0.52 * avg_tone + 0.30 * ar_mod + 0.18 * v_abs
+    raw_norm -= 0.35 * calm_pack * (1.0 - ar_mod)
     raw_adj  = (max(0.0, min(1.0, raw_norm)) ** 1.12) * 100.0
 
     if prev_int is None:
@@ -421,7 +495,7 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         intensity_pct = knee + (100.0 - knee) * (1.0 - math.exp(-over / denom))
 
     intensity_pct = max(0.0, min(100.0, intensity_pct))
-    _set_flag(gl, "EmotionalIntensity", f"EmotionalIntensity={int(round(intensity_pct))}")
+    _set_flag(gl, "EmotionalIntensity", f"EmotionalIntensity={_ei_code(intensity_pct)}")
 
     # ─── Dynamic AddressTone ─────────────────────────────────
     addr_score = 0.0
@@ -443,9 +517,10 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         addr_score -= 0.5 * hostility * (0.7 + 0.3 * (1.0 - civ))
         addr_score = max(0.0, min(1.0, addr_score))
 
-        thr_warm     = 0.75 - 0.1 * (1.0 - valence_mod)
+        v_pos = (v_signed + 1.0) * 0.5
+        thr_warm     = 0.65 + 0.20 * (1.0 - v_pos)
         thr_friendly = 0.50
-        thr_neutral  = 0.25 + 0.1 * valence_mod
+        thr_neutral  = 0.25 + 0.15 * v_pos
 
         label = None
         if addr_score >= thr_warm:
@@ -457,12 +532,13 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         else:
             label = "InformalIndifferent"
 
-        if   hostility >= 0.65 and civ < 0.45: label = "DirectBlunt"
-        elif hostility >= 0.45:                label = "DirectCool"
-
-        _set_flag(gl, "AddressTone", f"AddressTone={label}")
+        _label = label
     else:
-        _set_flag(gl, "AddressTone", "AddressTone=InformalNeutral")
+        _label = "InformalNeutral"
+
+    if   hostility >= 0.65 and civ < 0.45: _label = "DirectBlunt"
+    elif hostility >= 0.45:                _label = "DirectCool"
+    _set_flag(gl, "AddressTone", f"AddressTone={_label}")
 
     _set_flag(gl, "AddressToneScore", f"AddressToneScore={addr_score:.2f}")
 

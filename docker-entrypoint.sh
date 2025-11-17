@@ -16,7 +16,9 @@ echo "✅ Postgres is up!"
 echo "🔄 Applying Alembic migrations…"
 if [ "${ENABLE_SCHEDULER:-false}" = "true" ]; then
   echo "🔄 Applying Alembic migrations (scheduler mode)…"
-  python -m alembic -c alembic.ini upgrade head
+  cd /app
+  export PYTHONPATH=/app:${PYTHONPATH:-}
+  alembic -c /app/alembic.ini upgrade head
 else
   echo "⏭ Skipping migrations (worker mode)…"
 fi

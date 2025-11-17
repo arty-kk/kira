@@ -6,20 +6,22 @@ import json
 import random
 import hashlib
 import time
+import inspect
 import logging
 import re
 import unicodedata
 import weakref
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, ClassVar, Optional, Any, TypeVar
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Callable
 from types import MethodType
 
 from app.config import settings
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
+from app.core.memory import record_activity as _mem_record_activity
 
 from .memory import PersonaMemory, get_embedding
 from .ltm import LongTermMemory
@@ -45,21 +47,49 @@ from .constants.emotions import (
     TERTIARY_EMOTIONS, DYAD_KEYS, TRIAD_KEYS,
     COGNITIVE_METRICS, EXTRA_TRIGGER_METRICS,
 )
+from .constants.user_prefs import (
+    ZODIAC_SET, SOCIALITY_SET, ARCHETYPES_SET, TEMP_KEYS, MAX_ARCH
+)
 
 logger = logging.getLogger(__name__)
 
+def _normalize_temperament(t: dict | None, default_json: str) -> dict:
+    try:
+        default_map = json.loads(default_json)
+    except Exception:
+        default_map = {"sanguine": 0.4, "choleric": 0.25, "phlegmatic": 0.20, "melancholic": 0.15}
+
+    try:
+        base = {k: float(t.get(k, 0.0)) for k in TEMP_KEYS} if isinstance(t, dict) else {}
+    except Exception:
+        base = {}
+    if not base or not any(base.values()):
+        return default_map
+
+    base = {k: max(0.0, min(1.0, v)) for k, v in base.items()}
+    s = sum(base.values())
+    if s <= 0.0:
+        return default_map
+    base = {k: (v / s) for k, v in base.items()}
+    return base
 
 @dataclass
 class Persona:
     chat_id: int
-    name: str = settings.BOT_PERSONA_NAME
-    gender: str = settings.BOT_PERSONA_GENDER
-    age: int = settings.BOT_PERSONA_AGE
-    bio: str = settings.BOT_PERSONA_BIO
-    zodiac: str = settings.BOT_PERSONA_ZODIAC
+    name: str = settings.PERSONA_NAME
+    age: int = settings.PERSONA_AGE
+    gender: str = settings.PERSONA_GENDER
+    zodiac: str = settings.PERSONA_ZODIAC
     temperament: Dict[str, float] = field(
-        default_factory=lambda: json.loads(settings.BOT_PERSONA_TEMPERAMENT)
+        default_factory=lambda: json.loads(settings.PERSONA_TEMPERAMENT)
     )
+    sociality: str = field(default="extrovert")
+    archetypes: list[str] = field(
+        default_factory=lambda: json.loads(
+            getattr(settings, "PERSONA_ARCHETYPES", '["Rebel","Jester","Sage"]')
+        )
+    )
+    role: str = settings.PERSONA_ROLE
     state: Dict[str, float] = field(init=False, default_factory=dict)
     change_rates: Dict[str, float] = field(init=False, default_factory=dict)
     user_gender: str = field(init=False, default="unknown", repr=False)
@@ -88,10 +118,12 @@ class Persona:
     _style_mods_version: int = field(init=False, default=-1)
     _last_user_msg: str = field(init=False, default="")
     attachments: Dict[int, dict] = field(init=False, default_factory=dict)
-    _rds: object = field(init=False, repr=False, compare=False, default=None)
+    _rds_loop_id: Optional[int] = field(init=False, repr=False, compare=False, default=None)
     _user_locks: Dict[int, asyncio.Lock] = field(init=False, default_factory=dict, repr=False, compare=False)
     _bg_started: bool = field(init=False, default=False)
     _bg_task: Optional[asyncio.Task] = field(init=False, default=None)
+    _bg_start_lock: asyncio.Lock = field(init=False, repr=False, compare=False)
+    _worker_task: Optional[asyncio.Task] = field(init=False, default=None, repr=False, compare=False)
     _spawned_tasks: set = field(init=False, default_factory=set, repr=False, compare=False)
     _memfu_cap: int = field(init=False, default=256)
     _memfu_ttl: float = field(init=False, default=3600.0)
@@ -107,18 +139,18 @@ class Persona:
     _update_weight = _update_weight
     _clamp = staticmethod(_global_clamp)
     
-
     _EMO_LABEL_MAP: ClassVar[dict[str, str]] = EMO_LABELS
-
 
     def __post_init__(self) -> None:
         self._lock = asyncio.Lock()
         self._bg_queue = asyncio.Queue(maxsize=getattr(settings, "BG_QUEUE_MAX", 1000))
         self._mods_lock = asyncio.Lock()
         self._proc_sem = asyncio.Semaphore(1)
+        self._bg_start_lock = asyncio.Lock()
         self._rng = random.Random(self.chat_id)
         self._restored_evt = asyncio.Event()
         self._in_peak = False
+        self._last_mono = time.monotonic()
         self._last_valence_peak_ts = time.time()
         self._style_mods_version = -1
         for fn in (
@@ -139,29 +171,12 @@ class Persona:
         except RuntimeError:
             self._loop_id = None
 
-        if self.change_rates:
-            min_rate = min(self.change_rates.values())
-            max_rate = max(self.change_rates.values())
-        else:
-            min_rate = max_rate = 0.5
-        span = max_rate - min_rate
-        MIN_SPAN = 0.2
-        if span < MIN_SPAN:
-            mid = (max_rate + min_rate) / 2
-            min_rate = mid - MIN_SPAN/2
-            max_rate = mid + MIN_SPAN/2
-            span = MIN_SPAN
-        normed = {
-            m: self._clamp((self.change_rates.get(m, 0.0) - min_rate) / span, 0.0, 1.0)
-            for m in ALL_METRICS
-        }
         center = settings.EMO_INITIAL_CENTER
-        scale  = settings.EMO_INITIAL_SCALE
-        self.state = {
-            m: center + (normed[m] - 0.5) * scale
-            for m in ALL_METRICS
-        }
-        self.state["valence"] = 0.0
+        self.state = {m: center for m in ALL_METRICS}
+        try:
+            self.state["valence"] = float(getattr(settings, "VALENCE_BASELINE", 0.15))
+        except Exception:
+            self.state["valence"] = 0.15
         for subs in SECONDARY_EMOTIONS.values():
             for name in subs.keys():
                 self.state.setdefault(name, 0.0)
@@ -177,7 +192,8 @@ class Persona:
         self.state.setdefault("dominance", 0.5)
         self.state_version = 0
         extra_ema = ["confidence", "humor", "charisma", "authority", "wit"]
-        self.ema = {e: 0.5 for e in PRIMARY_EMOTIONS + ["valence", "arousal", "energy", "fatigue"] + extra_ema}
+        self.ema = {e: 0.5 for e in PRIMARY_EMOTIONS + ["arousal", "energy", "fatigue"] + extra_ema}
+        self.ema["valence"] = 0.0
         self.dominant_threshold = settings.EMO_THRESHOLD_DOMINANT
         self.dominant_locked = False
         self.current_dominant = None
@@ -197,18 +213,19 @@ class Persona:
             self.enhanced_memory.parent = self
         self.ltm = LongTermMemory()
         try:
-            loop = asyncio.get_running_loop()
-            self._bg_task = self._spawn(self._start_bg_worker())
-            self._spawn(self._notify_ready())
-            self._bg_started = True
+            asyncio.get_running_loop()
         except RuntimeError:
-            logger.warning("Persona init: no running event loop detected; background tasks will be started later.")
-            self._bg_started = False
+            logger.warning("Persona init: no running event loop detected; background tasks will start lazily.")
         self._last_mood_change_ts = time.time()
         self._prev_mood = self.mood
         self._text_analyzer = TextAnalyzer()
         self.attachments = {}
         self._rds = None
+        try:
+            cap = int(getattr(settings, "MEM_RECENT_SKETCH_CAP", 100))
+        except Exception:
+            cap = 100
+        self._recent_sketch = deque(maxlen=max(10, cap))
         try:
             self._memfu_cap = int(getattr(settings, "MEMFU_LOCAL_CACHE_MAX", 256))
         except Exception:
@@ -218,6 +235,21 @@ class Persona:
         except Exception:
             self._memfu_ttl = 3600.0
 
+    async def ready(self, timeout: float | None = 5.0) -> bool:
+        try:
+            await self._ensure_background_started()
+            if self._restored_evt.is_set():
+                return True
+            if timeout is None or timeout <= 0:
+                return False
+            try:
+                await asyncio.wait_for(self._restored_evt.wait(), timeout=timeout)
+                return True
+            except asyncio.TimeoutError:
+                return False
+        except Exception:
+            logger.debug("Persona.ready() failed", exc_info=True)
+            return False
 
     def _user_lock(self, uid: int) -> asyncio.Lock:
         lock = self._user_locks.get(uid)
@@ -240,32 +272,36 @@ class Persona:
             self._user_locks[uid] = lock
         return lock
 
-
     async def analyze_text(self, text: str) -> Dict[str, float]:
         return await self._text_analyzer.analyze_text(text)
-
 
     async def _notify_ready(self) -> None:
         await self.enhanced_memory.ready()
         self._restored_evt.set()
 
-
     async def _start_bg_worker(self) -> None:
-        await self._bg_worker()
+        if self._worker_task and not self._worker_task.done():
+            return
 
+        self._worker_task = asyncio.create_task(self._bg_worker(), name="persona-bg-worker")
+        try:
+            await self._worker_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("persona BG worker crashed")
 
     async def _ensure_background_started(self) -> None:
-        if self._bg_started:
-            return
         try:
-            loop = asyncio.get_running_loop()
-            if not self._bg_started:
-                self._bg_task = self._spawn(self._start_bg_worker())
-                self._spawn(self._notify_ready())
-                self._bg_started = True
+            _ = asyncio.get_running_loop()
         except RuntimeError:
-            pass
-
+            return
+        async with self._bg_start_lock:
+            if self._bg_started and self._worker_task and not self._worker_task.done():
+                return
+            self._bg_task = self._spawn(self._start_bg_worker, name="persona-start-worker")
+            self._spawn(self._notify_ready, name="persona-notify-ready")
+            self._bg_started = True
 
     def tweak(self, knob: str, delta: float) -> None:
         if knob not in COGNITIVE_METRICS:
@@ -276,7 +312,6 @@ class Persona:
             0.0,
             1.0,
         )
-
 
     async def to_prompt(self, guidelines: List[str]) -> str:
 
@@ -319,15 +354,18 @@ class Persona:
         #logger.info("   ↳ style_modifiers END (t=%.3fs)", time.time() - start_ts)
         #mods_str = "; ".join(f"{k}={v:.2f}" for k, v in (mods or {}).items())
         #cr_str = "; ".join(f"{m}={self.change_rates.get(m,0.0):.2f}" for m in ("valence", "arousal", "stress", "anxiety"))
-        guide_str = ", ".join(unique_guides)
+        #guide_str = ", ".join(unique_guides)
 
         sections: List[str] = [
             f"Your Name: {self.name}.",
+            f"Your Age: {self.age} years old.",
             f"Your Gender: {self.gender}.",
-            f"Your Zodiac Sign: {self.zodiac}.",
+            f"Your Zodiac: {self.zodiac}.",
             f"Your Temperament: {json.dumps(self.temperament, ensure_ascii=False, sort_keys=True, separators=(',',':'))}.",
-            f"Your Bio: {self.bio}.",
-            f"Style Guidelines: {guide_str}",
+            f"Your Sociality: {self.sociality}.",
+            f"Your Archetypes: {', '.join(self.archetypes) or 'None'}.",
+            f"Your Role: {self.role}.",
+            #f"Your Mood & Character Modifiers: {guide_str}",
             #f"Mood State: {self.mood}",
             #f"Internal Metrics: {metrics_str}",
             #f"ChangeRates: {cr_str}",
@@ -337,10 +375,17 @@ class Persona:
         if want_any_memory and has_query:
             try:
                 if query_emb is None:
-                    query_emb = await asyncio.wait_for(
-                        get_embedding(self._last_user_msg),
-                        timeout=15.0
-                    )
+                    t0 = time.perf_counter()
+                    try:
+                        query_emb = await asyncio.wait_for(
+                            get_embedding(self._last_user_msg),
+                            timeout=15.0
+                        )
+                        logger.info("openai.embedding t=%.3fs", time.perf_counter() - t0)
+                    except Exception as e:
+                        logger.warning("openai.embedding failed after %.3fs: %s",
+                                       time.perf_counter() - t0, e)
+                        query_emb = None
                 else:
                     pass
             except Exception as e:
@@ -383,11 +428,11 @@ class Persona:
                     timeout=3.0
                 )
                 if ltm_pick.get("fact"):
-                    sections.append(f"ProfileFacts: {ltm_pick['fact']}")
+                    sections.append(f"USER.ProfileFacts: {ltm_pick['fact']}")
                 if ltm_pick.get("boundary"):
-                    sections.append(f"UserBoundary: {ltm_pick['boundary']}")
+                    sections.append(f"USER.UserBoundary: {ltm_pick['boundary']}")
                 if ltm_pick.get("plan"):
-                    sections.append(f"Commitment: {ltm_pick['plan']}")
+                    sections.append(f"USER.Commitment: {ltm_pick['plan']}")
             except Exception:
                 logger.debug("ltm.pick_snippets failed", exc_info=True)
 
@@ -404,7 +449,8 @@ class Persona:
                     timeout=3.0
                 )
                 if prof_pairs:
-                    sections.append("UserProfile: " + "; ".join(f"{k}={v}" for k, v in prof_pairs))
+                    sections.append("USER.Profile: " + "; ".join(f"{k}={v}" for k, v in prof_pairs))
+                    sections.append("Rule: Do NOT conflate USER.Profile with your own attributes.")
                     try:
                         await asyncio.wait_for(
                             self.ltm.mark_profile_used(
@@ -423,6 +469,12 @@ class Persona:
         selected = {}
         if want_mem_followup:
             sim_thr = getattr(settings, "MEMORYFOLLOWUP_SIM_THRESHOLD", 0.60)
+            try:
+                uid0 = self._last_uid or 0
+                trust_ema = float(self.attachments.get(uid0, {}).get("trust_ema", 0.5))
+                sim_thr = min(0.95, max(0.50, sim_thr + 0.15 * max(0.0, 0.5 - trust_ema)))
+            except Exception:
+                pass
             now_iso = datetime.utcnow().isoformat() + "Z"
             logger.debug("   ↳ select_relevant_memories START")
             have_any = bool(past_cands or present_cands or future_cands)
@@ -529,7 +581,7 @@ class Persona:
 
         #if self._last_user_msg:
             #tone_sample = self._safe_snippet(self._last_user_msg)[:120]
-            #sections.append(f"MimicUserTone: {tone_sample}")
+            #sections.append(f"MimicUserStyle: {tone_sample}")
 
         if want_recall_snippet and has_query and (query_emb is not None):
             try:
@@ -540,6 +592,29 @@ class Persona:
         elif want_recall_snippet and has_query:
             logger.debug("to_prompt: skip RecallPastSnippet because embedding is unavailable")
 
+        if want_recall_snippet and has_query:
+            try:
+                q = (self._last_user_msg or "").lower()
+                if q and hasattr(self, "_recent_sketch"):
+                    def _sim(a: str, b: str) -> float:
+                        sa = {t for t in re.findall(r"\w{3,}", a.lower())}
+                        sb = {t for t in re.findall(r"\w{3,}", b.lower())}
+                        if not sa or not sb:
+                            return 0.0
+                        inter = len(sa & sb)
+                        union = len(sa | sb)
+                        return inter / union if union else 0.0
+                    weak_hits = []
+                    for item in list(self._recent_sketch):
+                        s = _sim(q, item.get("text",""))
+                        if s >= float(getattr(settings, "MEM_RECENT_SKETCH_SIM_THR", 0.35)):
+                            weak_hits.append((item["text"], s))
+                    weak_hits.sort(key=lambda x: x[1], reverse=True)
+                    for t, s in weak_hits[:2]:
+                        sections.append(f"MemoryHint[{0.50 + 0.40*s:.2f}]: {t}")
+            except Exception:
+                logger.debug("weak-sketch recall failed", exc_info=True)
+
         result = "\n".join(sections)
         total = time.time() - start_ts
         logger.debug("✔ to_prompt END chat=%s version=%s len(sections)=%d t=%.3fs",
@@ -549,14 +624,118 @@ class Persona:
         self._prompt_cache = result
         return result
 
+    def apply_overrides(self, prefs: Optional[dict] = None, *, reset: bool = False) -> None:
+        if reset or prefs is None:
+            self.name = getattr(settings, "PERSONA_NAME", self.name)
+            self.age = getattr(settings, "PERSONA_AGE", self.age)
+            self.gender = getattr(settings, "PERSONA_GENDER", self.gender)
+            self.zodiac = getattr(
+                settings,
+                "PERSONA_ZODIAC",
+                getattr(settings, "PERSONA_ZODIAC", self.zodiac),
+            )
+
+            temp_json = getattr(
+                settings,
+                "PERSONA_TEMPERAMENT",
+                getattr(settings, "PERSONA_TEMPERAMENT", ""),
+            )
+            try:
+                self.temperament = json.loads(temp_json)
+            except Exception:
+                self.temperament = {
+                    "sanguine": 0.4,
+                    "choleric": 0.25,
+                    "phlegmatic": 0.20,
+                    "melancholic": 0.15,
+                }
+
+            self.sociality = "extrovert"
+            try:
+                arch_json = getattr(settings, "PERSONA_ARCHETYPES", '["Rebel","Jester","Sage"]')
+                self.archetypes = json.loads(arch_json)
+            except Exception:
+                self.archetypes = ["Rebel","Jester","Sage"]
+            self.role = getattr(settings, "PERSONA_ROLE", self.role)
+
+            self.state_version += 1
+            self._last_prompt_guidelines = None
+            return
+
+        if not isinstance(prefs, dict):
+            return
+
+        name = prefs.get("name")
+        if isinstance(name, str) and name.strip():
+            self.name = name.strip()[:64]
+
+        age = prefs.get("age")
+        try:
+            ai = int(age)
+            if 1 <= ai <= 120:
+                self.age = ai
+        except (TypeError, ValueError):
+            pass
+
+        gender = prefs.get("gender")
+        if isinstance(gender, str) and gender in ("male", "female"):
+            self.gender = gender
+
+        z = prefs.get("zodiac")
+        if isinstance(z, str) and z in ZODIAC_SET:
+            self.zodiac = z
+
+        t = _normalize_temperament(
+            prefs.get("temperament"),
+            getattr(
+                settings,
+                "PERSONA_TEMPERAMENT",
+                getattr(settings, "PERSONA_TEMPERAMENT", "{}"),
+            ),
+        )
+        self.temperament = t
+
+        s = prefs.get("sociality")
+        if isinstance(s, str) and s in SOCIALITY_SET:
+            self.sociality = s
+
+        a = prefs.get("archetypes")
+        if isinstance(a, list):
+            norm = []
+            seen = set()
+            for x in a:
+                if not x:
+                    continue
+                v = str(x)
+                if v in ARCHETYPES_SET and v not in seen:
+                    seen.add(v)
+                    norm.append(v)
+                if len(norm) >= MAX_ARCH:
+                    break
+            if norm:
+                self.archetypes = norm
+
+        role = prefs.get("role")
+        if isinstance(role, str) and role.strip():
+            self.role = role.strip()[:1000]
+
+        self.state_version += 1
+        self._last_prompt_guidelines = None
 
     async def _ensure_rds(self):
-        if self._rds is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return None
+        cur_id = id(loop)
+        if (self._rds is None) or (self._rds_loop_id != cur_id):
             try:
                 from app.core.memory import get_redis
                 self._rds = get_redis()
+                self._rds_loop_id = cur_id
             except Exception:
                 self._rds = None
+                self._rds_loop_id = None
         return self._rds
 
     async def _persist_attachment(self, uid: int) -> None:
@@ -593,11 +772,16 @@ class Persona:
                 "pos_accum": rec.get("pos_accum", 0.0),
                 "signals": json.dumps(rec.get("signals", {})),
             })
+            ttl = int(getattr(settings, "ATTACHMENT_PERSIST_TTL_SECS", 30 * 24 * 3600))
+            if ttl > 0:
+                try:
+                    await rds.expire(key, ttl)
+                except Exception:
+                    logger.debug("persist_attachment expire failed", exc_info=True)
             rec["_persist_ts"] = time.time()
             rec["_persist_value"] = rec.get("value", 0.0)
         except Exception:
             logger.debug("persist_attachment failed", exc_info=True)
-
 
     async def _load_attachment(self, uid: int) -> None:
         if not getattr(settings, "ATTACHMENT_PERSIST", False):
@@ -652,7 +836,6 @@ class Persona:
                 self.attachments[uid] = rec
         except Exception:
             logger.debug("load_attachment failed", exc_info=True)
-
 
     async def select_relevant_memories(
         self,
@@ -721,11 +904,12 @@ class Persona:
             "required": ["past", "present", "future"],
             "additionalProperties": False,
         }
+        t0 = time.perf_counter()
         try:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
-                    model=settings.BASE_MODEL,
+                    model=settings.REASONING_MODEL,
                     instructions=system_prompt,
                     input=user_prompt,
                     text={
@@ -740,6 +924,10 @@ class Persona:
                     max_output_tokens=250,
                 ),
                 timeout=30.0,
+            )
+            logger.info(
+                "openai.timing: responses.create model=%s input_chars=%d duration=%.3fs",
+                settings.REASONING_MODEL, len(user_prompt), time.perf_counter() - t0
             )
             content = (_get_output_text(resp) or "").strip()
         except Exception:
@@ -788,7 +976,7 @@ class Persona:
                 "future":  [candidates["future"][i]  for i in future_idx]  if candidates.get("future")  else [],
             }
         except Exception:
-            logger.warning("Memory selection JSON parse failed, fallback to top-2 each")
+            logger.debug("Memory selection JSON parse failed, fallback to top-2 each")
             sel = {
                 "past":    candidates.get("past", [])[:2],
                 "present": candidates.get("present", [])[:2],
@@ -853,7 +1041,6 @@ class Persona:
             f"Weight={weight_pct} | Attach={attach_str} | MemEntries={mem_count}"
         )
     
-
     async def process_interaction(
         self,
         uid: int,
@@ -862,13 +1049,13 @@ class Persona:
     ) -> None:
 
         try:
+            self._spawn(lambda: _mem_record_activity(self.chat_id, uid))
+        except Exception:
+            logger.debug("core.memory.record_activity spawn failed", exc_info=True)
+        try:
             await self.ltm.record_activity(uid)
         except Exception:
-            logger.debug("record_activity error", exc_info=True)
-        try:
-            self._spawn(self.ltm.maybe_prune(uid))
-        except Exception:
-            pass
+            logger.debug("ltm.record_activity error", exc_info=True)
         
         await self._ensure_background_started()
         return await _process_interaction_impl(self, uid, text, user_gender=user_gender,)
@@ -891,11 +1078,43 @@ class Persona:
     async def close(self) -> None:
         t = getattr(self, "_bg_task", None)
         if t and not t.done():
+            try:
+                n = int(getattr(settings, "BG_WORKER_CONCURRENCY", 8))
+            except Exception:
+                n = 8
+            try:
+                q = getattr(self, "_bg_queue", None)
+                if q is not None and n > 0:
+                    sent = 0
+                    for _ in range(n):
+                        try:
+                            q.put_nowait((None, None, None, None, None))
+                            sent += 1
+                        except asyncio.QueueFull:
+                            break
+                    if sent:
+                        timeout = float(getattr(settings, "BG_DRAIN_TIMEOUT", 1.5))
+                        try:
+                            await asyncio.wait_for(t, timeout=timeout)
+                        except asyncio.TimeoutError:
+                            pass
+            except Exception:
+                logger.debug("persona.close drain failed", exc_info=True)
             t.cancel()
             try:
                 await t
             except asyncio.CancelledError:
                 pass
+        wt = getattr(self, "_worker_task", None)
+        if wt and not wt.done():
+            wt.cancel()
+            try:
+                await wt
+            except asyncio.CancelledError:
+                pass
+        self._worker_task = None
+        self._bg_started = False
+        self._bg_task = None
         pending = [x for x in list(self._spawned_tasks) if not x.done()]
         for x in pending:
             x.cancel()
@@ -920,18 +1139,50 @@ class Persona:
             return text.replace("\n", " ").strip()
 
     T = TypeVar("T")
-    def _spawn(self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
-        t: asyncio.Task[T] = asyncio.create_task(coro)
+    def _spawn(
+        self,
+        fn_or_coro: Callable[[], Coroutine[Any, Any, T]] | Coroutine[Any, Any, T] | asyncio.Task[T],
+        *,
+        name: Optional[str] = None,
+    ) -> asyncio.Task[T]:
+
+        if isinstance(fn_or_coro, asyncio.Task):
+            t: asyncio.Task[T] = fn_or_coro
+        elif inspect.iscoroutine(fn_or_coro):
+            raise TypeError("_spawn(): pass a callable (async function) or Task, not a coroutine object")
+        elif callable(fn_or_coro):
+            if inspect.iscoroutinefunction(fn_or_coro):
+                t = asyncio.create_task(fn_or_coro(), name=name or "spawned-task")
+            else:
+                async def _runner_call_maybe_coro(fn: Callable[[], Any]):
+                    res = await asyncio.to_thread(fn)
+                    if inspect.iscoroutine(res):
+                        return await res
+                    return res
+                t = asyncio.create_task(_runner_call_maybe_coro(fn_or_coro), name=name or "spawned-task")
+        else:
+            raise TypeError(f"_spawn(): expected coroutine/callable/Task, got {type(fn_or_coro)!r}")
+
         self._spawned_tasks.add(t)
 
         def _done(fut: asyncio.Task[T]) -> None:
             self._spawned_tasks.discard(fut)
+            if fut.cancelled():
+                return
             try:
-                _ = fut.result()
+                exc = fut.exception()
             except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Uncaught exception in background task %r", fut)
+                return
+            if exc is not None:
+                logger.error("Uncaught exception in background task %r", fut, exc_info=(type(exc), exc, exc.__traceback__))
 
         t.add_done_callback(_done)
         return t
+
+    def spawn_coro(self, coro_fn: Callable[..., Coroutine[Any, Any, T]], *args, name: Optional[str] = None, **kwargs) -> asyncio.Task[T]:
+
+        if not inspect.iscoroutinefunction(coro_fn):
+            raise TypeError("spawn_coro expects an async function")
+        async def _runner():
+            return await coro_fn(*args, **kwargs)
+        return self._spawn(_runner, name=name or "spawned-coro")

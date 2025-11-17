@@ -59,4 +59,3 @@ async def price_fetcher() -> List[str]:
         return ["💹 Crypto Market 💹\n_____________________________\n<i>No data available.</i>"]
 
     return ["\n".join(lines)]
-

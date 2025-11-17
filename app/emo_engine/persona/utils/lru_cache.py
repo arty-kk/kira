@@ -7,7 +7,6 @@ class LRUCache(OrderedDict):
         self._maxsize = maxsize
         super().__init__(*args, **kwargs)
 
-
     def __getitem__(self, key):
         value = super().__getitem__(key)
         self.move_to_end(key)

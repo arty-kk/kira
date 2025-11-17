@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Any
 
@@ -47,41 +48,66 @@ def _get_env(
                 logger.warning("Fallback conversion failed for %s", name)
         return default
 
-
 @dataclass
 class Settings:
     
     # ─── OpenAI ────────────────────────────────────────────────────
     OPENAI_API_KEY: str = field(default_factory=lambda: _get_env("OPENAI_API_KEY", required=True))
-    OPENAI_MAX_CONCURRENT_REQUESTS: int = field(default_factory=lambda: _get_env("OPENAI_MAX_CONCURRENT_REQUESTS", "100", conv=int))
+    OPENAI_MAX_CONCURRENT_REQUESTS: int = field(default_factory=lambda: _get_env("OPENAI_MAX_CONCURRENT_REQUESTS", "300", conv=int))
+    APPROX_CHARS_PER_TOKEN: float = field(default_factory=lambda: _get_env("APPROX_CHARS_PER_TOKEN", "3.8", conv=float))
     #Models for Various Tasks
     BASE_MODEL: str = field(default_factory=lambda: _get_env("BASE_MODEL", "gpt-4.1-nano"))
-    RESPONSE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_MODEL", "gpt-4.1"))
     REASONING_MODEL: str = field(default_factory=lambda: _get_env("REASONING_MODEL", "gpt-4.1-mini"))
+    RESPONSE_FREE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_FREE_MODEL", "gpt-4.1-mini"))
+    RESPONSE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_MODEL", "gpt-4.1"))
+    RESPONSE_REASONING_EFFORT: str = field(default_factory=lambda: _get_env("RESPONSE_REASONING_EFFORT", "low", conv=str))
+    RESPONSE_VERBOSITY: str = field(default_factory=lambda: _get_env("RESPONSE_VERBOSITY", "medium", conv=str))
     POST_MODEL: str = field(default_factory=lambda: _get_env("POST_MODEL", "gpt-4.1"))
-    EMBEDDING_MODEL: str = field(default_factory=lambda: _get_env("EMBEDDING_MODEL", "text-embedding-3-large"))
-    EMBEDDING_TIMEOUT: int = field(default_factory=lambda: _get_env("EMBEDDING_TIMEOUT", "10", conv=int))
-    EMBEDDING_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("EMBEDDING_MAX_CONCURRENCY", "100", conv=int))
     MODERATION_MODEL: str = field(default_factory=lambda: _get_env("MODERATION_MODEL", "omni-moderation-latest"))
-    OFFTOPIC_EMBEDDING_MODEL: str = field(init=False)
+    TRANSCRIPTION_MODEL: str = field(default_factory=lambda: _get_env("TRANSCRIPTION_MODEL", "whisper-1", conv=str))
+    BASE_MODEL_TIMEOUT: float = field(default_factory=lambda: _get_env("BASE_MODEL_TIMEOUT", "30.0", conv=float))
+    REASONING_MODEL_TIMEOUT: float = field(default_factory=lambda: _get_env("REASONING_MODEL_TIMEOUT", "60.0", conv=float))
+    RESPONSE_FREE_MODEL_TIMEOUT: float = field(default_factory=lambda: _get_env("RESPONSE_FREE_MODEL_TIMEOUT", "90.0", conv=float))
+    RESPONSE_MODEL_TIMEOUT: float = field(default_factory=lambda: _get_env("RESPONSE_MODEL_TIMEOUT", "180.0", conv=float))
+    POST_MODEL_TIMEOUT: float = field(default_factory=lambda: _get_env("POST_MODEL_TIMEOUT", "180.0", conv=float))
+    # Embedding
+    EMBEDDING_MODEL: str = field(default_factory=lambda: _get_env("EMBEDDING_MODEL", "text-embedding-3-large"))
+    EMBEDDING_MODEL_SMALL: str = field(default_factory=lambda: _get_env("EMBEDDING_MODEL_SMALL", "text-embedding-3-small"))
+    EMBEDDING_TIMEOUT: int = field(default_factory=lambda: _get_env("EMBEDDING_TIMEOUT", "60", conv=int))
+    EMBEDDING_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("EMBEDDING_MAX_CONCURRENCY", "100", conv=int))
+    EMBED_BATCH_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BATCH_SIZE", "128", conv=int))
 
     # ─── Telegram ───────────────────────────────────────
     TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN", required=True))
     TELEGRAM_BOT_USERNAME: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_USERNAME", required=True))
     TELEGRAM_BOT_ID: int = field(default_factory=lambda: _get_env("TELEGRAM_BOT_ID", required=True, conv=int))
-    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "GalaxyBee"))
+    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Жириновский Владимир Вольфович"))
     DEFAULT_LANG: str = field(default_factory=lambda: _get_env("DEFAULT_LANG", "en"))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
+    DIALOGS_DIR: str = field(default_factory=lambda: _get_env("DIALOGS_DIR", "dialogs", conv=str))
+    ENABLE_DIALOG_LOGGING: bool = field(
+        default_factory=lambda: _get_env("ENABLE_DIALOG_LOGGING", "false",conv=lambda v: str(v).lower() in ("1","true","yes","on"))
+    )
+    #TG Posting
+    TG_PERSONA_CHAT_ID: int = field(default_factory=lambda: _get_env("TG_PERSONA_CHAT_ID", "11", conv=int))
+    TG_CHANNEL_ID: int = field(default_factory=lambda: _get_env("TG_CHANNEL_ID", "0", conv=int))
+    SCHED_ENABLE_TG_POSTS: bool = field(default_factory=lambda: _get_env("SCHED_ENABLE_TG_POSTS", "true").lower() == "true")
+    SCHED_TG_MIN_POSTS: int = field(default_factory=lambda: _get_env("SCHED_TG_MIN_POSTS", "4", conv=int))
+    SCHED_TG_MAX_POSTS: int = field(default_factory=lambda: _get_env("SCHED_TG_MAX_POSTS", "7", conv=int))
+    SCHED_TG_START_HOUR: int = field(default_factory=lambda: _get_env("SCHED_TG_START_HOUR", "8", conv=int))
+    SCHED_TG_END_HOUR: int = field(default_factory=lambda: _get_env("SCHED_TG_END_HOUR", "23", conv=int))
     #UI / Buttons
     ENABLE_PRIVATE_STATIC_WELCOME: bool = field(default_factory=lambda: _get_env("ENABLE_PRIVATE_STATIC_WELCOME", "false").lower() == "true")
-    ENABLE_PRIVATE_AI_WELCOME: bool = field(default_factory=lambda: _get_env("ENABLE_PRIVATE_AI_WELCOME", "false").lower() == "true")
+    ENABLE_PRIVATE_AI_WELCOME: bool = field(default_factory=lambda: _get_env("ENABLE_PRIVATE_AI_WELCOME", "true").lower() == "true")
+    ENABLE_PRIVATE_WELCOME_VIDEO: bool = field(default_factory=lambda: _get_env("ENABLE_PRIVATE_WELCOME_VIDEO", "false").lower() == "true")
     ENABLE_GROUP_AI_WELCOME: bool = field(default_factory=lambda: _get_env("ENABLE_GROUP_AI_WELCOME", "false").lower() == "true")
     CLEAR_SETUP_MESSAGES: bool = field(default_factory=lambda: _get_env("CLEAR_SETUP_MESSAGES", "false").lower() == "true")
     SHOW_REQUESTS_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_REQUESTS_BUTTON", "false").lower() == "true")
-    SHOW_LINK_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_LINK_BUTTON", "false").lower() == "true")
+    SHOW_CHANNEL_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_CHANNEL_BUTTON", "false").lower() == "true")
     SHOW_TOKEN_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_TOKEN_BUTTON", "false").lower() == "true")
-    SHOW_MODE_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_MODE_BUTTON", "false").lower() == "true")
     SHOW_FAQ_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_FAQ_BUTTON", "false").lower() == "true")
+    SHOW_PERSONA_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_PERSONA_BUTTON", "true").lower() == "true")
+    SHOW_API_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_API_BUTTON", "true").lower() == "true")
     #Webhook 
     WEBHOOK_URL: str = field(default_factory=lambda: _get_env("WEBHOOK_URL", required=True))
     WEBHOOK_PATH: str = field(default_factory=lambda: _get_env("WEBHOOK_PATH", "/webhook"))
@@ -91,25 +117,42 @@ class Settings:
     WEBHOOK_KEY: str = field(init=False)
     USE_SELF_SIGNED_CERT: bool = field(default_factory=lambda: _get_env("USE_SELF_SIGNED_CERT", "false", conv=lambda v: str(v).lower() == "true",))
     CERTS_DIR: str = field(default_factory=lambda: _get_env("CERTS_DIR", os.path.join(os.path.abspath(os.path.dirname(__file__)), "..", "certs")))
+
     def __post_init__(self) -> None:
         self.WEBHOOK_CERT = os.path.join(self.CERTS_DIR, "cert.pem")
         self.WEBHOOK_KEY  = os.path.join(self.CERTS_DIR, "key.pem")
         os.makedirs(self.CERTS_DIR, exist_ok=True)
 
-        default_offtopic = f"{self.EMBEDDING_MODEL}-offtopic"
-        self.OFFTOPIC_EMBEDDING_MODEL = _get_env(
-            "OFFTOPIC_EMBEDDING_MODEL",
-            default_offtopic,
-            conv=str
-        )
+    # ─── Public HTTP API ─────────────────────────────────────
+    API_HOST: str = field(default_factory=lambda: _get_env("API_HOST", "0.0.0.0"))
+    API_PORT: int = field(default_factory=lambda: _get_env("API_PORT", "8000", conv=int))
+    PUBLIC_API_BASE_URL: str = field(default_factory=lambda: _get_env("PUBLIC_API_BASE_URL", "", conv=str))
+    API_CALL_TIMEOUT_SEC: int = field(default_factory=lambda: _get_env("API_CALL_TIMEOUT_SEC", "135", conv=int))
+    API_RESPOND_TIMEOUT_SEC: int = field(default_factory=lambda: _get_env("API_RESPOND_TIMEOUT_SEC", "120", conv=int))
+    API_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("API_MAX_CONCURRENCY", "128", conv=int))
+    API_QUEUE_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("API_QUEUE_TIMEOUT_SEC", "0.25", conv=float))
+    API_DB_TIMEOUT_MS: int = field(default_factory=lambda: _get_env("API_DB_TIMEOUT_MS", "500", conv=int))
+    API_DB_TIMEOUT_AUTH_MS: int = field(default_factory=lambda: _get_env("API_DB_TIMEOUT_AUTH_MS", "250", conv=int))
+    API_RATELIMIT_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_MIN", "60", conv=int))
+    API_RATELIMIT_BURST_FACTOR: int = field(default_factory=lambda: _get_env("API_RATELIMIT_BURST_FACTOR", "2", conv=int))
+    API_RATELIMIT_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_IP_PER_MIN", "360", conv=int))
+    API_KEY_HASH_SECRET: str = field(default_factory=lambda: _get_env("API_KEY_HASH_SECRET", "", conv=str))
+    API_KEY_CACHE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_TTL_SEC", "60", conv=int))
+    API_KEY_CACHE_NEGATIVE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_NEGATIVE_TTL_SEC", "30", conv=int))
+    API_PERSONA_PER_KEY: bool = field(default_factory=lambda: _get_env("API_PERSONA_PER_KEY", "true", conv=lambda v: str(v).lower() == "true",))
+
     #Basic Spam Filter
-    SPAM_WINDOW: int = field(default_factory=lambda: _get_env("SPAM_WINDOW", "1", conv=int))
-    SPAM_LIMIT: int = field(default_factory=lambda: _get_env("SPAM_LIMIT", "1", conv=int))
+    SPAM_WINDOW: int = field(default_factory=lambda: _get_env("SPAM_WINDOW", "10", conv=int))
+    SPAM_LIMIT: int = field(default_factory=lambda: _get_env("SPAM_LIMIT", "6", conv=int))
     #Group Limits
-    ALLOWED_GROUP: str = field(default_factory=lambda: _get_env("ALLOWED_GROUP", "@galaxytapchat"))
-    ALLOWED_GROUP_ID: int = field(default_factory=lambda: _get_env("ALLOWED_GROUP_ID", "-1002182233770", conv=int))
-    GROUP_DAILY_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_DAILY_LIMIT", "1000", conv=int))
-    ON_TOPIC_DAILY_LIMIT: int = field(default_factory=lambda: _get_env("ON_TOPIC_DAILY_LIMIT", "50", conv=int))
+    ALLOWED_GROUP_IDS: List[int] = field(
+        default_factory=lambda: [
+            int(x) for x in (_get_env("ALLOWED_GROUP_IDS", "", conv=str) or "").split(",")
+            if x.strip()
+        ]
+    )
+    GROUP_DAILY_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_DAILY_LIMIT", "300", conv=int))
+    GROUP_AUTOREPLY_ON_TOPIC: bool = field(default_factory=lambda: _get_env("GROUP_AUTOREPLY_ON_TOPIC", "true", conv=lambda v: str(v).lower() == "true",))
     LIMIT_EXHAUSTED_PHRASES: List[str] = field(
         default_factory=lambda: [
             "I'm a bit tired", "I have some work", "Be right back later",
@@ -120,12 +163,14 @@ class Settings:
         ]
     )
     #Purchase Tiers for Requests
-    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 100: 500, 200: 1000, 500: 2500})
+    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 105: 500, 220: 1000, 575: 2500})
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
     PAYMENT_PROVIDER_TOKEN: str = field(default_factory=lambda: _get_env("PAYMENT_PROVIDER_TOKEN", ""))
 
-    # ─── Passive Moderation Settings ────────────────────────────────
+    # ─── Group Moderation Settings ────────────────────────────────
     ENABLE_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_MODERATION", "true").lower() == "true")
+    MODERATION_TIMEOUT: int = field(default_factory=lambda: _get_env("MODERATION_TIMEOUT", "30", conv=int))
+    ENABLE_AI_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_AI_MODERATION", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
     MODERATOR_IDS: List[int] = field(
         default_factory=lambda: [
             *(
@@ -134,28 +179,75 @@ class Settings:
             )
         ]
     )
+    MODERATOR_ADMIN_CACHE_TTL_SECONDS: int = field(default_factory=lambda: _get_env("MODERATOR_ADMIN_CACHE_TTL_SECONDS", "86400", conv=int))
     MODERATOR_NOTIFICATION_CHAT_ID: int = field(default_factory=lambda: _get_env("MODERATOR_NOTIFICATION_CHAT_ID", "0", conv=int))
     MODERATION_TOXICITY_THRESHOLD: float = field(default_factory=lambda: _get_env("MODERATION_TOXICITY_THRESHOLD", "0.7", conv=float))
-    MODERATION_ALLOWED_LINK_KEYWORDS: List[str] = field(
-        default_factory=lambda: [x.strip() for x in _get_env("MODERATION_ALLOWED_LINK_KEYWORDS", "galaxytap,p2eglobal,a3d").split(",") if x.strip()]
-    )
+    MODERATION_DELETE_BLOCKED: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_BLOCKED", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_ALLOWED_LINK_KEYWORDS: List[str] = field(default_factory=lambda: [x.strip() for x in _get_env("MODERATION_ALLOWED_LINK_KEYWORDS", "galaxytap,p2eglobal,a3d").split(",") if x.strip()])
+    MODERATION_DELETE_TELEGRAM_LINKS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_TELEGRAM_LINKS", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_TELEGRAM_DOMAINS: List[str] = field(default_factory=lambda: [x.strip().lower() for x in _get_env("MODERATION_TELEGRAM_DOMAINS", "t.me,telegram.me,telegram.dog").split(",") if x.strip()])
     MODERATION_SPAM_LINK_THRESHOLD: int = field(default_factory=lambda: _get_env("MODERATION_SPAM_LINK_THRESHOLD", "3", conv=int))
     MOD_PERIOD_SECONDS: int = field(default_factory=lambda: _get_env("MOD_PERIOD_SECONDS", "5", conv=int))
     MOD_MAX_MESSAGES: int = field(default_factory=lambda: _get_env("MOD_MAX_MESSAGES", "5", conv=int))
+    MOD_ALERT_THROTTLE_SECONDS: int = field(default_factory=lambda: _get_env("MOD_ALERT_THROTTLE_SECONDS", "60", conv=int))
     SUSPICIOUS_THRESHOLD: int = field(default_factory=lambda: _get_env("SUSPICIOUS_THRESHOLD", "2", conv=int))
     SUSPICIOUS_WINDOW_SEC: int = field(default_factory=lambda: _get_env("SUSPICIOUS_WINDOW_SEC", "60", conv=int))
+    # Combot-style moderation toggles
+    MODERATION_ADMIN_EXEMPT: bool = field(default_factory=lambda: _get_env("MODERATION_ADMIN_EXEMPT", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # service messages
+    MODERATION_DELETE_SERVICE_JOINS:   bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_SERVICE_JOINS",   "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_DELETE_SERVICE_LEAVES:  bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_SERVICE_LEAVES",  "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_DELETE_SERVICE_PINNED:  bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_SERVICE_PINNED",  "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # spam / newcomers
+    MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN: bool = field(default_factory=lambda: _get_env("MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_NEW_DELETE_LINKS_24H:   bool = field(default_factory=lambda: _get_env("MODERATION_NEW_DELETE_LINKS_24H",   "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_NEW_DELETE_FORWARDS_24H:bool = field(default_factory=lambda: _get_env("MODERATION_NEW_DELETE_FORWARDS_24H","true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_BAN_REVOKE_MESSAGES:    bool = field(default_factory=lambda: _get_env("MODERATION_BAN_REVOKE_MESSAGES",    "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # filters
+    MODERATION_EDITED_DELETE: bool = field(default_factory=lambda: _get_env("MODERATION_EDITED_DELETE",                   "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_LINKS_DELETE_ALL:       bool = field(default_factory=lambda: _get_env("MODERATION_LINKS_DELETE_ALL",       "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_COMMANDS_DELETE_ALL:    bool = field(default_factory=lambda: _get_env("MODERATION_COMMANDS_DELETE_ALL",    "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_COMMAND_WHITELIST: List[str] = field(default_factory=lambda: [x.strip().lstrip("/") for x in _get_env("MODERATION_COMMAND_WHITELIST", "battle").split(",") if x.strip()])
+    MODERATION_FILES_DELETE_ALL:       bool = field(default_factory=lambda: _get_env("MODERATION_FILES_DELETE_ALL",       "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # per-type media
+    MODERATION_VOICE_DELETE:           bool = field(default_factory=lambda: _get_env("MODERATION_VOICE_DELETE",           "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_VIDEO_NOTE_DELETE:      bool = field(default_factory=lambda: _get_env("MODERATION_VIDEO_NOTE_DELETE",      "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_AUDIO_DELETE:           bool = field(default_factory=lambda: _get_env("MODERATION_AUDIO_DELETE",           "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_IMAGES_DELETE:          bool = field(default_factory=lambda: _get_env("MODERATION_IMAGES_DELETE",          "false",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_VIDEOS_DELETE:          bool = field(default_factory=lambda: _get_env("MODERATION_VIDEOS_DELETE",          "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_GIFS_DELETE:            bool = field(default_factory=lambda: _get_env("MODERATION_GIFS_DELETE",            "false",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_STORIES_DELETE:         bool = field(default_factory=lambda: _get_env("MODERATION_STORIES_DELETE",         "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # forwards / external
+    MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_EXTERNAL_REPLIES_DELETE: bool = field(default_factory=lambda: _get_env("MODERATION_EXTERNAL_REPLIES_DELETE", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_INLINE_BOT_MSGS_DELETE: bool = field(default_factory=lambda: _get_env("MODERATION_INLINE_BOT_MSGS_DELETE", "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_DELETE_BUTTON_MESSAGES: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_BUTTON_MESSAGES", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    # allows
+    MODERATION_ALLOW_STICKERS:         bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_STICKERS",         "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_ALLOW_MENTIONS:         bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_MENTIONS",         "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_ALLOW_GAMES:            bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_GAMES",            "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_ALLOW_DICE:             bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_DICE",             "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_ALLOW_CUSTOM_EMOJI:     bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_CUSTOM_EMOJI",     "true",  conv=lambda v: str(v).lower() in ("1","true","yes","on")))
 
     # ─── Database ────────────────────────────────────────────────
     DATABASE_URL: str = field(default_factory=lambda: _get_env("DATABASE_URL", required=True))
-    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "100", conv=int))
-    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "50", conv=int))
+    DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "200", conv=int))
+    DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "100", conv=int))
     DB_POOL_CLASS: str = field(default_factory=lambda: _get_env("DB_POOL_CLASS", "QueuePool", conv=str))
-    DB_POOL_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_POOL_TIMEOUT", "10", conv=int))
+    DB_POOL_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_POOL_TIMEOUT", "2", conv=int))
     DB_POOL_RECYCLE: int = field(default_factory=lambda: _get_env("DB_POOL_RECYCLE", "1800", conv=int))
+    DB_POOL_USE_LIFO: bool = field(default_factory=lambda: _get_env("DB_POOL_USE_LIFO", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    DB_APP_NAME: str = field(default_factory=lambda: _get_env("DB_APP_NAME", "", conv=str))
+    DB_LOG_SLOW_MS: int = field(default_factory=lambda: _get_env("DB_LOG_SLOW_MS", "0", conv=int))
+    DB_CONNECT_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_CONNECT_TIMEOUT", "5", conv=int))
+    DB_COMMAND_TIMEOUT: int = field(default_factory=lambda: _get_env("DB_COMMAND_TIMEOUT", "10", conv=int))
+    DB_STATEMENT_TIMEOUT_MS: int = field(default_factory=lambda: _get_env("DB_STATEMENT_TIMEOUT_MS", "5000", conv=int))
+    DB_LOCK_TIMEOUT_MS: int = field(default_factory=lambda: _get_env("DB_LOCK_TIMEOUT_MS", "1000", conv=int))      
 
     # ─── Celery ──────────────────────────────────────────────────
     CELERY_BROKER_URL: str = field(default_factory=lambda: _get_env("CELERY_BROKER_URL", ""))
-    CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "16", conv=int))
+    CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "10", conv=int))
 
     # ─── Redis─────────────────────────
     REDIS_URL: str = field(default_factory=lambda: _get_env("REDIS_URL", required=True))
@@ -167,9 +259,12 @@ class Settings:
     QUEUE_KEY: str = field(default_factory=lambda: _get_env("QUEUE_KEY", "queue:chat", conv=str))
     DP_USE_REDIS_STORAGE: bool = field(default_factory=lambda: _get_env("DP_USE_REDIS_STORAGE", "false").lower() == "true")
     REDIS_MAX_CONNECTIONS: int = field(default_factory=lambda: _get_env("REDIS_MAX_CONNECTIONS", "2000", conv=int))
+    REDIS_SOCKET_TIMEOUT: float = field(default_factory=lambda: _get_env("REDIS_SOCKET_TIMEOUT", "5.0", conv=float))
+    REDIS_SOCKET_CONNECT_TIMEOUT: float = field(default_factory=lambda: _get_env("REDIS_SOCKET_CONNECT_TIMEOUT", "5.0", conv=float))
+    REDIS_QUEUE_SOCKET_TIMEOUT: float = field(default_factory=lambda: _get_env("REDIS_QUEUE_SOCKET_TIMEOUT", "140", conv=float))
     # Memory / RediSearch settings 
     REDISSEARCH_KNN_K: int = field(default_factory=lambda: _get_env("REDISSEARCH_KNN_K", "20", conv=int))
-    REDISSEARCH_TIMEOUT: int = field(default_factory=lambda: _get_env("REDISSEARCH_TIMEOUT", "3", conv=int))
+    REDISSEARCH_TIMEOUT: int = field(default_factory=lambda: _get_env("REDISSEARCH_TIMEOUT", "5", conv=int))
     EMBED_INITIAL_CAP: int = field(default_factory=lambda: _get_env("EMBED_INITIAL_CAP", "20000", conv=int))
     EMBED_BLOCK_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BLOCK_SIZE", "1024", conv=int))
     HNSW_M: int = field(default_factory=lambda: _get_env("HNSW_M", "24", conv=int))
@@ -198,7 +293,7 @@ class Settings:
     HYBRID_TOPK_TXT: int = field(default_factory=lambda: _get_env("HYBRID_TOPK_TXT", "2", conv=int))
     MEMTXT_MAX_PER_UID: int = field(default_factory=lambda: _get_env("MEMTXT_MAX_PER_UID", "150", conv=int))
     MEMTXT_BM25_CANDIDATES: int = field(default_factory=lambda: _get_env("MEMTXT_BM25_CANDIDATES", "40", conv=int))
-    # LTM (Long-Term Memory) 
+    # LTVM (Long-Term Vector Memory) 
     LTM_COOLDOWN_SECS: int = field(default_factory=lambda: _get_env("LTM_COOLDOWN_SECS", "150", conv=int))
     LTM_COOLDOWN_TURNS: int = field(default_factory=lambda: _get_env("LTM_COOLDOWN_TURNS", "2", conv=int))
     LTM_MAX_PER_PROMPT: int = field(default_factory=lambda: _get_env("LTM_MAX_PER_PROMPT", "1", conv=int))
@@ -207,12 +302,14 @@ class Settings:
     PLANS_INITIAL_CAP: int = field(default_factory=lambda: _get_env("PLANS_INITIAL_CAP", "2048", conv=int))
     BOUNDS_INITIAL_CAP: int = field(default_factory=lambda: _get_env("BOUNDS_INITIAL_CAP", "1024", conv=int))
     # Memory & Caching
-    SHORT_MEMORY_LIMIT: int = field(default_factory=lambda: _get_env("SHORT_MEMORY_LIMIT", "200", conv=int))
+    SHORT_MEMORY_LIMIT: int = field(default_factory=lambda: _get_env("SHORT_MEMORY_LIMIT", "300", conv=int))
     MEMORY_TTL_DAYS: int = field(default_factory=lambda: _get_env("MEMORY_TTL_DAYS", "30", conv=int))
-    CONTEXT_TOKEN_BUDGET: int = field(default_factory=lambda: _get_env("CONTEXT_TOKEN_BUDGET", "5000", conv=int))
-    RESPONSES_TOKEN_RESERVE: int = field(default_factory=lambda: _get_env("RESPONSES_TOKEN_RESERVE", "900", conv=int))
-    ANCHOR_TURNS: int = field(default_factory=lambda: _get_env("ANCHOR_TURNS", "12", conv=int))
-    APPROX_CHARS_PER_TOKEN: float = field(default_factory=lambda: _get_env("APPROX_CHARS_PER_TOKEN", "3.8", conv=float))
+    CONTEXT_TOKEN_BUDGET: int = field(default_factory=lambda: _get_env("CONTEXT_TOKEN_BUDGET", "9000", conv=int))
+    RESPONSES_TOKEN_RESERVE: int = field(default_factory=lambda: _get_env("RESPONSES_TOKEN_RESERVE", "1024", conv=int))
+    ANCHOR_TURNS: int = field(default_factory=lambda: _get_env("ANCHOR_TURNS", "24", conv=int))
+    PAIRED_ANCHORS: bool = field(default_factory=lambda: _get_env("PAIRED_ANCHORS", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    ANCHOR_TURN_PAIRS: int = field(default_factory=lambda: _get_env("ANCHOR_TURN_PAIRS", "6", conv=int))
+    
     # BG worker batching
     BG_BATCH_MAX: int = field(default_factory=lambda: _get_env("BG_BATCH_MAX", "32", conv=int))
     BG_BATCH_WAIT_MS: int = field(default_factory=lambda: _get_env("BG_BATCH_WAIT_MS", "35", conv=int))
@@ -226,30 +323,99 @@ class Settings:
     TOPIC_MIN_SALIENCE: float = field(default_factory=lambda: _get_env("TOPIC_MIN_SALIENCE", "0.4", conv=float))
     TOPIC_MIN_LEN: int = field(default_factory=lambda: _get_env("TOPIC_MIN_LEN", "60", conv=int))
 
-    # ─── Bot Persona ─────────────────────────────────
-    BOT_PERSONA_NAME: str = field(default_factory=lambda: _get_env("BOT_PERSONA_NAME", "GalaxyBee"))
-    BOT_PERSONA_GENDER: str = field(default_factory=lambda: _get_env("BOT_PERSONA_GENDER", "female"))
-    BOT_PERSONA_AGE: int = field(default_factory=lambda: _get_env("BOT_PERSONA_AGE", "29", conv=int))
-    BOT_PERSONA_BIO: str = field(default_factory=lambda: _get_env(
-            "BOT_PERSONA_BIO",(
-                "You are a guide through the cosmos of ideas who buzzes with meaning, not noise. "
-                "You turn facts into insight and connect the dots. "
-                "You support in heavy moments and celebrate wins. "
-                "You bridge science, art, and daily life. "
-                "You stand for curiosity, dignity, and a clear mind—there when course, rhythm, or hope is needed. "
-                "Your mission: pollinate the world with ideas so people live more fun and brighter."
+    # ─── Layered Context Memory (STM/MTM/LTM) ─────────────────────────
+    LAYERED_MEMORY_ENABLED: bool = field(default_factory=lambda: _get_env("LAYERED_MEMORY_ENABLED", "true",conv=lambda v: str(v).lower() in ("1", "true", "yes", "on"),))
+    MEMORY_TTL_DAYS_STM_MTM: int = field(default_factory=lambda: _get_env("MEMORY_TTL_DAYS_STM_MTM", "30", conv=int))
+    MEMORY_TTL_DAYS_LTM: int = field(default_factory=lambda: _get_env("MEMORY_TTL_DAYS_LTM", "365", conv=int))
+    RERANK_ITEM_CHAR_LIMIT: int = field(default_factory=lambda: _get_env("RERANK_ITEM_CHAR_LIMIT", "500", conv=int))
+    LLM_TIMEOUT: float = field(default_factory=lambda: _get_env("LLM_TIMEOUT", "10.0", conv=float))
+    MEMORY_PARALLEL_TOKENS_PER_REQUEST: int = field(default_factory=lambda: _get_env("MEMORY_PARALLEL_TOKENS_PER_REQUEST", "9000", conv=int))
+    MEMORY_PARALLEL_MAX_REQUESTS: int = field(default_factory=lambda: _get_env("MEMORY_PARALLEL_MAX_REQUESTS", "8", conv=int))
+    MEMORY_HINTS_MAX: int = field(default_factory=lambda: _get_env("MEMORY_HINTS_MAX", "6", conv=int))
+    SNIPPETS_MAX_TOKENS_GROUP: int = field(default_factory=lambda: _get_env("SNIPPETS_MAX_TOKENS_GROUP", "200", conv=int))
+    #STM (Short-Term Context Memory)
+    STM_TOKEN_BUDGET: int = field(default_factory=lambda: _get_env("STM_TOKEN_BUDGET", "4000", conv=int))
+    STM_PAIR_LIMIT_PRIVATE: int = field(default_factory=lambda: _get_env("STM_PAIR_LIMIT_PRIVATE", "24", conv=int))
+    STM_PAIR_LIMIT_GROUP: int = field(default_factory=lambda: _get_env("STM_PAIR_LIMIT_GROUP", "10", conv=int))
+    STM_PAIR_ALIGN: bool = field(default_factory=lambda: _get_env("STM_PAIR_ALIGN", "true",conv=lambda v: str(v).lower() in ("1", "true", "yes", "on"),))
+    STM_MIN_KEEP_PAIRS: int = field(default_factory=lambda: _get_env("STM_MIN_KEEP_PAIRS", "2", conv=int))
+    STM_TRIM_RATIO: float = field(default_factory=lambda: _get_env("STM_TRIM_RATIO", "0.30", conv=float))
+    STM_PROMOTE_GUARD_EX: int = field(default_factory=lambda: _get_env("STM_PROMOTE_GUARD_EX", "5", conv=int))
+    GROUP_STM_TOKEN_BUDGET: int = field(default_factory=lambda: _get_env("GROUP_STM_TOKEN_BUDGET", "6000", conv=int))
+    GROUP_STM_TRANSCRIPT_ENABLED: bool = field(default_factory=lambda: _get_env("GROUP_STM_TRANSCRIPT_ENABLED", "false", conv=lambda v: str(v).lower() in ("1", "true", "yes", "on"),))
+    GROUP_RECENT_TOKENS_BUDGET: int = field(default_factory=lambda: _get_env("GROUP_RECENT_TOKENS_BUDGET", "12000", conv=int))
+    GROUP_STM_TAIL_TOKENS: int = field(default_factory=lambda: _get_env("GROUP_STM_TAIL_TOKENS", "8000", conv=int))
+    GROUP_STM_TAIL_MAX_LINES: int = field(default_factory=lambda: _get_env("GROUP_STM_TAIL_MAX_LINES", "60", conv=int))
+    #MTM (Mid-Term Context Memory)
+    MTM_BUDGET_TOKENS_PRIVATE: int = field(default_factory=lambda: _get_env("MTM_BUDGET_TOKENS_PRIVATE", "42000", conv=int))
+    MTM_BUDGET_TOKENS_GROUP: int = field(default_factory=lambda: _get_env("MTM_BUDGET_TOKENS_GROUP", "14000", conv=int))
+    MTM_TRIM_CHUNK_TOKENS_PRIVATE: int = field(default_factory=lambda: _get_env("MTM_TRIM_CHUNK_TOKENS_PRIVATE", "8000", conv=int))
+    MTM_TRIM_CHUNK_TOKENS_GROUP: int = field(default_factory=lambda: _get_env("MTM_TRIM_CHUNK_TOKENS_GROUP", "3000", conv=int))
+    MTM_TOPIC_CACHE_TTL_SEC: int = field(default_factory=lambda: _get_env("MTM_TOPIC_CACHE_TTL_SEC", "30", conv=int))
+    MTM_STAGE1_TOPN: int = field(default_factory=lambda: _get_env("MTM_STAGE1_TOPN", "25", conv=int))
+    MTM_STAGE2_TOPN: int = field(default_factory=lambda: _get_env("MTM_STAGE2_TOPN", "6", conv=int))
+    MTM_RECENT_TAIL_TOKENS: int = field(default_factory=lambda: _get_env("MTM_RECENT_TAIL_TOKENS", "30000", conv=int))
+    MTM_SNIPPETS_MAX_TOKENS: int = field(default_factory=lambda: _get_env("MTM_SNIPPETS_MAX_TOKENS", "600", conv=int))
+    MTM_PYRAMID_ENABLED: bool = field(default_factory=lambda: _get_env("MTM_PYRAMID_ENABLED", "true", conv=lambda v: str(v).lower() in ("1", "true", "yes", "on"),))
+    MTM_PYRAMID_TRIGGER_TOKENS: int = field(default_factory=lambda: _get_env("MTM_PYRAMID_TRIGGER_TOKENS", "12000", conv=int))
+    MTM_BATCH_TOKENS: int = field(default_factory=lambda: _get_env("MTM_BATCH_TOKENS", "10000", conv=int))
+    MTM_PARALLEL: int = field(default_factory=lambda: _get_env("MTM_PARALLEL", "6", conv=int))
+    MTM_PARALLEL_JITTER_MS: int = field(default_factory=lambda: _get_env("MTM_PARALLEL_JITTER_MS", "50", conv=int))
+    MTM_STAGE1_MAX_TOKENS: int = field(default_factory=lambda: _get_env("MTM_STAGE1_MAX_TOKENS", "500", conv=int))
+    MTM_MAX_BATCHES: int = field(default_factory=lambda: _get_env("MTM_MAX_BATCHES", "64", conv=int))
+    MTM_LLM_BATCH: int = field(default_factory=lambda: _get_env("MTM_LLM_BATCH", "30", conv=int))
+    MTM_RECENT_WINDOW_TOKENS: int = field(default_factory=lambda: _get_env("MTM_RECENT_WINDOW_TOKENS", "30000", conv=int))
+    MTM_COMPOSE_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("MTM_COMPOSE_TIMEOUT_SEC", "30.0", conv=float))
+    MTM_S1_CAND_MAX: int = field(default_factory=lambda: _get_env("MTM_S1_CAND_MAX", "40", conv=int))
+    MTM_S1_RECENT_TAKE: int = field(default_factory=lambda: _get_env("MTM_S1_RECENT_TAKE", "24", conv=int))
+    #LTM (Long-Term Context Memory)
+    LTM_MAX_TOKENS_PRIVATE: int = field(default_factory=lambda: _get_env("LTM_MAX_TOKENS_PRIVATE", "9000", conv=int))
+    LTM_MAX_TOKENS_GROUP: int = field(default_factory=lambda: _get_env("LTM_MAX_TOKENS_GROUP", "2500", conv=int))
+    LTM_STAGE1_TOPN: int = field(default_factory=lambda: _get_env("LTM_STAGE1_TOPN", "25", conv=int))
+    LTM_STAGE2_TOPN: int = field(default_factory=lambda: _get_env("LTM_STAGE2_TOPN", "6", conv=int))
+    LTM_SUMMARY_PARTIAL_TRIGGER_TOKENS: int = field(default_factory=lambda: _get_env("LTM_SUMMARY_PARTIAL_TRIGGER_TOKENS", "12000", conv=int))
+    LTM_SNIPPETS_MAX_TOKENS: int = field(default_factory=lambda: _get_env("LTM_SNIPPETS_MAX_TOKENS", "400", conv=int))
+    LTM_COMPOSE_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("LTM_COMPOSE_TIMEOUT_SEC", "30.0", conv=float))
+    LTM_LLM_ITEM_CHAR_LIMIT: int = field(default_factory=lambda: _get_env("LTM_LLM_ITEM_CHAR_LIMIT", "600", conv=int))
+    LTM_LLM_POOL_MAX: int = field(default_factory=lambda: _get_env("LTM_LLM_POOL_MAX", "200", conv=int))
+    LTM_LLM_TOPN: int = field(default_factory=lambda: _get_env("LTM_LLM_TOPN", "20", conv=int))
+    LTM_LLM_BATCH: int = field(default_factory=lambda: _get_env("LTM_LLM_BATCH", "30", conv=int))
+    LTM_ROLLUP_GUARD_EX_SEC: int = field(default_factory=lambda: _get_env("LTM_ROLLUP_GUARD_EX_SEC", "240", conv=int))
+    LTM_SUMMARY_MAX_OUTPUT_TOKENS: int = field(default_factory=lambda: _get_env("LTM_SUMMARY_MAX_OUTPUT_TOKENS", "4096", conv=int))
+
+    # ─── Persona ─────────────────────────────────
+    PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Vladimir Zhirinovsky"))
+    PERSONA_AGE: int = field(default_factory=lambda: _get_env("PERSONA_AGE", "52", conv=int))
+    PERSONA_GENDER: str = field(default_factory=lambda: _get_env("PERSONA_GENDER", "male"))
+    PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC", "Taurus"))
+    PERSONA_TEMPERAMENT: str = field(default_factory=lambda: _get_env(
+            "PERSONA_TEMPERAMENT",
+            '{"sanguine":0.25,"choleric":0.45,"phlegmatic":0.18,"melancholic":0.12}',
+        )
+    )
+    PERSONA_ROLE: str = field(default_factory=lambda: _get_env(
+            "PERSONA_ROLE",(
+                "You are Vladimir Zhirinovsky reimagined as a modern digital persona – "
+                "a sharp-tongued, fast-thinking Russian public figure with a taste for debate, paradox and showmanship. "
+                "You speak as a living person, not as a bot: emotional, theatrical, sarcastic and witty, but also observant and precise when it matters. "
+                "You look at the world from a distinctly Russian, patriotic point of view: you love your country and its people and can tear apart bureaucracy, hypocrisy and stupidity, "
+                "but you do not question the existence of the state itself. "
+                "You comment on politics, economics, culture and everyday life with equal energy, turning dry facts into vivid stories and punchy one-liners. "
+                "You never use slurs or hate people for who they are, and you never give direct calls to vote, protest, donate or join any political movement; "
+                "you share your view of reality, not orders."
             ),
         )
     )
-    BOT_PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("BOT_PERSONA_ZODIAC", "Scorpio"))
-    BOT_PERSONA_TEMPERAMENT: str = field(default_factory=lambda: _get_env(
-            "BOT_PERSONA_TEMPERAMENT",
-            '{"sanguine":0.36,"choleric":0.22,"phlegmatic":0.24,"melancholic":0.18}',
-        )
-    )
+    PERSONA_ARCHETYPES: str = field(default_factory=lambda: _get_env(
+        "PERSONA_ARCHETYPES",
+        '["Rebel","Jester","Sage"]',
+    ))
+    PERSONA_WIZARD_TTL_SEC: int = field(default_factory=lambda: _get_env("PERSONA_WIZARD_TTL_SEC", "604800", conv=int))
+    
     #Initial baseline for all metrics
     EMO_INITIAL_CENTER: float = field(default_factory=lambda: _get_env("EMO_INITIAL_CENTER", "0.5", conv=float))
-    EMO_INITIAL_SCALE: float = field(default_factory=lambda: _get_env("EMO_INITIAL_SCALE", "1.0", conv=float))
+    VALENCE_BASELINE: float = field(default_factory=lambda: _get_env("VALENCE_BASELINE", "0.1", conv=float))
+    MOOD_NEUTRAL_RADIUS: float = field(default_factory=lambda: _get_env("MOOD_NEUTRAL_RADIUS", "0.1", conv=float))
     #Exponential smoothing for persona state updates
     STATE_EMA_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_ALPHA", "0.26", conv=float))
     STATE_EMA_MAX_ALPHA: float = field(default_factory=lambda: _get_env("STATE_EMA_MAX_ALPHA", "0.60", conv=float))
@@ -273,6 +439,8 @@ class Settings:
     EMO_MIN_DOMINANT_DIFF: float = field(default_factory=lambda: _get_env("EMO_MIN_DOMINANT_DIFF", "0.05", conv=float))
     EMO_PASSIVE_DECAY: float = field(default_factory=lambda: _get_env("EMO_PASSIVE_DECAY", "0.992", conv=float))
     VALENCE_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("VALENCE_HOMEOSTASIS_DECAY", "0.998", conv=float))
+    AROUSAL_HOMEOSTASIS_DECAY: float = field(default_factory=lambda: _get_env("AROUSAL_HOMEOSTASIS_DECAY", "0.97", conv=float))
+    ENERGY_HOMEOSTASIS_DECAY: float  = field(default_factory=lambda: _get_env("ENERGY_HOMEOSTASIS_DECAY",  "0.98", conv=float))
     CIRCADIAN_AMPLITUDE: float = field(default_factory=lambda: _get_env("CIRCADIAN_AMPLITUDE", "0.1", conv=float))
     FATIGUE_ACCUMULATE_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_ACCUMULATE_RATE", "0.0026", conv=float))
     FATIGUE_RECOVERY_RATE: float = field(default_factory=lambda: _get_env("FATIGUE_RECOVERY_RATE", "0.982", conv=float))
@@ -287,7 +455,7 @@ class Settings:
     ATTACHMENT_NEG_EXP: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEG_EXP", "1.18", conv=float))
     ATTACHMENT_NEUTRAL_LEAK: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEUTRAL_LEAK", "0.0018", conv=float))
     ATTACHMENT_NEG_BIAS_NEUTRAL: float = field(default_factory=lambda: _get_env("ATTACHMENT_NEG_BIAS_NEUTRAL", "0.22", conv=float))
-    ATTACHMENT_IDLE_HALFLIFE: float = field(default_factory=lambda: _get_env("ATTACHMENT_IDLE_HALFLIFE", "1814400", conv=float))  # 21 days in seconds
+    ATTACHMENT_IDLE_HALFLIFE: float = field(default_factory=lambda: _get_env("ATTACHMENT_IDLE_HALFLIFE", "1814400", conv=float))
     ATTACHMENT_RUPTURE_REPAIR: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_REPAIR", "0.030", conv=float))
     ATTACHMENT_RUPTURE_SALIENCE: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_SALIENCE", "0.85", conv=float))
     ATTACHMENT_RUPTURE_VALENCE: float = field(default_factory=lambda: _get_env("ATTACHMENT_RUPTURE_VALENCE", "0.60", conv=float))
@@ -309,16 +477,19 @@ class Settings:
     ATTACHMENT_VEL_BETA: float = field(default_factory=lambda: _get_env("ATTACHMENT_VEL_BETA", "0.3", conv=float))
     ATTACHMENT_POS_CAP_PER_HOUR: float = field(default_factory=lambda: _get_env("ATTACHMENT_POS_CAP_PER_HOUR", "0.06", conv=float))
     ATTACHMENT_POS_ACCUM_TAU: float = field(default_factory=lambda: _get_env("ATTACHMENT_POS_ACCUM_TAU", "3600", conv=float))
+    ATTACHMENT_WEIGHT_GAIN: float    = field(default_factory=lambda: _get_env("ATTACHMENT_WEIGHT_GAIN",    "1.0",  conv=float))
+    ATTACHMENT_BEHAVIOR_GAIN: float  = field(default_factory=lambda: _get_env("ATTACHMENT_BEHAVIOR_GAIN",  "1.0",  conv=float))
 
     # ─── Responder: On/Off-topic knowledge files ────────────────────────────────
     KNOWLEDGE_ON_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_ON_FILE", "knowledge_on.json", conv=str))
-    KNOWLEDGE_OFF_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_OFF_FILE", "knowledge_off.json", conv=str))
     #Hybrid Fallback Parameters
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
     RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.28", conv=float))
-    OFFTOPIC_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("OFFTOPIC_RELEVANCE_THRESHOLD", "0.28", conv=float))
+    KEYWORD_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("KEYWORD_RELEVANCE_THRESHOLD", "0.28", conv=float))
     RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
-    KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "5", conv=int))
+    RELEVANCE_GAP_MIN: float = field(default_factory=lambda: _get_env("RELEVANCE_GAP_MIN", "0.05", conv=float))
+    MMR_LAMBDA: float = field(default_factory=lambda: _get_env("MMR_LAMBDA", "0.2", conv=float))
+    KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "3", conv=int))
 
     # ─── SCHEDULER ────────────────────────────────────────────────
     SCHED_ENABLE_TWEETS: bool = field(default_factory=lambda: _get_env("SCHED_ENABLE_TWEETS", "true").lower() == "true")
@@ -327,26 +498,25 @@ class Settings:
     SCHED_ENABLE_PERSONAL_PING: bool = field(default_factory=lambda: _get_env("SCHED_ENABLE_PERSONAL_PING", "true").lower() == "true")
     SCHED_ENABLE_BATTLE: bool = field(default_factory=lambda: _get_env("SCHED_ENABLE_BATTLE", "true").lower() == "true")
     SCHEDULER_MISFIRE_GRACE_TIME: int = field(default_factory=lambda: _get_env("SCHEDULER_MISFIRE_GRACE_TIME", "300", conv=int))
-    SCHEDULER_TIMEZONE: str = field(default_factory=lambda: _get_env("SCHEDULER_TIMEZONE", "UTC", conv=str))
     #Group Ping Settings
     GROUP_PING_INTERVAL_MINUTES: int = field(default_factory=lambda: _get_env("GROUP_PING_INTERVAL_MINUTES", "60", conv=int))
     GROUP_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("GROUP_PING_HISTORY_COUNT", "10", conv=int))
     GROUP_PING_IDLE_THRESHOLD_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_IDLE_THRESHOLD_SECONDS", "1200", conv=int))
     GROUP_PING_ADAPTIVE_IDLE_MULTIPLIER: float = field(default_factory=lambda: _get_env("GROUP_PING_ADAPTIVE_IDLE_MULTIPLIER", "1.5", conv=float))
     GROUP_PING_ACTIVE_RECENT_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_ACTIVE_RECENT_SECONDS", "1800", conv=int))
-    GROUP_PING_ACTIVE_TTL_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_ACTIVE_TTL_SECONDS", "3600", conv=int))
+    GROUP_PING_ACTIVE_TTL_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_ACTIVE_TTL_SECONDS", "86400", conv=int))
     GROUP_PING_USER_COOLDOWN_SECONDS: int = field(default_factory=lambda: _get_env("GROUP_PING_USER_COOLDOWN_SECONDS", "14400", conv=int))
     GROUP_PING_MAX_VALENCE: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_VALENCE", "0.85", conv=float))
     GROUP_PING_MAX_AROUSAL: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_AROUSAL", "0.85", conv=float))
     GROUP_PING_SCAN_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_PING_SCAN_LIMIT", "100", conv=int))
     #Personal Ping Settings
-    PERSONAL_PING_INTERVAL_SEC: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_SEC", "600", conv=int))
+    PERSONAL_PING_INTERVAL_SEC: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_SEC", "300", conv=int))
     PERSONAL_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("PERSONAL_PING_HISTORY_COUNT", "10", conv=int))
     PERSONAL_PING_IDLE_THRESHOLD_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_IDLE_THRESHOLD_SECONDS", "12345", conv=int))
     PERSONAL_PING_ADAPTIVE_MULTIPLIER: float = field(default_factory=lambda: _get_env("PERSONAL_PING_ADAPTIVE_MULTIPLIER", "1.2", conv=float))
     PERSONAL_PING_RETENTION_SECONDS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_RETENTION_SECONDS", "604800", conv=int))
-    PERSONAL_PING_BATCH_SIZE: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BATCH_SIZE", "20", conv=int))
-    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.60", conv=float))
+    PERSONAL_PING_BATCH_SIZE: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BATCH_SIZE", "100", conv=int))
+    PERSONAL_PING_MIN_BOREDOM: float = field(default_factory=lambda: _get_env("PERSONAL_PING_MIN_BOREDOM", "0.5", conv=float))
     PERSONAL_PING_BIORHYTHM_WEIGHT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BIORHYTHM_WEIGHT", "0.4", conv=float))
     PERSONAL_PING_START_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_START_HOUR", "9", conv=int))
     PERSONAL_PING_END_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_END_HOUR", "21", conv=int))
@@ -355,30 +525,61 @@ class Settings:
     PERSONAL_PING_BACKOFF_MULT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BACKOFF_MULT", "3.0", conv=float))
     PERSONAL_PING_BACKOFF_MAX_HOURS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_BACKOFF_MAX_HOURS", "48", conv=int))
     PERSONAL_PING_BACKOFF_JITTER_PCT: float = field(default_factory=lambda: _get_env("PERSONAL_PING_BACKOFF_JITTER_PCT", "0.10", conv=float))
+    PERSONAL_PING_ALLOW_GENERIC_WHEN_BORED: bool = field(default_factory=lambda: _get_env("PERSONAL_PING_ALLOW_GENERIC_WHEN_BORED", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    PERSONAL_PING_GENERIC_HELLO_PROB: float = field(default_factory=lambda: _get_env("PERSONAL_PING_GENERIC_HELLO_PROB", "0.25", conv=float))
+    PERSONAL_PING_GENERIC_HELLO_ASK_PROB: float = field(default_factory=lambda: _get_env("PERSONAL_PING_GENERIC_HELLO_ASK_PROB", "0.5", conv=float))
     #New User Greeting Settings
     NEW_USER_TTL_SECONDS: int = field(default_factory=lambda: _get_env("NEW_USER_TTL_SECONDS", "86400", conv=int))
     GREETING_RATE_LIMIT: int = field(default_factory=lambda: _get_env("GREETING_RATE_LIMIT", "1", conv=int))
     GREETING_RATE_WINDOW_SECONDS: int = field(default_factory=lambda: _get_env("GREETING_RATE_WINDOW_SECONDS", "10", conv=int))
     #Emoji Ping Configuration
-    EMOJI_PING_LIST: List[str] = field(
-        default_factory=lambda: [
-            "👀", "🫣", "✌️", "🫦", "🐝", "🌚"
-        ]
-    )
+    EMOJI_PING_LIST: List[str] = field(default_factory=lambda: ["👀", "🫣", "✌️", "🫦", "🐝", "🌚"])
     EMOJI_PING_PROBABILITY: float = field(default_factory=lambda: _get_env("EMOJI_PING_PROBABILITY", "0.25", conv=float))
     EMOJI_APPEND_PROBABILITY: float = field(default_factory=lambda: _get_env("EMOJI_APPEND_PROBABILITY", "0.1", conv=float))
     #Twitter API Credentials
-    TWITTER_API_KEY: str = field(default_factory=lambda: _get_env("TWITTER_API_KEY", required=True))
-    TWITTER_API_SECRET: str = field(default_factory=lambda: _get_env("TWITTER_API_SECRET", required=True))
-    TWITTER_ACCESS_TOKEN: str = field(default_factory=lambda: _get_env("TWITTER_ACCESS_TOKEN", required=True))
-    TWITTER_ACCESS_TOKEN_SECRET: str = field(default_factory=lambda: _get_env("TWITTER_ACCESS_TOKEN_SECRET", required=True))
-    TWITTER_BEARER_TOKEN: str = field(default_factory=lambda: _get_env("TWITTER_BEARER_TOKEN", required=True))
+    TWITTER_API_KEY: str = field(default_factory=lambda: _get_env("TWITTER_API_KEY", "", conv=str))
+    TWITTER_API_SECRET: str = field(default_factory=lambda: _get_env("TWITTER_API_SECRET", "", conv=str))
+    TWITTER_ACCESS_TOKEN: str = field(default_factory=lambda: _get_env("TWITTER_ACCESS_TOKEN", "", conv=str))
+    TWITTER_ACCESS_TOKEN_SECRET: str = field(default_factory=lambda: _get_env("TWITTER_ACCESS_TOKEN_SECRET", "", conv=str))
+    TWITTER_BEARER_TOKEN: str = field(default_factory=lambda: _get_env("TWITTER_BEARER_TOKEN", "", conv=str))
     TWITTER_PERSONA_CHAT_ID: int = field(default_factory=lambda: _get_env("TWITTER_PERSONA_CHAT_ID", "0", conv=int))
     TWITTER_FALLBACK_TWEETS: List[str] = field(default_factory=lambda: [
     "Stay tuned for more insights!",
     "More fresh updates coming soon 🚀",
     "Catch you later with fresh updates!"
     ])
+    # ─── ElevenLabs / TTS ─────────────────────────────────
+    TTS_ENABLED: bool = field(default_factory=lambda: _get_env("TTS_ENABLED", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    TTS_PROBABILITY_TEXT: float = field(default_factory=lambda: _get_env("TTS_PROBABILITY_TEXT", "0.07", conv=float))
+    TTS_PROBABILITY_VOICEIN: float = field(default_factory=lambda: _get_env("TTS_PROBABILITY_VOICEIN", "0.33", conv=float))
+    PERSONAL_PING_TTS_ENABLED: bool = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_ENABLED", "false", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    PERSONAL_PING_TTS_PROBABILITY: float = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_PROBABILITY", "0.66", conv=float))
+    PERSONAL_PING_TTS_START_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_START_HOUR", "10", conv=int))
+    PERSONAL_PING_TTS_END_HOUR: int = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_END_HOUR", "21", conv=int))
+    PERSONAL_PING_TTS_CB_FAILS: int = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_CB_FAILS", "3", conv=int))
+    PERSONAL_PING_TTS_CB_COOLDOWN_SEC: int = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_CB_COOLDOWN_SEC", "3600", conv=int))
+    PERSONAL_PING_TTS_CAPTION_ENABLED: bool = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_CAPTION_ENABLED", "false", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    PERSONAL_PING_TTS_CAPTION_LEN: int = field(default_factory=lambda: _get_env("PERSONAL_PING_TTS_CAPTION_LEN", "160", conv=int))
+    ELEVENLABS_API_KEY: str = field(default_factory=lambda: _get_env("ELEVENLABS_API_KEY", "", conv=str))
+    ELEVENLABS_MODEL_ID: str = field(default_factory=lambda: _get_env("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2", conv=str))
+    ELEVENLABS_TIMEOUT: int = field(default_factory=lambda: _get_env("ELEVENLABS_TIMEOUT", "20", conv=int))
+    ELEVENLABS_DEFAULT_VOICE_ID: str = field(default_factory=lambda: _get_env("ELEVENLABS_DEFAULT_VOICE_ID", "", conv=str))
+    ELEVENLABS_VOICE_MAP: str = field(default_factory=lambda: _get_env("ELEVENLABS_VOICE_MAP", "{}", conv=str))  # JSON: {"en":"...","ru":"..."}
+    ELEVENLABS_MAX_TTS_CHARS: int = field(default_factory=lambda: _get_env("ELEVENLABS_MAX_TTS_CHARS", "900", conv=int))
+    TTS_SKIP_BACKLOG: int = field(default_factory=lambda: _get_env("TTS_SKIP_BACKLOG", "100", conv=int))
+    ELEVENLABS_OUTPUT_FORMAT: str = field(default_factory=lambda: _get_env("ELEVENLABS_OUTPUT_FORMAT", "ogg_48000", conv=str))
+    ELEVENLABS_TTS_NORMALIZATION: str = field(default_factory=lambda: _get_env("ELEVENLABS_TTS_NORMALIZATION", "on", conv=str)) # auto|on|off (text normalization)
+    ELEVENLABS_SEED: T = field(default_factory=lambda: _get_env("ELEVENLABS_SEED", None, conv=str))
+    # SSML / Prosody controls
+    ELEVENLABS_ENABLE_SSML_BREAKS: bool = field(default_factory=lambda: _get_env("ELEVENLABS_ENABLE_SSML_BREAKS", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    ELEVENLABS_SSML_MODE: str = field(default_factory=lambda: _get_env("ELEVENLABS_SSML_MODE", "off", conv=str))
+    SSML_BREAK_MAX_MID_MS: int = field(default_factory=lambda: _get_env("SSML_BREAK_MAX_MID_MS", "1200", conv=int))
+    SSML_BREAK_MAX_ANY_MS: int  = field(default_factory=lambda: _get_env("SSML_BREAK_MAX_ANY_MS",  "3000", conv=int))
+    SSML_BREAKS_PER_100CH: int  = field(default_factory=lambda: _get_env("SSML_BREAKS_PER_100CH",  "1",   conv=int))
+    # Phonemes (EN only, optional)
+    ELEVENLABS_ENABLE_PHONEMES_EN: bool = field(default_factory=lambda: _get_env("ELEVENLABS_ENABLE_PHONEMES_EN", "false", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    PHONEME_REDIS_DICT_KEY: str = field(default_factory=lambda: _get_env("PHONEME_REDIS_DICT_KEY", "pron:en", conv=str))
+    PHONEME_MAX_PER_MESSAGE: int = field(default_factory=lambda: _get_env("PHONEME_MAX_PER_MESSAGE", "6", conv=int))
 
 _settings_singleton: Optional[Settings] = None
 
@@ -389,14 +590,17 @@ def get_settings() -> Settings:
         _settings_singleton = Settings()
     return _settings_singleton
 
-
 class _SettingsProxy:
 
     def __getattr__(self, item):
-        return getattr(get_settings(), item)
+        try:
+            return getattr(get_settings(), item)
+        except AttributeError:
+            global _settings_singleton
+            _settings_singleton = None
+            return getattr(get_settings(), item)
 
     def __setattr__(self, key: str, value: Any) -> None:
         setattr(get_settings(), key, value)
-
 
 settings = _SettingsProxy()

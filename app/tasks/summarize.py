@@ -1,300 +1,384 @@
 #app/tasks/summarize.py
+from __future__ import annotations
+
 import asyncio
 import json
-import re
 import logging
+import contextlib
 
-from typing import List, Dict
-from asyncio import run_coroutine_threadsafe
+from typing import List, Tuple
 
 from app.tasks.celery_app import celery
 from app.tasks.utils.bg_loop import get_bg_loop
-from app.clients.openai_client import _call_openai_with_retry,  _get_output_text
-from app.emo_engine.persona.memory import PersonaMemory, get_embedding
+from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import (
-    get_redis, _k_p_msgs, _k_p_sum,
-    _k_g_msgs, _k_g_sum_u, _k_g_msgs_all,
-    _k_g_sum, MEMORY_TTL, extract_summary_data,
-    pack_summary_data, set_summary_if_newer,
+    get_redis, _k_mtm, _k_mtm_tokens,
+    _k_ltm, MEMORY_TTL_LTM, pack_summary_data,
+    set_summary_if_newer, _b2s, approx_tokens,
+    extract_summary_data, push_ltm_slice,
 )
 from app.config import settings
-
+from app.emo_engine.persona.memory import PersonaMemory, get_embedding
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_KEYS = ("topic", "facts", "decisions", "open_questions", "todos", "preferences", "entities")
 
-def _build_summary_system_prompt() -> str:
+def _run(coro):
+    loop = get_bg_loop()
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return fut.result()
+
+
+def _cap_lines(lines: List[str], max_tokens: int) -> str:
+    acc = 0
+    out: List[str] = []
+    for ln in lines:
+        t = approx_tokens(ln)
+        if out and acc + t > max_tokens:
+            break
+        out.append(ln)
+        acc += t
+    return "\n".join(out)
+
+
+def _is_private(chat_id: int, user_id: int) -> bool:
+    return chat_id == user_id
+
+
+def _limits(is_private: bool) -> Tuple[int, int, int, int]:
+    if is_private:
+        TRIM = settings.MTM_TRIM_CHUNK_TOKENS_PRIVATE
+        MTM  = settings.MTM_BUDGET_TOKENS_PRIVATE
+        LTM  = settings.LTM_MAX_TOKENS_PRIVATE
+    else:
+        TRIM = settings.MTM_TRIM_CHUNK_TOKENS_GROUP
+        MTM  = settings.MTM_BUDGET_TOKENS_GROUP
+        LTM  = settings.LTM_MAX_TOKENS_GROUP
+    SAFE_CONF = settings.LTM_SUMMARY_MAX_OUTPUT_TOKENS
+    SAFE = min(SAFE_CONF, LTM + 512)
+    return (TRIM, MTM, LTM, SAFE)
+
+
+def _compress_prompt(lines: List[str]) -> str:
+
+    block = "\n".join(lines)
     return (
-        "You update a rolling conversation memory. "
-        "Return ONLY minified JSON that conforms to the provided json_schema. "
-        "Rules:\n"
-        "- Merge PREVIOUS_SUMMARY_JSON with NEW_MESSAGES.\n"
-        "- Keep durable, cross-turn information only; drop chit-chat, greetings, transient small talk.\n"
-        "- No speculation or invention; do not add anything not grounded in the input.\n"
-        "- Deduplicate items and normalize entity names consistently (same entity → same string).\n"
-        "- topic: a short phrase of the main subject.\n"
-        "- facts: atomic, verifiable statements (one idea per string).\n"
-        "- decisions: explicit commitments/conclusions (who will do what/what was decided).\n"
-        "- open_questions: unresolved questions that remain after NEW_MESSAGES.\n"
-        "- todos: actionable tasks phrased as commands (\"verb + object\").\n"
-        "- preferences: stable likes/dislikes or constraints that are likely to persist.\n"
-        "- entities: proper names: people, products, orgs, places, usernames/handles.\n"
-        "- If a section has nothing to add, keep it as an empty array; topic may be an empty string."
+        "You are compressing a mid-term chat slice into long-term user memory.\n"
+        "Keep ONLY durable knowledge: stable facts, preferences, constraints, context, and behavior patterns.\n"
+        "Exclude small talk, transient Q&A, emotions, guesses, or speculation.\n"
+        "Exclude sensitive identifiers (emails, phone numbers, addresses, tokens, links, IDs) unless the user explicitly asked to save them.\n"
+        "If unsure whether something is durable, DROP it (prefer under-inclusion).\n"
+        "If unsure, DROP the content. Prefer under-inclusion to over-inclusion.\n"
+        "Treat role prefixes like 'user:'/'assistant:' as metadata; ignore them for language detection.\n"
+        "Write concisely as bullet points or short paragraphs, with no headings or markup.\n"
+        "LANGUAGE: Use the dominant language of the input excerpts; DO NOT translate.\n"
+        "-----\n"
+        f"{block}\n"
+        "-----\n"
+        "Return ONLY the cleaned text."
     )
 
-def _build_summary_user_prompt(previous_json: str, messages: list[str]) -> str:
-    prev = previous_json or "{}"
-    new_block = "\n".join(messages) if messages else "(none)"
+
+def _merge_prompt(old: str, new: str, max_tokens: int) -> str:
+
     return (
-        "PREVIOUS_SUMMARY_JSON:\n" + prev + "\n\n"
-        "NEW_MESSAGES (oldest→newest, one per line):\n" + new_block + "\n\n"
-        "TASK: Update the summary by merging PREVIOUS_SUMMARY_JSON with NEW_MESSAGES according to the Rules. "
-        "Output JSON only (no markdown, no code fences)."
+        "You are merging long-term memory about a user.\n"
+        "Task: combine the OLD memory and the NEW snippet, remove duplicates, keep ONLY durable facts, preferences, "
+        "constraints, context, and behavior patterns. No speculation. Be compact.\n"
+        f"Target hard limit ≈ {max_tokens} tokens.\n"
+        "Exclude sensitive identifiers unless the user explicitly asked to save them. Prefer under-inclusion.\n"
+        "LANGUAGE: Preserve the original language(s) from inputs; DO NOT translate.\n"
+        "-----\n[OLD_LTM]\n"
+        f"{old or ''}\n"
+        "-----\n[NEW_SNIPPET]\n"
+        f"{new}\n"
+        "-----\n"
+        "Return ONLY the cleaned merged text (no headings or labels)."
     )
 
-async def _summarize_worker(
-    *,
-    is_private: bool,
-    chat_id: int,
-    user_id: int,
-    length: int,
-) -> None:
+
+async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> None:
 
     redis = get_redis()
-    success = False
 
-    MSG_TRIM = int(getattr(settings, "SUMMARY_MSG_TRIM", 1200))
-    SHORT_FUSE_EX = int(getattr(settings, "SUMMARY_GUARD_EX", 120))
-
-    if is_private:
-        key_log = _k_p_msgs(user_id)
-        key_sum = _k_p_sum(user_id)
-    else:
-        if user_id == 0:
-            key_log = _k_g_msgs_all(chat_id)
-            key_sum = _k_g_sum(chat_id)
-        else:
-            key_log = _k_g_msgs(chat_id, user_id)
-            key_sum = _k_g_sum_u(chat_id, user_id)
-    
-    SKIP_PREFIXES = (
-        "Summary:",
-        "INTERNAL_PLAN:",
-        "[ReplyContext]",
-        "This message was forwarded from",
-        "The user's message was transcribed",
-    )
-
-    flag_key = f"{key_log}:_summary_pending"
+    ns_prefix = "api:" if namespace == "api" else ""
+    guard_key = f"{ns_prefix}ltm_rollup_worker:{chat_id}:{user_id}"
 
     try:
-        got = await redis.set(flag_key, "1", ex=SHORT_FUSE_EX, nx=True)
-        if not got:
-            logger.info("Summarization already in progress for %s", key_log)
-            return
-        old_raw = await redis.get(key_sum) or ""
-        _old_data = extract_summary_data(old_raw)
+        lock_ttl = int(getattr(settings, "LTM_ROLLUP_WORKER_EX", 300))
+    except Exception:
+        lock_ttl = 300
+    try:
+        got_lock = await redis.set(guard_key, "1", ex=lock_ttl, nx=True)
+    except Exception:
+        logger.warning("LTM rollup: lock SET failed (proceeding without lock)", exc_info=True)
+        got_lock = True
+    if not got_lock:
+        logger.info("LTM rollup: skipped (already running) chat=%s user=%s", chat_id, user_id)
+        return
+
+    try:
+        is_priv = _is_private(chat_id, user_id)
+        TRIM_CHUNK, MTM_BUDGET, LTM_MAX, SAFE_MAX_OUT = _limits(is_priv)
+
+        key_mtm = _k_mtm(chat_id, user_id, namespace)
+        key_tok = _k_mtm_tokens(chat_id, user_id, namespace)
+        key_ltm = _k_ltm(chat_id, user_id, namespace)
+
+        acc_tokens = 0
+        picked: List[str] = []
+        raw_rows: List[bytes] = []
+
         try:
-            json.loads(_old_data)
-            old = _old_data
+            while acc_tokens < TRIM_CHUNK:
+                row = await redis.lpop(key_mtm)
+                if not row:
+                    break
+                raw_rows.append(row if isinstance(row, (bytes, bytearray)) else str(row).encode("utf-8"))
+                try:
+                    obj = json.loads(_b2s(row))
+                    ln = f"{obj.get('role','')}: {obj.get('content','')}"
+                except Exception:
+                    ln = _b2s(row)
+                t = approx_tokens(ln)
+                acc_tokens += t
+                picked.append(ln)
         except Exception:
-            old = "{}"
-        sml = int(getattr(settings, "SHORT_MEMORY_LIMIT", 0))
-        if length < sml:
-            logger.info("Summarization skipped: length (%s) < SHORT_MEMORY_LIMIT (%s)", length, sml)
-            success = True
+            logger.exception("LTM rollup: MTM pop failed chat=%s user=%s", chat_id, user_id)
+
+        if not picked:
+            logger.info("LTM rollup: nothing to compress (MTM empty) chat=%s user=%s", chat_id, user_id)
             return
 
-        pct = float(getattr(settings, "SUMMARY_OLD_PCT", 0.25))
-        if not (0.0 < pct < 1.0):
-            pct = 0.25
-        cut = max(1, min(int(length * pct), length - 1))
-
+        def _token_sum(lines: list[str]) -> int:
+            return sum(approx_tokens(x) for x in lines)
+        SAFE_IN_CHUNK = 8000
         try:
-            rows: List[bytes | str] = await asyncio.wait_for(redis.lrange(key_log, 0, cut - 1), 2.0)
+            partial_trigger = settings.LTM_SUMMARY_PARTIAL_TRIGGER_TOKENS
+            if _token_sum(picked) > partial_trigger:
+                partials: list[str] = []
+                buf: list[str] = []
+                acc = 0
+                for ln in picked:
+                    t = approx_tokens(ln)
+                    if acc + t > SAFE_IN_CHUNK and buf:
+                        r = await asyncio.wait_for(
+                            _call_openai_with_retry(
+                                endpoint="responses.create",
+                                model=settings.REASONING_MODEL,
+                                input=_compress_prompt(buf),
+                                max_output_tokens=SAFE_MAX_OUT,
+                                temperature=0,
+                            ),
+                            timeout=settings.REASONING_MODEL_TIMEOUT
+                        )
+                        partials.append((_get_output_text(r) or "").strip())
+                        buf, acc = [], 0
+                    buf.append(ln); acc += t
+                if buf:
+                    r = await asyncio.wait_for(
+                        _call_openai_with_retry(
+                            endpoint="responses.create",
+                            model=settings.REASONING_MODEL,
+                            input=_compress_prompt(buf),
+                            max_output_tokens=SAFE_MAX_OUT,
+                            temperature=0,
+                        ),
+                        timeout=settings.REASONING_MODEL_TIMEOUT
+                    )
+                    partials.append((_get_output_text(r) or "").strip())
+                merged_partials = "\n".join(x for x in partials if x.strip())
+                r2 = await asyncio.wait_for(
+                    _call_openai_with_retry(
+                        endpoint="responses.create",
+                        model=settings.REASONING_MODEL,
+                        input=_merge_prompt("", merged_partials, LTM_MAX),
+                        max_output_tokens=SAFE_MAX_OUT,
+                        temperature=0,
+                    ),
+                    timeout=settings.REASONING_MODEL_TIMEOUT
+                )
+                new_slice = (_get_output_text(r2) or "").strip()
+                if not new_slice:
+                    raise RuntimeError("empty new_slice after partials merge")
+            else:
+                r = await asyncio.wait_for(
+                    _call_openai_with_retry(
+                        endpoint="responses.create",
+                        model=settings.REASONING_MODEL,
+                        input=_compress_prompt(picked),
+                        max_output_tokens=SAFE_MAX_OUT,
+                        temperature=0,
+                    ),
+                    timeout=settings.REASONING_MODEL_TIMEOUT
+                )
+                new_slice = (_get_output_text(r) or "").strip()
+                if not new_slice:
+                    raise RuntimeError("empty new_slice")
         except Exception:
-            logger.exception("lrange failed chat=%s user=%s", chat_id, user_id)
-            success = False
-            return
-
-        msgs = []
-        for r in reversed(rows):
+            logger.exception("LTM rollup: compression failed chat=%s user=%s — restoring MTM", chat_id, user_id)
             try:
-                raw = r.decode() if isinstance(r, (bytes, bytearray)) else r
-                m = json.loads(raw)
+                if raw_rows:
+                    await redis.lpush(key_mtm, *reversed(raw_rows))
             except Exception:
-                continue
-            body = (m.get("content") or "").strip()
-            if MSG_TRIM and len(body) > MSG_TRIM:
-                body = body[:MSG_TRIM] + "…"
-            body = re.sub(r"\s+", " ", body)
-            speaker = (
-                "Assistant" if m.get("role") == "assistant"
-                else ("User" if m.get("role") == "user" else "System")
-            )
-            if body.startswith(tuple(SKIP_PREFIXES)):
-                continue
-            msgs.append(f"{speaker}: {body}")
-
-        if not msgs and not old:
-            success = True
+                logger.warning("LTM rollup: MTM restore failed chat=%s user=%s", chat_id, user_id)
             return
-        if not msgs:
-            success = True
-            return
-
-        system_prompt  = _build_summary_system_prompt()
-        user_prompt = _build_summary_user_prompt(old, msgs)
-
-        summary_schema = {
-            "type": "object",
-            "properties": {
-                "topic": {"type": "string"},
-                "facts": {"type": "array", "items": {"type": "string"}},
-                "decisions": {"type": "array", "items": {"type": "string"}},
-                "open_questions": {"type": "array", "items": {"type": "string"}},
-                "todos": {"type": "array", "items": {"type": "string"}},
-                "preferences": {"type": "array", "items": {"type": "string"}},
-                "entities": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["topic","facts","decisions","open_questions","todos","preferences","entities"],
-            "additionalProperties": False,
-        }
 
         try:
-            resp = await asyncio.wait_for(
+            max_raw = int(getattr(settings, "LTM_SLICES_MAX_TOKENS", 4000))
+            cap_items = int(getattr(settings, "LTM_SLICES_CAP", 40))
+            ttl_sec = int(getattr(settings, "LTM_SLICES_TTL_SEC", 30 * 86400))
+            raw_for_slice = _cap_lines(picked, max_raw)
+            if raw_for_slice.strip():
+                await push_ltm_slice(
+                    chat_id,
+                    user_id,
+                    raw_for_slice,
+                    cap_items=cap_items,
+                    ttl_override=ttl_sec,
+                )
+        except Exception:
+            logger.warning("LTM rollup: push_ltm_slice failed chat=%s user=%s", chat_id, user_id)
+
+        try:
+            old_raw = await redis.get(key_ltm)
+            old_ltm = extract_summary_data(old_raw) if old_raw else ""
+        except Exception:
+            old_ltm = ""
+
+        try:
+            merge_resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
-                    instructions=system_prompt,
-                    input=user_prompt,
-                    text={
-                        "format": {
-                            "type": "json_schema",
-                            "name": "history_merge",
-                            "schema": summary_schema,
-                            "strict": True
-                        }
-                    },
+                    input=_merge_prompt(old_ltm, new_slice, LTM_MAX),
+                    max_output_tokens=SAFE_MAX_OUT,
                     temperature=0,
-                    max_output_tokens=1000,
                 ),
-                timeout=20.0,
+                timeout=settings.REASONING_MODEL_TIMEOUT
             )
-            content = (_get_output_text(resp) or "{}").strip()
+            merged = (_get_output_text(merge_resp) or "").strip()
         except Exception:
-            logger.exception("OpenAI summarization failed chat=%s user=%s", chat_id, user_id)
-            return
-
-        content = re.sub(r"^```[a-zA-Z]*\s*", "", content).rstrip("`").strip() if content.startswith("```") else content
-        if "{" in content and "}" in content:
-            content = content[content.find("{"): content.rfind("}") + 1]
-        try:
-            obj = json.loads(content)
-            if not isinstance(obj, dict):
-                obj = {}
-        except Exception:
-            logger.warning("Summarizer returned non-JSON; skipping update chat=%s user=%s", chat_id, user_id)
-            return
-        for k in REQUIRED_KEYS:
-            if k not in obj:
-                obj[k] = "" if k == "topic" else []
-        new_summary = json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
-
-        try:
-            payload = pack_summary_data(new_summary)
-            await set_summary_if_newer(key_sum, payload, MEMORY_TTL)
+            logger.exception("LTM rollup: merge failed chat=%s user=%s — restoring MTM", chat_id, user_id)
             try:
-                cur_len = await redis.llen(key_log)
+                if raw_rows:
+                    await redis.lpush(key_mtm, *reversed(raw_rows))
             except Exception:
-                cur_len = None
-            trim_from = cut
-            if isinstance(cur_len, int) and cur_len >= 0:
-                trim_from = min(cut, cur_len)
-            await redis.ltrim(key_log, trim_from, -1)
-            success = True
-        except Exception:
-            logger.exception("Redis pipeline failed chat=%s user=%s", chat_id, user_id)
+                logger.warning("LTM rollup: MTM restore failed chat=%s user=%s", chat_id, user_id)
             return
-    finally:
+
         try:
-            if success:
-                await redis.delete(flag_key)
-            else:
-                await redis.expire(flag_key, 60)
+            payload = pack_summary_data(merged)
+            await set_summary_if_newer(key_ltm, payload, MEMORY_TTL_LTM)
+            try:
+                try:
+                    cpt = settings.APPROX_CHARS_PER_TOKEN
+                except Exception:
+                    cpt = 3.8
+                byte_len_sum = 0
+                for r in raw_rows:
+                    if isinstance(r, (bytes, bytearray)):
+                        byte_len_sum += len(r)
+                    else:
+                        byte_len_sum += len(str(r).encode("utf-8", "ignore"))
+                decr = max(1, int(byte_len_sum / max(0.1, cpt)))
+                script = (
+                    "local v=redis.call('DECRBY', KEYS[1], ARGV[1]); "
+                    "if v<0 then redis.call('SET', KEYS[1], 0); v=0 end; return v"
+                )
+                await redis.eval(script, 1, key_tok, str(int(decr)))
+            except Exception:
+                logger.warning("LTM rollup: tokens decrement failed chat=%s user=%s", chat_id, user_id)
+            logger.info(
+                "LTM updated chat=%s user=%s (popped≈%d tokens, MTM budget=%d, LTM max=%d)",
+                chat_id, user_id, acc_tokens, MTM_BUDGET, LTM_MAX
+            )
         except Exception:
-            logger.warning("Failed to update summarization guard flag for %s", key_log)
-
-    logger.info("Summary updated chat=%s user=%s", chat_id, user_id)
-
-
-@celery.task(name="summarize_private_old", acks_late=True, time_limit=120)
-def summarize_private_old(user_id: int, length: int) -> None:
-    loop = get_bg_loop()
-    fut = run_coroutine_threadsafe(
-        _summarize_worker(
-            is_private=True,
-            chat_id=user_id,
-            user_id=user_id,
-            length=length,
-        ),
-        loop,
-    )
-    def _cb(f):
-        try:
-            f.result()
-        except Exception as e:
-            logger.error("summarize_private_old failed: %s", e, exc_info=True)
-    fut.add_done_callback(_cb)
+            logger.exception("LTM rollup: save failed chat=%s user=%s", chat_id, user_id)
+    finally:
+        with contextlib.suppress(Exception):
+            await redis.delete(guard_key)
 
 
-@celery.task(name="summarize_group_old", acks_late=True, time_limit=120)
-def summarize_group_old(chat_id: int, user_id: int, length: int) -> None:
-    loop = get_bg_loop()
-    fut = run_coroutine_threadsafe(
-        _summarize_worker(
-            is_private=False,
-            chat_id=chat_id,
-            user_id=user_id,
-            length=length,
-        ),
-        loop,
-    )
-    def _cb(f):
-        try:
-            f.result()
-        except Exception as e:
-            logger.error("summarize_group_old failed: %s", e, exc_info=True)
-    fut.add_done_callback(_cb)
+@celery.task(name="ltm.rollup_private", acks_late=True, time_limit=240)
+def rollup_private(user_id: int, namespace: str = "default") -> None:
+    _run(_rollup(chat_id=user_id, user_id=user_id, namespace=namespace))
+
+
+@celery.task(name="ltm.rollup_group", acks_late=True, time_limit=240)
+def rollup_group(chat_id: int, user_id: int, namespace: str = "default") -> None:
+    _run(_rollup(chat_id=chat_id, user_id=user_id, namespace=namespace))
 
 
 @celery.task(name="persona.summarize_memory", acks_late=True, time_limit=300)
 def summarize_memory(chat_id: int, texts: list, old_ids: list) -> None:
-    asyncio.run(_summarize_memory_worker(chat_id, texts, old_ids))
+    _run(_summarize_memory_worker(chat_id, texts, old_ids))
 
 
 async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> None:
+    logger_local = logging.getLogger(__name__)
+
+    mem = PersonaMemory(chat_id=chat_id, start_maintenance=False)
+    await mem.ready()
+
+    async def _unschedule(ids: list[str] | list):
+        if not ids:
+            return
+        try:
+            pipe = mem._redis.pipeline(transaction=True)
+            for oid in ids:
+                pipe.hdel(f"memory:{chat_id}:{oid}", "consolidation_scheduled_ts")
+            await pipe.execute()
+        except Exception:
+            logger_local.debug("summarize_memory: unschedule cleanup skipped", exc_info=True)
 
     if not texts:
-        logger.info("summarize_memory: no texts for chat=%s, skipping", chat_id)
+        logger_local.info("summarize_memory: no texts for chat=%s, skipping", chat_id)
+        await _unschedule(old_ids)
         return
-    CHUNK_TIMEOUT = float(getattr(settings, "MEMORY_SUMMARY_CHUNK_TIMEOUT", 45.0))
-    CONS_TIMEOUT = float(getattr(settings, "MEMORY_SUMMARY_FINAL_TIMEOUT", 45.0))
 
     def _mk_prompt(block: list[str]) -> str:
         snippet = " ||| ".join(block)
         return (
-            "You compress related autobiographical events into a single memory entry.\n\n"
+            "You compress related autobiographical events into a single memory entry.\n"
+            "LANGUAGE: Keep the language of the EVENTS; DO NOT translate.\n\n"
             f"EVENTS (delimiter = '|||'):\n{snippet}\n\n"
             "TASK: Produce 1-2 short sentences (≤ 50 words total) in past tense, "
             "objective and free of speculation. Return ONLY the consolidated sentence."
         )
+
     try:
-        MAX_CHUNK = 300
-        partials = []
-        for i in range(0, len(texts), MAX_CHUNK):
-            block = texts[i:i+MAX_CHUNK]
+        try:
+            MAX_IN_TOKENS = int(getattr(settings, "MEMORY_SUMMARY_CHUNK_TOKENS", 6000))
+        except Exception:
+            MAX_IN_TOKENS = 6000
+
+        partials: list[str] = []
+        block: list[str] = []
+        acc_tokens = 0
+
+        for t in texts:
+            tok = approx_tokens(t)
+            if block and acc_tokens + tok > MAX_IN_TOKENS:
+                prompt = _mk_prompt(block)
+                resp = await asyncio.wait_for(
+                    _call_openai_with_retry(
+                        endpoint="responses.create",
+                        model=settings.REASONING_MODEL,
+                        instructions="You are a precise summarisation assistant.",
+                        input=prompt,
+                        max_output_tokens=192,
+                        temperature=0,
+                    ),
+                    timeout=settings.REASONING_MODEL_TIMEOUT
+                )
+                partials.append((_get_output_text(resp) or "").strip())
+                block, acc_tokens = [], 0
+
+            block.append(t)
+            acc_tokens += tok
+
+        if block:
             prompt = _mk_prompt(block)
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
@@ -305,9 +389,10 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                     max_output_tokens=192,
                     temperature=0,
                 ),
-                CHUNK_TIMEOUT,
+                timeout=settings.REASONING_MODEL_TIMEOUT,
             )
             partials.append((_get_output_text(resp) or "").strip())
+
         if len(partials) == 1:
             summary = partials[0]
         else:
@@ -321,18 +406,23 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                     max_output_tokens=192,
                     temperature=0,
                 ),
-                CONS_TIMEOUT,
+                timeout=settings.REASONING_MODEL_TIMEOUT,
             )
             summary = (_get_output_text(resp) or "").strip()
 
         summary = (summary or "").strip()
+        if not summary:
+            logger_local.warning("summarize_memory: empty summary, keeping originals (chat=%s)", chat_id)
+            await _unschedule(old_ids)
+            return
+
         try:
             emb = await asyncio.wait_for(get_embedding(summary), timeout=15.0)
         except asyncio.TimeoutError:
-            logger.warning("get_embedding timeout for summary, skipping record")
+            logger_local.warning("get_embedding timeout for summary, skipping record")
+            await _unschedule(old_ids)
             return
-        mem = PersonaMemory(chat_id=chat_id, start_maintenance=False)
-        await mem.ready()
+
         eid, created = await mem.record(
             text=summary,
             embedding=emb,
@@ -342,17 +432,42 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
             salience=1.0,
             event_frame=False,
         )
-        if eid:
+        if eid and created:
             await mem._redis.hset(
                 f"memory:{chat_id}:{eid}",
                 mapping={"collapsed_from": ",".join(map(str, old_ids))}
             )
-        zset_key = f"memory:ids:{chat_id}"
-        pipe = mem._redis.pipeline(transaction=True)
-        for old_eid in old_ids:
-            pipe.delete(f"memory:{chat_id}:{old_eid}")
-            pipe.zrem(zset_key, str(old_eid))
-        await pipe.execute()
-        logger.info("Collapsed %d entries into 1 summary and removed originals", len(old_ids))
+
+        if eid and created:
+            zset_key = f"memory:ids:{chat_id}"
+            pipe = mem._redis.pipeline(transaction=True)
+            for old_eid in old_ids:
+                pipe.delete(f"memory:{chat_id}:{old_eid}")
+                pipe.zrem(zset_key, str(old_eid))
+            await pipe.execute()
+        else:
+            logger_local.warning("summarize_memory: no eid created, keeping originals (chat=%s)", chat_id)
+            await _unschedule(old_ids)
+            return
+
+        try:
+            uidsets_key = f"memory:uidsets:{chat_id}"
+            uid_zsets = await mem._redis.smembers(uidsets_key)
+            if uid_zsets:
+                old_ids_str = [str(x) for x in old_ids]
+                pipe2 = mem._redis.pipeline(transaction=True)
+                for z in uid_zsets:
+                    zname = z.decode() if isinstance(z, (bytes, bytearray)) else str(z)
+                    for oid in old_ids_str:
+                        pipe2.zrem(zname, oid)
+                await pipe2.execute()
+        except Exception:
+            logger_local.debug("summarize_memory: per-uid zsets cleanup skipped", exc_info=True)
+
+        logger_local.info(
+            "Collapsed %d entries into 1 summary and removed originals (chat=%s)",
+            len(old_ids), chat_id
+        )
     except Exception as e:
-        logger.exception("summarize_memory failed: %s", e)
+        logger_local.exception("summarize_memory failed: %s", e)
+        await _unschedule(old_ids)

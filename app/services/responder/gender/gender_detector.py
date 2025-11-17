@@ -14,10 +14,8 @@ __all__ = ["detect_gender"]
 logger = logging.getLogger(__name__)
 
 GENDERIZE_URL = "https://api.genderize.io/"
-_GENDERIZE_TIMEOUT = getattr(settings, "GENDERIZE_TIMEOUT", 10.0)
-_FEW_SHOT_TIMEOUT = getattr(settings, "FEW_SHOT_TIMEOUT", 10.0)
-_COT_TIMEOUT = getattr(settings, "COT_TIMEOUT", 15.0)
-_CONF_THRESHOLD = getattr(settings, "CONF_THRESHOLD", 0.9)
+GENDERIZE_TIMEOUT = getattr(settings, "GENDERIZE_TIMEOUT", 10.0)
+CONF_THRESHOLD = getattr(settings, "CONF_THRESHOLD", 0.9)
 
 
 LOCAL_NAMES: dict[str, str] = {
@@ -32,7 +30,7 @@ LOCAL_NAMES: dict[str, str] = {
 
 
 def _accept(gender: Optional[str], prob: float = 1.0) -> bool:
-    return gender in ("male", "female") and prob >= _CONF_THRESHOLD
+    return gender in ("male", "female") and prob >= CONF_THRESHOLD
 
 _genderize_cache: Dict[str, Tuple[Optional[str], float]] = {}
 _genderize_lock = asyncio.Lock()
@@ -40,7 +38,7 @@ _genderize_lock = asyncio.Lock()
 async def _genderize_query(first: str) -> Tuple[Optional[str], float]:
 
     try:
-        async with httpx.AsyncClient(timeout=_GENDERIZE_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=GENDERIZE_TIMEOUT) as client:
             resp = await client.get(GENDERIZE_URL, params={"name": first})
             resp.raise_for_status()
             data: dict = resp.json()
@@ -51,7 +49,7 @@ async def _genderize_query(first: str) -> Tuple[Optional[str], float]:
         logger.debug("genderize.io: %s -> %s (prob=%.2f)", first, gender, prob)
         return gender, prob
     except (httpx.ReadTimeout, httpx.ConnectTimeout):
-        logger.warning("genderize.io timeout (%.1f s)", _GENDERIZE_TIMEOUT)
+        logger.warning("genderize.io timeout (%.1f s)", GENDERIZE_TIMEOUT)
     except httpx.HTTPStatusError as exc:
         logger.warning("genderize.io HTTP error %s: %s", exc.response.status_code, exc)
     except Exception as exc:
@@ -158,12 +156,12 @@ async def detect_gender(name: str, text: str) -> str:
         logger.debug("genderize.io accepted: %s (prob=%.2f)", gender, prob)
         return gender
 
-    ans = await _ask_gender(first, message=None, timeout=_FEW_SHOT_TIMEOUT)
+    ans = await _ask_gender(first, message=None, timeout=settings.BASE_MODEL_TIMEOUT)
     if ans:
         logger.debug("LLM (name-only): %s", ans)
         return ans
 
-    ans = await _ask_gender(first, message=text, timeout=_COT_TIMEOUT)
+    ans = await _ask_gender(first, message=text, timeout=settings.BASE_MODEL_TIMEOUT)
     if ans:
         logger.debug("LLM (name+context): %s", ans)
         return ans

@@ -18,8 +18,6 @@ PRIMARY_COORDS: Dict[str, tuple[float, float]] = {
     "fatigue":      (-0.6, -0.8),
     "pride":        (0.5, 0.5),
     "doubt":        (-0.5, 0.5),
-    "nostalgia":    (-0.5, -0.2),
-    "rage":         (0.0, -0.8),
     "compassion":   (0.5, 0.2),
     "apathy":       (-0.8, -0.5),
     "regret":       (-0.8, 0.2),
@@ -27,57 +25,26 @@ PRIMARY_COORDS: Dict[str, tuple[float, float]] = {
     "impatience":   (0.2, -0.5),
     "contentment":  (0.2, 0.5),
     "reflection":   (0.0, 0.2),
-    "alertness":    (0.4,  0.6),
-    "amusement":    (0.8,  0.5),
-    "attraction":   (0.9,  0.7),
-    "bitterness":   (-0.6, 0.2),
-    "calm":         (0.5, -0.4),
-    "caution":      (-0.2, 0.4),
     "charm":        (0.7,  0.3),
     "chaos":        (-0.3, 0.9),
-    "conflict":     (-0.4, 0.5),
     "control":      (0.3,  0.1),
-    "creation":     (0.6,  0.6),
     "courage":      (0.2,  0.7),
     "cynicism":     (-0.5, 0.3),
     "darkness":     (-0.8, 0.4),
-    "detachment":   (-0.3,-0.2),
     "danger":       (-0.6, 0.8),
-    "determination":(0.4,  0.7),
-    "focus":        (0.3,  0.2),
-    "gratitude":    (0.9,  0.2),
-    "hidden_anger": (-0.4, 0.6),
     "humility":     (0.5,  0.1),
     "inspiration":  (0.7,  0.8),
-    "kindness":     (0.8,  0.3),
-    "longing":      (-0.2, 0.2),
-    "malice":       (-0.7, 0.5),
     "neutral":      (0.0,  0.0),
     "peace":        (0.6, -0.3),
     "persistence":  (0.3,  0.6),
-    "release":      (0.5,  0.9),
     "resolve":      (0.4,  0.6),
     "resentment":   (-0.5, 0.4),
-    "restraint":    (0.1,  0.2),
-    "respect":      (0.7,  0.3),
-    "satisfaction": (0.8,  0.2),
     "seduction":    (0.9,  0.7),
     "stealth":      (-0.2, 0.3),
     "technical":    (0.1,  0.1),
     "tenderness":   (0.8,  0.4),
     "tranquility":  (0.6, -0.2),
     "warmth":       (0.9,  0.3),
-    "overflow":     (-0.1, 0.8),
-    "loneliness":   (-0.6,  0.0),
-    "ecstasy":      ( 0.9,  0.9),
-    "trepidation":  (-0.4,  0.8),
-    "skepticism":   (-0.3,  0.4),
-    "tear":         (-0.9,  0.2),
-    "despair":      (-0.8,  0.3),
-    "certainty":    ( 0.4,  0.1),
-    "comfort":      ( 0.7, -0.3),
-    "madness":      (-0.6,  0.9),
-    "carefree":     ( 0.5,  0.4),
 }
 
 PRIMARY_EMOTIONS: List[str] = list(PRIMARY_COORDS.keys())
@@ -187,6 +154,21 @@ SECONDARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
     "self_reflection": {
         "restraint": lambda s: 0.7*s["self_reflection"] + 0.3*s["patience"],
     },
+   "derived": {
+       "love": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("trust", 0.0),
+       "affection": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
+       "intimacy": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
+       "excitement": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("arousal", 0.0),
+       "euphoria": lambda s: 0.8*s.get("joy", 0.0) + 0.2*s.get("arousal", 0.0),
+       "playfulness": lambda s: 0.5*s.get("joy", 0.0) + 0.3*s.get("humor", 0.0) + 0.2*s.get("energy", 0.0),
+       "burnout": lambda s: 0.7*s.get("fatigue", 0.0) + 0.3*s.get("stress", 0.0),
+       "exhaustion": lambda s: 0.8*s.get("fatigue", 0.0) + 0.2*(1.0 - s.get("energy", 0.0)),
+       "lust": lambda s: s.get("sexual_arousal", 0.0),
+       "remorse": lambda s: 0.6*s.get("guilt", 0.0) + 0.4*s.get("regret", 0.0),
+       "submission": lambda s: 0.6*s.get("trust", 0.0) + 0.4*(1.0 - s.get("dominance", 0.5)),
+       "creative_collaboration": lambda s: 0.6*s.get("creativity", 0.0) + 0.4*s.get("friendliness", 0.0),
+       "disappointment": lambda s: 0.6*s.get("sadness", 0.0) + 0.4*(1.0 - s.get("joy", 0.0)),
+   },
 }
 SECONDARY_KEYS = list({key for subs in SECONDARY_EMOTIONS.values() for key in subs})
 
@@ -237,9 +219,6 @@ TERTIARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
     "loathing": {
         "detestation":lambda s: 0.8*s["loathing"] + 0.2*s["anger"],
     },
-    "amazement": {
-        "wonder":    lambda s: 0.7*s["amazement"] + 0.3*s["surprise"],
-    },
     "astonishment": {
         "bewilderment":lambda s: 0.6*s["astonishment"] + 0.4*s["surprise"],
     },
@@ -264,15 +243,13 @@ TERTIARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
     "vigilance": {
         "watchfulness":lambda s: 0.6*s["vigilance"] + 0.4*s["fear"],
     },
-    "interest": {
-        "curiosity": lambda s: 0.8*s["interest"] + 0.2*s["curiosity"],
-    },
     "tension": {
         "strain":    lambda s: 0.7*s["tension"] + 0.3*s["stress"],
     },
     "overwhelm": {
-        "swamped":   lambda s: 0.8*s["overwhelm"] + 0.2*s["anxiety"],
-        "overflow":  lambda s: 0.6*s["overwhelm"] + 0.4*s.get("excitement", 0.0),
+        "swamped":  lambda s: 0.8*s["overwhelm"] + 0.2*s["anxiety"],
+        "overflow": lambda s: 0.6*s["overwhelm"] + 0.4*s.get("excitement", 0.0),
+        "collapse": lambda s: 0.6*s.get("overwhelm", 0.0) + 0.4*s.get("fatigue", 0.0),
     },
     "unease": {
         "discomfort":lambda s: 0.6*s["unease"] + 0.4*s["fear"],
@@ -294,6 +271,20 @@ TERTIARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
     },
     "joy": {
         "satisfaction": lambda s: 0.6*s["joy"] + 0.4*s.get("contentment", 0.0),
+    },
+    "amazement": {
+        "wonder": lambda s: 0.7*s["amazement"] + 0.3*s["surprise"],
+        "awe":    lambda s: 0.6*s.get("amazement", 0.0) + 0.4*s.get("respect", 0.0),
+    },
+    "lust": {
+        "lustful_excitement": lambda s: 0.7*s.get("lust", 0.0) + 0.3*s.get("arousal", 0.0),
+    },
+    "interest": {
+        "interest_driven": lambda s: 0.7*s.get("interest", 0.0) + 0.3*s.get("curiosity", 0.0),
+        "boredom":         lambda s: 0.6*s.get("apathy", 0.0) + 0.4*(1.0 - s.get("interest", 0.0)),
+    },
+    "inspiration": {
+        "inspired_eagerness": lambda s: 0.6*s.get("inspiration", 0.0) + 0.4*s.get("eagerness", 0.0),
     },
 }
 TERTIARY_KEYS = list({key for subs in TERTIARY_EMOTIONS.values() for key in subs})
@@ -330,24 +321,39 @@ ALL_METRICS = list(dict.fromkeys(
 
 ANALYSIS_METRICS = [
     "valence", "arousal", "dominance",
+    "energy", "fatigue",
     "joy", "sadness", "anger", "fear", "disgust",
     "surprise", "trust", "anticipation",
-    "stress", "anxiety", "confidence",
-    "humor", "charisma", "authority", "wit"
+    "stress", "anxiety",
+    "curiosity", "doubt", "impatience",
+    "friendliness", "civility", "engagement",
+    "confidence", "humor", "charisma", "authority", "wit",
+    "sarcasm", "aggressiveness", "profanity",
+    "confusion", "embarrassment", "guilt",
+    "sexual_arousal"
 ]
 
 _raw_pairs = [
-    ("joy", "sadness"), ("trust", "disgust"), ("fear", "anger"),
-    ("surprise", "anticipation"), ("love", "remorse"), ("submission", "contempt"), 
-    ("awe", "aggressiveness"), ("optimism", "disappointment"), ("lust", "guilt"),
-    ("intimacy", "resentment"), ("interest_driven", "apathy"),
-    ("lustful_excitement", "guilt"), ("affection", "resentment"),
-    ("creative_collaboration", "isolation"), ("inspired_eagerness", "boredom"),
+    ("joy", "sadness"),
+    ("trust", "disgust"),
+    ("fear", "anger"),
+    ("surprise", "anticipation"),
+    ("love", "remorse"),
+    ("submission", "contempt"),
+    ("awe", "aggressiveness"),
+    ("optimism", "disappointment"),
+    ("lustful_excitement", "guilt"),
+    ("affection", "resentment"),
+    ("interest_driven", "apathy"),
+    ("creative_collaboration", "isolation"),
+    ("inspired_eagerness", "boredom"),
 ]
 
-OPPOSITES: dict[str, str] = {}
+_OPP: dict[str, str] = {}
 for a, b in _raw_pairs:
-    OPPOSITES.setdefault(a, b)
-    OPPOSITES.setdefault(b, a)
+    if a in ALL_METRICS and b in ALL_METRICS:
+        _OPP[a] = b
+        _OPP[b] = a
+OPPOSITES: dict[str, str] = _OPP
 
 FAT_CLAMP = lambda x: max(0.0, min(1.0, x))

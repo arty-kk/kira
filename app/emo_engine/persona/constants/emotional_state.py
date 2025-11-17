@@ -6,7 +6,7 @@ from .tone_map import TONE_MAP, Tone
 
 
 MIN_GLOBAL_THR = 0.25
-TOP_K = 2
+TOP_K = 3
 
 
 def compute_emotional_state(
@@ -20,16 +20,20 @@ def compute_emotional_state(
     if dominant:
         return dominant
 
-    v = float(state.get("valence", 0.0))
-    a = float(state.get("arousal", 0.5))
-    if abs(v) < 0.2 and a < 0.4:
-        return "Neutral"
+    if "valence_mod" in mods:
+        v = 2.0 * float(mods.get("valence_mod", 0.5)) - 1.0
+    else:
+        v = float(state.get("valence", 0.0))
+    a = float(mods.get("arousal_mod", state.get("arousal", 0.5)))
+    auto_neutral = (abs(v) < 0.2 and a < 0.4)
 
     scores: List[Tuple[Tone, float]] = []
     for key, tone in TONE_MAP.items():
-        v = mods.get(key, state.get(key.replace("_mod", ""), 0.0))
-        v = max(0.0, min(1.0, v))
-        scores.append((tone, v))
+        if key == "valence_mod":
+            continue
+        vv = mods.get(key, state.get(key.replace("_mod", ""), 0.0))
+        vv = max(0.0, min(1.0, float(vv)))
+        scores.append((tone, vv))
 
     scores.sort(key=lambda kv: kv[1], reverse=True)
     if not scores:
@@ -40,6 +44,9 @@ def compute_emotional_state(
     chosen = [(t, v) for t, v in scores if v >= dyn_thr][:TOP_K]
 
     if not chosen:
+        return "Neutral"
+
+    if auto_neutral and scores[0][1] < MIN_GLOBAL_THR:
         return "Neutral"
 
     if not allow_mixed or len(chosen) == 1:

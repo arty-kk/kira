@@ -1,7 +1,10 @@
 #app/core/logging_config.py
 import logging
+import os
 
 from logging.config import dictConfig
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 def setup_logging() -> None:
     
@@ -20,29 +23,29 @@ def setup_logging() -> None:
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "standard",
-                "level": "INFO",
+                "level": LOG_LEVEL,
                 "stream": "ext://sys.stderr"
             }
         },
         "loggers": {
             "": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": LOG_LEVEL,
                 "propagate": False
             },
             "app": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": LOG_LEVEL,
                 "propagate": False
             },
             "sqlalchemy.engine": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": LOG_LEVEL,
                 "propagate": False
             },
             "aiohttp.server": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": LOG_LEVEL,
                 "propagate": False
             }
         }

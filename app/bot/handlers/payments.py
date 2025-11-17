@@ -1,4 +1,4 @@
-# app/bot/handlers/payments.py
+#app/bot/handlers/payments.py
 import logging
 import asyncio
 
@@ -17,8 +17,15 @@ from app.bot.i18n import t
 from app.clients.telegram_client import get_bot
 from app.bot.components.constants import redis_client
 from app.bot.components.dispatcher import dp
+from app.bot.utils.telegram_safe import (
+    send_message_safe,
+    delete_message_safe,
+    send_invoice_safe,
+)
 from app.config import settings
-from app.core.db import AsyncSessionLocal
+from app.core.db import session_scope
+from sqlalchemy.exc import OperationalError, DBAPIError
+from app.core.models import User
 from app.services.user.user_service import (
     get_or_create_user, add_paid_requests,
     compute_remaining,
@@ -38,7 +45,7 @@ PENDING_TTL = int(getattr(settings, "PENDING_INVOICE_TTL", 1800))
 CB_RATE_TTL = 1
 TRANSIENT_NOTICE_TTL = int(getattr(settings, "PAYMENTS_TRANSIENT_NOTICE_TTL", 6))
 
-async def _cooldown(cb: CallbackQuery) -> bool:
+async def cooldown(cb: CallbackQuery) -> bool:
 
     try:
         ok = await redis_client.set(_k_cb_rate(cb.from_user.id), 1, ex=CB_RATE_TTL, nx=True)
@@ -52,26 +59,16 @@ async def _cooldown(cb: CallbackQuery) -> bool:
     except Exception:
         return False
 
-async def _delete_message_safe(chat_id: int, message_id: Optional[int]) -> None:
-    if not message_id:
-        return
-    try:
-        await bot.delete_message(chat_id, message_id)
-    except TelegramBadRequest:
-        pass
-    except Exception:
-        logger.exception("Failed to delete message chat=%s msg_id=%s", chat_id, message_id)
-
-async def _clear_payment_ui(user_id: int, chat_id: int) -> None:
+async def clear_payment_ui(user_id: int, chat_id: int) -> None:
 
     try:
         inv_msg_id = await redis_client.get(_k_pending_msg(user_id))
         info_msg_id = await redis_client.get(_k_buy_info_msg(user_id))
         menu_msg_id = await redis_client.get(_k_buy_menu_msg(user_id))
 
-        await _delete_message_safe(chat_id, int(inv_msg_id) if inv_msg_id else None)
-        await _delete_message_safe(chat_id, int(info_msg_id) if info_msg_id else None)
-        await _delete_message_safe(chat_id, int(menu_msg_id) if menu_msg_id else None)
+        await delete_message_safe(bot, chat_id, int(inv_msg_id) if inv_msg_id else None)
+        await delete_message_safe(bot, chat_id, int(info_msg_id) if info_msg_id else None)
+        await delete_message_safe(bot, chat_id, int(menu_msg_id) if menu_msg_id else None)
 
         await redis_client.delete(
             _k_pending(user_id),
@@ -83,31 +80,27 @@ async def _clear_payment_ui(user_id: int, chat_id: int) -> None:
     except Exception:
         logger.exception("Failed to clear payment UI for user=%s", user_id)
 
-async def _delete_later(chat_id: int, message_id: Optional[int], delay: int) -> None:
+async def delete_later(chat_id: int, message_id: Optional[int], delay: int) -> None:
     if not message_id:
         return
     try:
         await asyncio.sleep(max(1, int(delay)))
-        await _delete_message_safe(chat_id, message_id)
+        await delete_message_safe(bot, chat_id, message_id)
     except Exception:
         pass
 
-async def _send_transient_notice(chat_id: int, text: str, *, parse_mode: Optional[str] = None, delay: Optional[int] = None) -> None:
-    try:
-        msg = await bot.send_message(chat_id, text, parse_mode=parse_mode)
-    except TelegramBadRequest:
-        msg = await bot.send_message(chat_id, text)
-    except Exception:
-        logger.exception("Failed to send transient notice")
+async def send_transient_notice(chat_id: int, text: str, *, parse_mode: Optional[str] = None, delay: Optional[int] = None) -> None:
+    msg = await send_message_safe(bot, chat_id, text, parse_mode=parse_mode)
+    if not msg:
         return
-    asyncio.create_task(_delete_later(chat_id, msg.message_id, delay or TRANSIENT_NOTICE_TTL))
+    asyncio.create_task(delete_later(chat_id, msg.message_id, delay or TRANSIENT_NOTICE_TTL))
 
-async def _show_pending_invoice_stub(chat_id: int, user_id: int) -> None:
+async def show_pending_invoice_stub(chat_id: int, user_id: int) -> None:
 
     prev_info_id = await redis_client.get(_k_buy_info_msg(user_id))
     if prev_info_id:
         try:
-            await _delete_message_safe(chat_id, int(prev_info_id))
+            await delete_message_safe(bot, chat_id, int(prev_info_id))
         except Exception:
             pass
 
@@ -125,18 +118,30 @@ async def _show_pending_invoice_stub(chat_id: int, user_id: int) -> None:
         if req
         else await t(user_id, "payments.pending_exists")
     )
-    try:
-        msg = await bot.send_message(
-            chat_id,
-            text,
-            reply_markup=kb,
-            reply_to_message_id=inv_msg_id if inv_msg_id else None,
-        )
-        await redis_client.set(_k_buy_info_msg(user_id), msg.message_id, ex=PENDING_TTL)
-    except TelegramBadRequest:
-        msg = await bot.send_message(chat_id, text, reply_markup=kb)
-        await redis_client.set(_k_buy_info_msg(user_id), msg.message_id, ex=PENDING_TTL)
+    msg = await send_message_safe(
+        bot,
+        chat_id,
+        text,
+        reply_markup=kb,
+        reply_to_message_id=inv_msg_id if inv_msg_id else None,
+    )
+    if not msg:
+        return
+    await redis_client.set(_k_buy_info_msg(user_id), msg.message_id, ex=PENDING_TTL)
 
+async def clear_payment_runtime_keys(user_id: int) -> int:
+    keys = [
+        _k_pending(user_id),
+        _k_pending_tier(user_id),
+        _k_pending_msg(user_id),
+        _k_buy_info_msg(user_id),
+        _k_buy_menu_msg(user_id),
+        _k_cb_rate(user_id),
+    ]
+    try:
+        return int(await redis_client.unlink(*keys))
+    except Exception:
+        return int(await redis_client.delete(*keys))
 
 @dp.message(Command("buy"), F.chat.type == ChatType.PRIVATE)
 async def cmd_buy(message: Message) -> None:
@@ -148,20 +153,20 @@ async def cmd_buy(message: Message) -> None:
         try:
             menu_id_raw = await redis_client.get(_k_buy_menu_msg(user_id))
             if menu_id_raw:
-                await _delete_message_safe(chat_id, int(menu_id_raw))
+                await delete_message_safe(bot, chat_id, int(menu_id_raw))
                 await redis_client.delete(_k_buy_menu_msg(user_id))
         except Exception:
             logger.debug("cleanup buy menu on pending failed", exc_info=True)
-        await _show_pending_invoice_stub(chat_id, user_id)
+        await show_pending_invoice_stub(chat_id, user_id)
         return
 
     try:
-        async with AsyncSessionLocal() as db:
+        async with session_scope(stmt_timeout_ms=2000) as db:
             user = await get_or_create_user(db, message.from_user)
             remaining = compute_remaining(user)
     except Exception:
         logger.exception("cmd_buy: DB error")
-        await bot.send_message(chat_id, await t(user_id, "payments.gen_error"))
+        await send_message_safe(bot, chat_id, await t(user_id, "payments.gen_error"))
         return
 
     tiers = list(settings.PURCHASE_TIERS.items())
@@ -176,7 +181,10 @@ async def cmd_buy(message: Message) -> None:
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     text = await t(user_id, "payments.you_have", remaining=remaining)
-    sent = await bot.send_message(chat_id, text, reply_markup=keyboard, parse_mode="HTML")
+    sent = await send_message_safe(bot, chat_id, text, reply_markup=keyboard, parse_mode="HTML")
+    if not sent:
+        return
+
     try:
         await redis_client.set(_k_buy_menu_msg(user_id), sent.message_id, ex=PENDING_TTL)
     except Exception:
@@ -184,7 +192,7 @@ async def cmd_buy(message: Message) -> None:
 
 @dp.callback_query(F.data.startswith("buy_tier:"))
 async def on_buy_tier(cb: CallbackQuery) -> None:
-    if await _cooldown(cb):
+    if await cooldown(cb):
         return
 
     await cb.answer()
@@ -195,11 +203,11 @@ async def on_buy_tier(cb: CallbackQuery) -> None:
 
     if req not in settings.PURCHASE_TIERS or stars <= 0:
         logger.warning("on_buy_tier: invalid or zero tier %r", req)
-        await bot.send_message(chat_id, await t(user_id, "payments.error"))
+        await send_message_safe(bot, chat_id, await t(user_id, "payments.error"))
         return
 
     if not await redis_client.set(_k_pending(user_id), 1, ex=PENDING_TTL, nx=True):
-        await _show_pending_invoice_stub(chat_id, user_id)
+        await show_pending_invoice_stub(chat_id, user_id)
         return
 
     buy_label = await t(user_id, "payments.buy_button", req=req, stars=stars)
@@ -207,46 +215,47 @@ async def on_buy_tier(cb: CallbackQuery) -> None:
     title = await t(user_id, "payments.invoice_title", req=req)
     desc  = await t(user_id, "payments.invoice_desc", req=req, stars=stars)
 
-    try:
-        inv_msg: Message = await bot.send_invoice(
-            chat_id=user_id,
-            provider_token=settings.PAYMENT_PROVIDER_TOKEN,
-            title=title,
-            description=desc,
-            payload=f"buy_{req}",
-            currency=settings.PAYMENT_CURRENCY,
-            prices=prices,
-        )
+    inv_msg: Message | None = await send_invoice_safe(
+        bot,
+        chat_id=user_id,
+        provider_token=settings.PAYMENT_PROVIDER_TOKEN,
+        title=title,
+        description=desc,
+        payload=f"buy_{req}",
+        currency=settings.PAYMENT_CURRENCY,
+        prices=prices,
+    )
+    if inv_msg:
         await redis_client.set(_k_pending_tier(user_id), req, ex=PENDING_TTL)
         await redis_client.set(_k_pending_msg(user_id), inv_msg.message_id, ex=PENDING_TTL)
 
-        await _show_pending_invoice_stub(chat_id, user_id)
+        await show_pending_invoice_stub(chat_id, user_id)
 
         try:
             menu_id_raw = await redis_client.get(_k_buy_menu_msg(user_id))
             if menu_id_raw:
-                await _delete_message_safe(chat_id, int(menu_id_raw))
+                await delete_message_safe(bot, chat_id, int(menu_id_raw))
                 await redis_client.delete(_k_buy_menu_msg(user_id))
         except Exception:
             logger.debug("Failed to delete buy menu after tier selection", exc_info=True)
 
-    except Exception:
-        logger.exception("Failed to send invoice for tier %s", req)
+    else:
+        logger.warning("Failed to send invoice or Forbidden for tier %s", req)
         await redis_client.delete(_k_pending(user_id), _k_pending_tier(user_id), _k_pending_msg(user_id))
-        await bot.send_message(chat_id, await t(user_id, "payments.gen_error"))
+        await send_message_safe(bot, chat_id, await t(user_id, "payments.gen_error"))
 
 @dp.callback_query(F.data == "buy_cancel")
 async def on_buy_cancel(cb: CallbackQuery) -> None:
-    if await _cooldown(cb):
+    if await cooldown(cb):
         return
 
     await cb.answer()
     user_id = cb.from_user.id
     chat_id = cb.message.chat.id if cb.message else user_id
 
-    await _clear_payment_ui(user_id, chat_id)
+    await clear_payment_ui(user_id, chat_id)
 
-    await _send_transient_notice(
+    await send_transient_notice(
         chat_id,
         await t(user_id, "payments.cancelled"),
         parse_mode="HTML",
@@ -286,29 +295,33 @@ async def on_payment_success(message: Message) -> None:
         if req not in settings.PURCHASE_TIERS:
             raise ValueError("Unknown purchase tier")
 
-        async with AsyncSessionLocal() as db:
-            user = await get_or_create_user(db, message.from_user)
-            await add_paid_requests(db, user.id, req)
-            await db.commit()
-            await db.refresh(user)
-            remaining = compute_remaining(user)
+        for attempt in range(3):
+            try:
+                async with session_scope(stmt_timeout_ms=5000) as db:
+                    user = await get_or_create_user(db, message.from_user)
+                    await add_paid_requests(db, user.id, req)
+                    await db.flush()
+                    await db.refresh(user)
+                    remaining = compute_remaining(user)
+                break
+            except (OperationalError, DBAPIError):
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0.05 * (2 ** attempt))
 
-        await _clear_payment_ui(message.from_user.id, message.chat.id)
+        await clear_payment_ui(message.from_user.id, message.chat.id)
 
         text = await t(message.from_user.id, "payments.success", req=req, remaining=remaining)
-        await _send_transient_notice(message.chat.id, text, parse_mode="HTML")
+        await send_transient_notice(message.chat.id, text, parse_mode="HTML")
 
     except ValueError as ve:
         logger.warning("on_payment_success: invalid payload '%s': %s", payload, ve)
-        await bot.send_message(message.chat.id, "❌ Invalid payment details, please contact support.", parse_mode="HTML")
+        await send_message_safe(bot, message.chat.id, "❌ Invalid payment details, please contact support.", parse_mode="HTML")
     except Exception:
         logger.exception("on_payment_success: error finalizing payment")
-        await bot.send_message(message.chat.id, await t(message.from_user.id, "payments.error"), parse_mode="HTML")
+        await send_message_safe(bot, message.chat.id, await t(message.from_user.id, "payments.error"), parse_mode="HTML")
     finally:
-        await redis_client.delete(
-            _k_pending(message.from_user.id),
-            _k_pending_tier(message.from_user.id),
-            _k_pending_msg(message.from_user.id),
-            _k_buy_info_msg(message.from_user.id),
-            _k_buy_menu_msg(message.from_user.id),
-        )
+        try:
+            await clear_payment_runtime_keys(message.from_user.id)
+        except Exception:
+            logger.exception("Failed to clear payment runtime keys in finally()")

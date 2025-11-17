@@ -1,8 +1,11 @@
 #app/emo_engine/persona/utils/text_analyzer.py
+from __future__ import annotations
+
 import asyncio
 import json
-import regex
+import re
 import logging
+import math
 
 from random import Random
 from typing import Dict
@@ -15,16 +18,32 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_json_brace(content: str) -> dict | None:
-
-    try:
-        candidates = regex.findall(r"\{(?:[^{}]|(?R))*\}", content)
-        for candidate in sorted(candidates, key=len, reverse=True):
-            try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
-                continue
-    except Exception:
-        logger.debug("[TextAnalyzer] regex JSON extraction failed", exc_info=True)
+    best = None
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(content):
+        if ch == '"' and not esc:
+            in_str = not in_str
+        esc = (ch == '\\') and not esc
+        if in_str:
+            continue
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}' and depth > 0:
+            depth -= 1
+            if depth == 0 and start != -1:
+                cand = content[start:i+1]
+                if best is None or len(cand) > len(best):
+                    best = cand
+    if best:
+        try:
+            return json.loads(best)
+        except json.JSONDecodeError:
+            return None
     return None
 
 
@@ -53,6 +72,8 @@ def _responses_text_schema() -> dict:
         "additionalProperties": False,
     }
 
+_SCHEMA_ANALYSIS = _responses_text_schema()
+
 class TextAnalyzer:
     def __init__(self):
         self._rng = Random()
@@ -68,7 +89,7 @@ class TextAnalyzer:
 
         if ctx_dialog:
             prompt_base = await asyncio.to_thread(
-                regex.sub,
+                re.sub,
                 r"\[\d{2}:\d{2}(?::\d{2})?\]",
                 "[]",
                 ctx_dialog,
@@ -109,21 +130,21 @@ class TextAnalyzer:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
-                    model=settings.BASE_MODEL,
+                    model=settings.REASONING_MODEL,
                     instructions=system_prompt,
                     input=user_prompt,
                     text={
                         "format": {
                             "type": "json_schema",
                             "name": "user_metrics",
-                            "schema": _responses_text_schema(),
+                            "schema": _SCHEMA_ANALYSIS,
                             "strict": True
                         }
                     },
                     temperature=0,
                     max_output_tokens=300,
                 ),
-                timeout=30.0
+                settings.REASONING_MODEL_TIMEOUT
             )
             content = (_get_output_text(resp) or "").strip()
         except Exception:
@@ -139,11 +160,19 @@ class TextAnalyzer:
         parsed: dict | None = None
         if content:
             try:
-                parsed = json.loads(content)
+                c = content.strip()
+                if c.startswith("```"):
+                    nl = c.find("\n")
+                    if nl != -1:
+                        c = c[nl+1:].strip()
+                    c = c.rstrip("`").strip()
+                c = c.lstrip("\ufeff")
+                parsed = json.loads(c)
             except json.JSONDecodeError:
                 parsed = _extract_json_brace(content)
 
         if not parsed:
+            logger.debug("[TextAnalyzer] JSON parse failed, using jitter baseline")
             def jitter(m):
                 base = self.ema.get(m, _neutral_baseline(m))
                 delta = self._rng.uniform(-0.02, 0.02)
@@ -157,11 +186,30 @@ class TextAnalyzer:
             if k in ANALYSIS_METRICS:
                 try:
                     val = float(v)
+                    if not math.isfinite(val):
+                        raise ValueError("non-finite")
                     if k == "valence":
                         full[k] = max(-1.0, min(1.0, val))
                     else:
                         full[k] = self._clamp(val)
                 except (TypeError, ValueError):
                     continue
-        return full
+        if len(full) != len(ANALYSIS_METRICS):
+            def jitter(m):
+                base = self.ema.get(m, _neutral_baseline(m))
+                delta = self._rng.uniform(-0.02, 0.02)
+                if m == "valence":
+                    return max(-1.0, min(1.0, base + delta))
+                return self._clamp(base + delta)
+            for m in ANALYSIS_METRICS:
+                if m not in full:
+                    full[m] = jitter(m)
 
+        try:
+            alpha = 0.25
+            for m in ANALYSIS_METRICS:
+                cur = full.get(m, self.ema.get(m, _neutral_baseline(m)))
+                self.ema[m] = (1 - alpha) * self.ema.get(m, _neutral_baseline(m)) + alpha * cur
+        except Exception:
+            pass
+        return full

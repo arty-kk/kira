@@ -5,6 +5,7 @@ import logging
 
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.clients.twitter_client import post_tweet
+from app.services.responder.prompt_builder import build_system_prompt
 from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message
 from app.config import settings
@@ -39,7 +40,24 @@ DEFAULT_MODS = {
     "precision_mod": 0.5,
     "fatigue_mod": 0.0,
     "stress_mod": 0.0,
+    "valence_mod": 0.0,
 }
+
+def _merge_and_clamp_mods(style_mods: dict | None) -> dict:
+    mods = DEFAULT_MODS.copy()
+    if not isinstance(style_mods, dict):
+        return mods
+    for k in mods.keys():
+        try:
+            if k == "valence_mod":
+                x = float(style_mods.get("valence_mod", style_mods.get("valence", mods[k])))
+                mods[k] = max(-1.0, min(1.0, x))
+            else:
+                x = float(style_mods.get(k, mods[k]))
+                mods[k] = max(0.0, min(1.0, x))
+        except Exception:
+            pass
+    return mods
 
 def _to_responses_input(messages: list[dict]) -> list[dict]:
 
@@ -69,6 +87,7 @@ def _to_responses_input(messages: list[dict]) -> list[dict]:
 
 
 async def generate_and_post_tweet() -> None:
+
     persona = await get_persona(settings.TWITTER_PERSONA_CHAT_ID)
 
     try:
@@ -87,25 +106,49 @@ async def generate_and_post_tweet() -> None:
     if len(history) > MAX_HISTORY:
         history = history[-MAX_HISTORY:]
 
-    style_mods = await persona.style_modifiers() or {}
-    mods = {
-        k: (style_mods.get(k) if style_mods.get(k) is not None else v)
-        for k, v in DEFAULT_MODS.items()
-    }
+    try:
+        style_mods = persona._mods_cache or await asyncio.wait_for(persona.style_modifiers(), 30)
+    except Exception:
+        logger.exception("style_modifiers acquisition failed")
+        style_mods = {}
+    mods = _merge_and_clamp_mods(style_mods)
     guidelines = await persona.style_guidelines(settings.TWITTER_PERSONA_CHAT_ID)
     
-    novelty = 0.4 * mods.get("creativity_mod", 0.5) + 0.4 * mods.get("sarcasm_mod", 0.5) + 0.2 * mods.get("enthusiasm_mod", 0.5)
+    novelty = (
+        0.4 * mods["creativity_mod"]
+      + 0.4 * mods["sarcasm_mod"]
+      + 0.2 * mods["enthusiasm_mod"]
+    )
     coherence = (
-        0.5 * mods.get("confidence_mod", 0.5)
-        + 0.3 * mods.get("precision_mod", 0.5)
-        + 0.1 * (1 - mods.get("fatigue_mod", 0.0))
-        + 0.1 * (1 - mods.get("stress_mod", 0.0))
+        0.5 * mods["confidence_mod"]
+      + 0.3 * mods["precision_mod"]
+      + 0.1 * (1 - mods["fatigue_mod"])
+      + 0.1 * (1 - mods["stress_mod"])
     )
     alpha = 1.8
     dynamic_temperature = MIN_TEMPERATURE + (MAX_TEMPERATURE - MIN_TEMPERATURE) * (novelty ** alpha)
-    dynamic_temperature = min(MAX_TEMPERATURE, max(MIN_TEMPERATURE, dynamic_temperature))
     dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
-    dynamic_top_p = min(TOP_P_MAX, max(TOP_P_MIN, dynamic_top_p))
+    try:
+        dynamic_temperature *= (1.0 + 0.10 * float(mods["valence_mod"]))
+    except Exception:
+        pass
+    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+
+    try:
+        logger.info(
+            "TWITTER mods and sampling: novelty=%.3f coherence=%.3f temp=%.2f top_p=%.2f "
+            "mods[c/sa/e/conf/prec/fat/str/val]=[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f]",
+            novelty, coherence, dynamic_temperature, dynamic_top_p,
+            mods["creativity_mod"], mods["sarcasm_mod"], mods["enthusiasm_mod"],
+            mods["confidence_mod"], mods["precision_mod"], mods["fatigue_mod"],
+            mods["stress_mod"], mods["valence_mod"]
+        )
+    except Exception:
+        pass
+
     news_prompt = (
         "Provide a concise 10-bullet summary of today's top crypto price movements and related industry events, "
         "each bullet up to 3 sentences. "
@@ -115,7 +158,7 @@ async def generate_and_post_tweet() -> None:
         news_resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.REASONING_MODEL,
+                model=settings.POST_MODEL,
                 input=_to_responses_input([
                     {"role": "system", "content": "You are a professional crypto journalist."},
                     {"role": "user", "content": news_prompt},
@@ -125,7 +168,7 @@ async def generate_and_post_tweet() -> None:
                 max_output_tokens=500,
                 temperature=0.6,
             ),
-            timeout=120.0,
+            timeout=settings.POST_MODEL_TIMEOUT,
         )
         news_snippet = (_get_output_text(news_resp) or "").strip()
     except asyncio.TimeoutError:
@@ -135,15 +178,17 @@ async def generate_and_post_tweet() -> None:
         logger.exception("twitter_manager: failed to fetch news digest")
         news_snippet = ""
     tweet_type = random.choice(TWEET_TYPES)
+
     try:
-        prompt_base = await persona.to_prompt(guidelines)
+        system_base = await build_system_prompt(persona, guidelines, user_gender=None)
     except Exception:
-        logger.exception("twitter_manager: to_prompt failed")
-        prompt_base = ""
+        logger.exception("twitter_manager: build_system_prompt failed")
+        system_base = "You are a helpful assistant."
+        
     system_msg = {
         "role": "system",
         "content": (
-            prompt_base
+            system_base
             + "\nYou are a seasoned Twitter strategist. "
             "Your tweets consistently captivate and energize your audience — deliver maximum impact."
         ),
@@ -171,7 +216,7 @@ async def generate_and_post_tweet() -> None:
                 top_p=dynamic_top_p,
                 max_output_tokens=120,
             ),
-            timeout=60.0,
+            timeout=settings.POST_MODEL_TIMEOUT,
         )
         tweet = (_get_output_text(resp) or "").strip()
     except asyncio.TimeoutError:

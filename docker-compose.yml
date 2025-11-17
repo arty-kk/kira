@@ -2,7 +2,6 @@ services:
 
   db:
     image: postgres:15
-    container_name: db
     restart: unless-stopped
     env_file: .env
     environment:
@@ -14,40 +13,68 @@ services:
     command: [
       "postgres",
       "-c","statement_timeout=30s",
-      "-c","idle_in_transaction_session_timeout=60s"
+      "-c","lock_timeout=1s",
+      "-c","idle_in_transaction_session_timeout=60s",
+      "-c","log_min_duration_statement=200ms",
+      "-c","log_lock_waits=on",
+      "-c","deadlock_timeout=1s",
+      "-c","tcp_keepalives_idle=30",
+      "-c","tcp_keepalives_interval=10",
+      "-c","tcp_keepalives_count=3"
     ]
     healthcheck:
-      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD} pg_isready -h db -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD} pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 3s
       retries: 5
 
   redis_kv:
     image: redis:7
-    container_name: redis_kv
     restart: unless-stopped
     env_file: .env
     environment:
-      - "REDIS_ARGS=--appendonly yes --appendfsync everysec --maxmemory 6gb --maxmemory-policy volatile-lru --requirepass ${REDIS_PASSWORD}"
+      - >
+        REDIS_ARGS=--appendonly yes
+        --appendfsync everysec
+        --no-appendfsync-on-rewrite yes
+        --auto-aof-rewrite-percentage 100
+        --auto-aof-rewrite-min-size 64mb
+        --maxmemory 8gb
+        --maxmemory-policy volatile-lru
+        --requirepass ${REDIS_PASSWORD}
+        --stop-writes-on-bgsave-error no
     command: ["sh","-lc","redis-server $${REDIS_ARGS}"]
     volumes:
       - redis_kv_data:/data
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -h 127.0.0.1 -a $REDIS_PASSWORD ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis_vec:
     image: redis/redis-stack-server:7.2.0-v14
-    container_name: redis_vec
     restart: unless-stopped
     env_file: .env
     environment:
-      - "REDIS_ARGS=--appendonly no --save 900 1 --save 300 10 --save 60 10000 --maxmemory 16gb --maxmemory-policy noeviction --requirepass ${REDIS_PASSWORD}"
-    command: ["sh","-lc","redis-server $${REDIS_ARGS} --loadmodule /opt/redis-stack/lib/redisearch.so"]
+      - >
+        REDIS_ARGS=--appendonly no
+        --save 3600 1
+        --maxmemory 26gb
+        --maxmemory-policy noeviction
+        --requirepass ${REDIS_PASSWORD}
+        --stop-writes-on-bgsave-error no
+    command: ["sh","-lc","exec redis-stack-server $${REDIS_ARGS}"]
     volumes:
-      - redis_vec_data:/data
+      - redis_vec_data:/var/lib/redis-stack
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping | grep PONG"]
       interval: 5s
@@ -56,7 +83,6 @@ services:
 
   pgadmin:
     image: dpage/pgadmin4:9.6
-    container_name: pgadmin
     restart: unless-stopped
     env_file: .env
     environment:
@@ -79,19 +105,73 @@ services:
 
   bot:
     build: .
-    container_name: bot-main
     restart: unless-stopped
     env_file: .env
+    init: true
     environment:
       REDIS_PASSWORD:    ${REDIS_PASSWORD}
       REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
       REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
       REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
       QUEUE_KEY: "queue:chat"
       ENABLE_SCHEDULER: "true"
       CERTS_DIR: "/certs"
       USE_SELF_SIGNED_CERT: "true"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "bot-main"
+      RUN_API: "false"
+      RUN_BOT: "true"
+      WEBHOOK_HOST: "0.0.0.0"
+      WEBHOOK_PORT: "8443"
+    depends_on:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./certs:/certs:ro
+      - ./dialogs:/data/dialogs
+    ports:
+      - "8443:8443"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+    command: ["main.py"]
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "main.py"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    environment:
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      ENABLE_SCHEDULER: "false"
+      RUN_BOT: "false"
+      RUN_API: "true"
+      CERTS_DIR: "/certs"
+      USE_SELF_SIGNED_CERT: "true"
+      API_QUEUE_KEY: "queue:api"
+      API_CALL_TIMEOUT_SEC: "135"
+      REDIS_QUEUE_SOCKET_TIMEOUT: "140"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "api"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
     depends_on:
       redis_kv:
         condition: service_healthy
@@ -100,30 +180,40 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8443:8443"
+      - "8000:8000"
     volumes:
       - ./certs:/certs:ro
+      - ./dialogs:/data/dialogs
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
     command: ["main.py"]
     healthcheck:
-      test: ["CMD-SHELL", "curl -skf https://localhost:8443/healthz >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
-      retries: 3
+      start_period: 30s
+      retries: 5
 
   worker-tasks:
     build: .
-    container_name: worker-tasks
     restart: unless-stopped
     env_file: .env
+    init: true
     environment:
       REDIS_PASSWORD:    ${REDIS_PASSWORD}
       REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
       REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
       REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
-      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/0
-      CELERY_CONCURRENCY: "16"
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      RUN_BOT: "false"
       ENABLE_SCHEDULER: "false"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "worker-tasks"
+    volumes:
+      - ./dialogs:/data/dialogs 
     depends_on:
       redis_kv:
         condition: service_healthy
@@ -139,24 +229,36 @@ services:
       - worker
       - --loglevel=info
       - --pool=threads
-      - --concurrency=16
-      - --prefetch-multiplier=1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    stop_signal: SIGTERM
+    stop_grace_period: 180s
     healthcheck:
       test: ["CMD", "pgrep", "-f", "celery worker"]
       interval: 30s
       timeout: 5s
-      retries: 1
+      start_period: 30s
+      retries: 5
 
   worker-queue:
     build: .
     restart: unless-stopped
     env_file: .env
+    init: true
     environment:
       REDIS_PASSWORD:    ${REDIS_PASSWORD}
       REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
       REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
       REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      RUN_BOT: "false"
       QUEUE_KEY: "queue:chat"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "worker-queue"
+    volumes:
+      - ./dialogs:/data/dialogs  
     depends_on:
       redis_kv:
         condition: service_healthy
@@ -165,13 +267,61 @@ services:
       db:
         condition: service_healthy
     entrypoint: ["python", "-u", "-m", "app.tasks.queue_worker"]
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     stop_signal: SIGINT
-    stop_grace_period: 30s
+    stop_grace_period: 180s
     healthcheck:
       test: ["CMD", "pgrep", "-f", "app.tasks.queue_worker"]
       interval: 30s
       timeout: 5s
-      retries: 3
+      start_period: 30s
+      retries: 5
+
+  worker-api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    environment:
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      RUN_BOT: "false"
+      API_QUEUE_KEY: "queue:api"
+      API_CALL_TIMEOUT_SEC: "135"
+      REDIS_QUEUE_SOCKET_TIMEOUT: "140"
+      DB_APP_NAME: "worker-api"
+      API_JOB_TTL_SEC: "240"
+      API_RESULT_TTL_SEC: "600"
+      API_WORKER_MAX_INFLIGHT: "128"
+      API_RESPOND_TIMEOUT_SEC: "120"
+    volumes:
+      - ./dialogs:/data/dialogs
+    depends_on:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    entrypoint: ["python", "-u", "-m", "app.tasks.api_worker"]
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    stop_signal: SIGTERM
+    stop_grace_period: 180s
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "app.tasks.api_worker"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
 volumes:
   db_data:
