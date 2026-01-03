@@ -4,17 +4,11 @@ from __future__ import annotations
 import logging
 import asyncio
 
-from app.tasks.celery_app import celery
-from app.tasks.utils.bg_loop import get_bg_loop
+from app.tasks.celery_app import celery, _run
 from app.core.memory import cleanup_api_key_memory
 
 logger = logging.getLogger(__name__)
 
-
-def _run(coro):
-    loop = get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
 
 @celery.task(name="api.cleanup_memory_for_key", ignore_result=True)
 def cleanup_memory_for_key(api_key_id: int) -> None:

@@ -13,15 +13,12 @@ from celery import current_task
 
 from aiogram.enums import ChatAction
 from aiogram.exceptions import (
-    TelegramRetryAfter,
-    TelegramForbiddenError,
-    TelegramBadRequest,
-    TelegramNetworkError,
+    TelegramRetryAfter, TelegramForbiddenError,
+    TelegramBadRequest, TelegramNetworkError,
 )
 
 from app.config import settings
-from app.tasks.celery_app import celery
-from app.tasks.utils.bg_loop import get_bg_loop
+from app.tasks.celery_app import celery, _run
 from app.clients.telegram_client import get_bot
 from app.services.addons.welcome_manager import (
     generate_welcome,
@@ -32,11 +29,6 @@ logger = logging.getLogger(__name__)
 
 
 WELCOME_TTL = getattr(settings, "WELCOME_TTL_SECONDS", 180)
-
-def _run(coro):
-    loop = get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
 
 
 async def _delete_later(bot, chat_id: int, msg_id: int, delay: int) -> None:

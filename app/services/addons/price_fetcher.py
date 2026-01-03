@@ -1,10 +1,9 @@
 #app/services/addons/price_fetcher.py
-
 import asyncio
 import json
 import logging
-from typing import List
 
+from typing import List
 from app.clients.http_client import http_client
 
 logger = logging.getLogger(__name__)

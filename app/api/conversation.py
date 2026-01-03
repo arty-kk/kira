@@ -322,6 +322,7 @@ async def conversation_endpoint(
         "chat_id": chat_id,
         "memory_uid": memory_uid,
         "persona_owner_id": persona_owner_id,
+        "api_key_id": api_key_id,
         "billing_tier": billing_tier,
         "result_key": result_key,
         "msg_id": msg_id,

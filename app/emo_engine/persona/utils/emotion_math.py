@@ -80,12 +80,14 @@ for _m in ALL_METRICS:
 for _m in NON_DYNAMIC_METRICS:
     EMO_DT_BASE[_m] = 0.0
 
+DYNAMIC_METRICS: List[str] = list(ALL_METRICS)
+
 EMO_MATRIX_A: List[List[float]] | None = None
 EMO_MATRIX_B: List[List[float]] | None = None
 DYAD_MATRIX: List[List[float]] | None = None
 TRIAD_MATRIX: List[List[float]] | None = None
 
-_N = len(ALL_METRICS)
+_N = len(DYNAMIC_METRICS)
 
 
 @lru_cache(maxsize=1)
@@ -96,7 +98,7 @@ def _init_matrices() -> None:
         return
 
     EMO_MATRIX_A = [[-1.0 if i == j else 0.0 for j in range(_N)] for i in range(_N)]
-    EMO_MATRIX_B = [[1.0 if i == j else 0.0 for j in range(_N)] for i in range(_N)]
+    EMO_MATRIX_B = [[ 1.0 if i == j else 0.0 for j in range(_N)] for i in range(_N)]
 
     base_prim = list(PRIMARY_ORDER)
     DYAD_MATRIX = [[0.0] * len(base_prim) for _ in DYAD_KEYS]

@@ -15,14 +15,12 @@ from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
 from app.config import settings
 from app.tasks.periodic import (
-    cleanup_nonbuyers_task,
-    analytics_daily_task,
-    battle_job_task,
-    prices_post_task,
-    group_ping_job_task,
-    personal_ping_job_task,
-    tweet_once_task,
-    tg_channel_post_task,
+    cleanup_nonbuyers_task, analytics_daily_task, battle_job_task,
+    prices_post_task, group_ping_job_task, personal_ping_job_task,
+    tweet_once_task, tg_channel_post_task,
+)
+from app.tasks.kb import (
+    gc_orphan_api_key_dirs,
 )
 
 logger = logging.getLogger(__name__)
@@ -262,16 +260,42 @@ def start_scheduler() -> None:
         replace_existing=True,
     )
 
-    _sched.add_job(
-        lambda: analytics_daily_task.delay(),
-        "cron",
-        hour=0, minute=5,
-        timezone=timezone.utc,
-        id="analytics_daily_job",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
+    if settings.SCHED_ENABLE_KB_GC:
+        try:
+            kb_gc_hour = int(getattr(settings, "SCHED_KB_GC_HOUR", 4))
+        except Exception:
+            kb_gc_hour = 4
+        kb_gc_hour = max(0, min(23, kb_gc_hour))
+
+        _sched.add_job(
+            lambda: gc_orphan_api_key_dirs.delay(),
+            "cron",
+            hour=kb_gc_hour,
+            minute=0,
+            id="kb_gc_orphan_dirs",
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+        )
+        logger.info(
+            "kb_gc_orphan_dirs job enabled at %02d:00 local time", kb_gc_hour
+        )
+    else:
+        logger.info("kb_gc_orphan_dirs job disabled by SCHED_ENABLE_KB_GC=false")
+
+    if settings.SCHED_ENABLE_ANALYTICS:
+        _sched.add_job(
+            lambda: analytics_daily_task.delay(),
+            "cron",
+            hour=0, minute=5,
+            timezone=timezone.utc,
+            id="analytics_daily_job",
+            max_instances=1,
+            coalesce=True,
+            replace_existing=True,
+        )
+    else:
+        logger.info("analytics_daily_job disabled by SCHED_ENABLE_ANALYTICS=false")
 
     twitter_enabled = (
         settings.SCHED_ENABLE_TWEETS

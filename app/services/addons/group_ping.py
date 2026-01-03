@@ -1,4 +1,4 @@
-# app/services/addons/group_ping.py
+#app/services/addons/group_ping.py
 from __future__ import annotations
 
 import html
@@ -725,7 +725,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         if summary:
             blocks.append(f"Summary: {summary}")
         for m in personal_msgs:
-            who = "You" if m.get("user_id") == int(uid) else "Me"
+            who = "Me" if m.get("role") == "assistant" else "You"
             try:
                 txt = re.sub(r"<[^>]+>", "", m.get("content", ""))
             except Exception:

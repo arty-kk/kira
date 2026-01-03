@@ -4,11 +4,10 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
-import html
 
-from typing import List
 from aiogram import types, F
 from aiogram.enums import ChatType
+from aiogram.dispatcher.event.bases import SkipHandler
 
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
@@ -16,19 +15,13 @@ from app.bot.components.constants import redis_client
 import app.bot.components.constants as consts
 from app.config import settings
 from app.services.addons.passive_moderation import (
-    check_light, check_deep, extract_urls,
-    is_telegram_link, contains_telegram_obfuscated,
+    extract_urls, is_telegram_link, contains_telegram_obfuscated,
     contains_any_link_obfuscated
 )
-from app.services.addons.analytics import record_moderation as analytics_record_moderation
 
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
-
-get_targets = lambda: ([settings.MODERATOR_NOTIFICATION_CHAT_ID]
-                        if settings.MODERATOR_NOTIFICATION_CHAT_ID
-                        else settings.MODERATOR_IDS) or []
 
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
@@ -484,6 +477,14 @@ async def moderation_on_edited(message: types.Message) -> None:
         await _delete_message_safe(message.chat.id, message.message_id)
 
 async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool:
+    
+    try:
+        sc = getattr(message, "sender_chat", None)
+        if sc and int(sc.id) == int(message.chat.id) and getattr(sc, "type", None) in (ChatType.GROUP, ChatType.SUPERGROUP):
+            return False
+    except Exception:
+        pass
+
     try:
         from_linked = await is_from_linked_channel(message)
         if from_linked:
@@ -749,6 +750,17 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     return False
 
+@dp.message(
+    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]),
+    F.reply_markup,
+)
+async def moderation_guard_reply_markup(message: types.Message) -> None:
+    try:
+        if await apply_moderation_filters(message.chat.id, message):
+            return
+    except Exception:
+        logger.exception("moderation_guard_reply_markup failed")
+    raise SkipHandler
 
 @dp.callback_query(F.data.startswith("mod:ban:"))
 async def moderation_inline_ban(cb: types.CallbackQuery) -> None:

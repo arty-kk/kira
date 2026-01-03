@@ -1,19 +1,27 @@
 #app/services/responder/rag/relevance.py
 import logging
 import re
+
 from typing import List, Tuple, Optional
 
 from app.config import settings
 from .knowledge_proc import get_relevant
 from .keyword_filter import find_tag_hits
+from .api_kb_proc import get_relevant_for_owner
 
 logger = logging.getLogger(__name__)
 
 _CLEAN = re.compile(r"[^\w\s]")
 _MIN_CONTENT_CHARS = int(getattr(settings, "RELEVANCE_MIN_CONTENT_CHARS", 5))
 
+
 async def is_relevant(
-    text: str, *, model: str, threshold: float, return_hits: bool
+    text: str,
+    *,
+    model: str,
+    threshold: float,
+    return_hits: bool,
+    persona_owner_id: Optional[int] = None,
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     clean = _CLEAN.sub(" ", text).lower().strip()
@@ -24,34 +32,106 @@ async def is_relevant(
 
     try:
         topk = int(getattr(settings, "KNOWLEDGE_TOP_K", 3)) or 3
-        tag_hits = await find_tag_hits(text, model=model, limit=topk * 10)
+    except Exception:
+        topk = 3
+
+    try:
+        tag_hits = await find_tag_hits(
+            text,
+            model=model,
+            limit=topk * 10,
+            owner_id=persona_owner_id,
+        )
     except Exception:
         logger.exception("gate: keyword pre-check failed")
         tag_hits = []
 
-    if tag_hits:
-        logger.info("gate: keyword hits -> relevant (skip embeddings); hits=%d", len(tag_hits))
-        return True, (tag_hits if return_hits else None)
-
-    try:
-        hits = await get_relevant(text, model_name=model)
-    except Exception:
-        logger.exception("gate: get_relevant failed")
-        return False, None
-
-    if not hits:
-        logger.info("gate: no-hits -> not relevant")
-        return False, None
+    sys_hits: List[Tuple[float, str, str]] = []
+    ok_sys = False
 
     try:
         margin = float(getattr(settings, "RELEVANCE_MARGIN", 0.0))
     except Exception:
         margin = 0.0
 
-    top = hits[0][0]
-    ok = top >= (threshold + margin)
-    logger.info("gate: model=%s ok=%s top=%.3f thr=%.3f hits=%d",
-                model, ok, top, threshold, len(hits))
-    if not ok:
-        return False, (hits if return_hits else None)
-    return True, (hits if return_hits else None)
+    if tag_hits:
+        logger.info(
+            "gate: keyword hits -> relevant (skip sys embeddings); hits=%d",
+            len(tag_hits),
+        )
+        sys_hits = tag_hits
+        ok_sys = True
+    else:
+        try:
+            sys_hits = await get_relevant(text, model_name=model)
+        except Exception:
+            logger.exception("gate: get_relevant (system KB) failed")
+            sys_hits = []
+
+        if sys_hits:
+            top = sys_hits[0][0]
+            thr_eff = threshold + margin
+            ok_sys = top >= thr_eff
+            logger.info(
+                "gate: system KB model=%s ok=%s top=%.3f thr=%.3f hits=%d",
+                model,
+                ok_sys,
+                top,
+                thr_eff,
+                len(sys_hits),
+            )
+
+    custom_hits: List[Tuple[float, str, str]] = []
+    ok_custom = False
+
+    if persona_owner_id is not None:
+        try:
+            owner_id_int = int(persona_owner_id)
+        except (TypeError, ValueError):
+            owner_id_int = 0
+
+        if owner_id_int > 0:
+            try:
+                custom_hits = await get_relevant_for_owner(
+                    text,
+                    owner_id=owner_id_int,
+                    model_name=model,
+                )
+            except Exception:
+                logger.exception(
+                    "gate: get_relevant_for_owner failed for owner=%s",
+                    owner_id_int,
+                )
+                custom_hits = []
+
+            if custom_hits:
+                top_c = custom_hits[0][0]
+                thr_eff = threshold + margin
+                ok_custom = top_c >= thr_eff
+                logger.info(
+                    "gate: custom KB owner=%s model=%s ok=%s top=%.3f thr=%.3f hits=%d",
+                    owner_id_int,
+                    model,
+                    ok_custom,
+                    top_c,
+                    thr_eff,
+                    len(custom_hits),
+                )
+
+    has_any_hits = bool(sys_hits or custom_hits)
+    ok_any = bool(ok_sys or ok_custom)
+
+    if not has_any_hits:
+        logger.info("gate: no-hits (system + custom) -> not relevant")
+        return False, None
+
+    if not ok_any and not return_hits:
+        return False, None
+
+    if not return_hits:
+        return ok_any, None
+
+    combined: List[Tuple[float, str, str]] = list(sys_hits) + list(custom_hits)
+    combined.sort(key=lambda h: h[0], reverse=True)
+
+    return ok_any, combined

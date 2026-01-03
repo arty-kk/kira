@@ -1240,7 +1240,7 @@ class PersonaMemory:
             etype = "future"
 
         uid_s = str(uid or "")
-        store_vec = float(salience or 0.0) >= float(getattr(settings, "VEC_SALIENCE_MIN", 0.30))
+        store_vec = float(salience or 0.0) >= float(getattr(settings, "VEC_SALIENCE_MIN", 0.0))
 
         async def _write_memtxt_and_return():
             try:

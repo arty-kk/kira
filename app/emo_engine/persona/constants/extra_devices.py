@@ -1,10 +1,11 @@
 #app/emo_engine/persona/constants/extra_devices.py
 import random
+
 from typing import Tuple, Set
 from dataclasses import dataclass, field
 
 BOT_SIGNATURES: Set[str] = set()
-GLOBAL_DEVICE_PROB_SCALE = 0.5
+GLOBAL_DEVICE_PROB_SCALE = 0.75
 
 @dataclass(frozen=True)
 class RhetoricalDevice:

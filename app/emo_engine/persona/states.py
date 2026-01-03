@@ -23,7 +23,7 @@ from .utils.trigger_patterns import apply_triggers
 from .constants.temperaments import TEMPERAMENT_PROFILE
 from .constants.zodiacs import ZODIAC_MODIFIERS
 from .utils.emotion_math import(
-    suppress_opposite, EMO_DT_BASE, EMO_DT_DEFAULT,
+    suppress_opposite, EMO_DT_BASE, EMO_DT_DEFAULT, DYNAMIC_METRICS
 )
 from .utils.emotion_math import EMO_MATRIX_A as A, EMO_MATRIX_B as B
 from .constants.emotions import (
@@ -106,7 +106,11 @@ def _decayed_weight(self, uid: int) -> float:
     w, ts = self.user_weights.get(uid, [0.0, time.time()])
     if settings.PERSONA_WEIGHT_HALFLIFE <= 0:
         return w
-    return max(0.0, w * 0.5 ** ((time.time() - ts) / settings.PERSONA_WEIGHT_HALFLIFE))
+    now = time.time()
+    decayed = max(0.0, w * 0.5 ** ((now - ts) / settings.PERSONA_WEIGHT_HALFLIFE))
+
+    self.user_weights[uid] = [decayed, now]
+    return decayed
 
 
 def _update_weight(self, uid: int, v_opt: float | None = None, imp_opt: float | None = None) -> float:
@@ -165,7 +169,7 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
     target = max(lo, min(hi, float(target)))
 
     base_blend = settings.PERSONA_BLEND_FACTOR
-    fatigue_penalty = 1.0 - self.state.get("fatigue", 0.0)
+    fatigue_penalty = 1.0 - float(self.state.get("fatigue", 0.0))
     influence = base_blend * fatigue_penalty * (1.5 if metric in PRIMARY_EMOTIONS else 1.0)
     influence *= max(0.0, float(weight))
     influence = min(1.0, influence)
@@ -177,7 +181,9 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
     raw_val = cur * (1.0 - influence) + target * influence
 
     cr = max(1e-3, float(self.change_rates.get(metric, 1.0)))
-    alpha_dyn = min(settings.STATE_EMA_MAX_ALPHA, settings.STATE_EMA_ALPHA * cr)
+    max_alpha  = getattr(settings, "STATE_EMA_MAX_ALPHA", 0.28)
+    base_alpha = getattr(settings, "STATE_EMA_ALPHA", 0.12)
+    alpha_dyn = min(max_alpha, base_alpha * cr)
     if dist > 0.33:
         alpha_dyn = settings.STATE_EMA_MAX_ALPHA
 
@@ -185,14 +191,19 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
 
     if metric == "valence":
         now = time.time()
+        peak_enter = 0.85
+        peak_exit = 0.80
         hold = now - getattr(self, "_last_valence_peak_ts", now)
-        if abs(new_val) > 0.85:
+        amp = abs(new_val)
+        if amp > peak_enter:
             factor = min(1.0, hold / 60.0)
-            new_val -= factor * 0.05 * (1 if new_val > 0 else -1)
-        if abs(new_val) > 0.85 and not getattr(self, "_in_peak", False):
+            excess = max(0.0, amp - peak_enter)
+            damp = 0.05 * (0.5 + excess)
+            new_val -= factor * damp * (1 if new_val > 0 else -1)
+        if amp > peak_enter and not getattr(self, "_in_peak", False):
             self._last_valence_peak_ts = now
             self._in_peak = True
-        elif abs(new_val) <= 0.85:
+        elif amp < peak_exit:
             self._in_peak = False
 
     self.state[metric] = max(lo, min(hi, new_val))
@@ -295,6 +306,7 @@ def _update_attachment(self, uid: int, readings: Dict[str, float], imp: float, w
 
     now = time.time()
     rec = self._ensure_attachment_defaults(self.attachments.get(uid), now)
+
     self.attachments[uid] = rec
 
     dt = max(0.0, now - rec.get("ts", now))
@@ -326,13 +338,13 @@ def _update_attachment(self, uid: int, readings: Dict[str, float], imp: float, w
     x = float(rec["value"])
     x_prev = x
 
-    sig_now = getattr(self, "_curr_signals", {}) or {}
+    sig_now = readings.get("_signals_now", {}) or {}
 
     if half_life > 0 and dt > 0:
         decay = pow(0.5, dt / half_life)
         x = baseline + (x - baseline) * decay
 
-    v  = float(readings.get("valence", 0.5)) * 2 - 1
+    v  = float(readings.get("valence", 0.0))
     ar = float(readings.get("arousal", 0.5))
     trust = float(rec.get("trust_ema", readings.get("trust", 0.5)))
     intensity = max(0.0, min(1.0, 0.6 * abs(v) + 0.4 * ar))
@@ -407,12 +419,92 @@ def _update_attachment(self, uid: int, readings: Dict[str, float], imp: float, w
     rec["stage"] = new_stage
     self.attachments[uid] = rec
 
+    try:
+        if getattr(self, "_last_uid", None) == uid:
+            self.state["attachment"] = rec["value"]
+            self._dirty_metrics.add("attachment")
+    except Exception:
+        pass
+
     if getattr(settings, "ATTACHMENT_PERSIST", False) and hasattr(self, "_persist_attachment"):
         try:
             self.spawn_coro(self._persist_attachment, uid, name="persist-attachment")
         except Exception:
             logger.debug("persist_attachment schedule failed", exc_info=True)
 
+
+def _compute_states(state, readings, change_rates):
+
+    if A is None or B is None:
+        return dict(state)
+
+    try:
+        max_dim = min(len(DYNAMIC_METRICS), len(A), len(B))
+    except Exception:
+        max_dim = len(DYNAMIC_METRICS)
+
+    if len(DYNAMIC_METRICS) != len(A) or len(A) != len(B):
+        logger.warning(
+            "DYNAMIC_METRICS(%d) ≠ A(%d) or B(%d) – use the first %d elements",
+            len(DYNAMIC_METRICS), len(A), len(B), max_dim,
+        )
+
+    metrics = DYNAMIC_METRICS[:max_dim]
+
+    s = [state.get(m, 0.0) for m in metrics]
+    r = [readings.get(m, state.get(m, 0.0)) for m in metrics]
+
+    N = len(s)
+    new: dict[str, float] = {}
+    integrator = getattr(settings, "EMO_INTEGRATOR", "euler")
+
+    for i, m in enumerate(metrics):
+        if m == "attachment":
+            new[m] = state.get("attachment", 0.0)
+            continue
+
+        base = EMO_DT_BASE.get(m, EMO_DT_DEFAULT)
+        rate = change_rates.get(m, 1.0)
+
+        if base <= 0.0:
+            new[m] = state.get(m, 0.0)
+            continue
+
+        if m == "valence":
+            cur_val = s[i]
+            dt = base * rate * (1.0 - min(1.0, abs(cur_val)))
+        else:
+            cur_val = s[i]
+            dt = base * rate * (1.0 - cur_val)
+
+        DT_MIN = 1e-3
+        dt = max(DT_MIN, min(dt, 1.0))
+
+        rowA = A[i]
+        rowB = B[i]
+        inner_len = min(
+            N,
+            len(rowA),
+            len(rowB),
+        )
+        dotA_full = sum(rowA[j] * s[j] for j in range(inner_len))
+        dotB      = sum(rowB[j] * r[j] for j in range(inner_len))
+
+        if integrator == "semi_implicit":
+            a_diag = rowA[i] if i < len(rowA) else 0.0
+            dotA_wo_diag = dotA_full - a_diag * s[i]
+            numer = s[i] + dt * (dotA_wo_diag + dotB)
+            denom = max(1e-6, 1.0 - dt * a_diag)
+            x = numer / denom
+        else:
+            x = s[i] + dt * (dotA_full + dotB)
+
+        if m == "valence":
+            new[m] = max(-1.0, min(1.0, x))
+        else:
+            new[m] = max(0.0, min(1.0, x))
+
+    return new
 
 async def _detect_social_signals_llm(self, text: str, *, timeout: float | None = None) -> Dict[str, bool]:
 
@@ -456,7 +548,7 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.REASONING_MODEL,
+                model=settings.BASE_MODEL,
                 instructions=system_prompt,
                 input=user_prompt,
                 text={
@@ -475,7 +567,7 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
         dt_ms = (time.perf_counter() - t0) * 1000.0
         logger.info(
             "openai.request endpoint=responses.create model=%s duration_ms=%.2f timeout_s=%.2f chat_id=%s",
-            getattr(settings, "REASONING_MODEL", None),
+            getattr(settings, "BASE_MODEL", None),
             dt_ms,
             (timeout or 30.0),
             getattr(self, "chat_id", None),
@@ -517,7 +609,7 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
         dt_ms = (time.perf_counter() - t0) * 1000.0
         logger.warning(
             "openai.request endpoint=responses.create model=%s failed_after_ms=%.2f timeout_s=%.2f chat_id=%s",
-            getattr(settings, "REASONING_MODEL", None),
+            getattr(settings, "BASE_MODEL", None),
             dt_ms,
             (timeout or 30.0),
             getattr(self, "chat_id", None),
@@ -533,6 +625,24 @@ async def process_interaction(
     text: str,
     user_gender: str | None = None,
 ) -> None:
+
+    async with self._proc_sem:
+        return await _process_interaction_unlocked(self, uid, text, user_gender=user_gender)
+
+
+async def _process_interaction_unlocked(
+    self,
+    uid: int,
+    text: str,
+    user_gender: str | None = None,
+) -> None:
+
+    try:
+        if getattr(self, "_selfnet_disabled", False):
+            if (self.state_version % 17) == 0:
+                setattr(self, "_selfnet_disabled", False)
+    except Exception:
+        pass
 
     try:
         await self._load_attachment(uid)
@@ -593,11 +703,6 @@ async def process_interaction(
         self._dirty_metrics.update(defaults.keys())
         self._startup_tuned = True
 
-    curr = id(asyncio.get_running_loop())
-    if self._loop_id != curr:
-        self._loop_id = curr
-        self._mods_cache.clear()
-
     now = time.time()
     punc = Counter(text)
     excl = punc["!"]
@@ -646,6 +751,8 @@ async def process_interaction(
     val_homeo = pow(settings.VALENCE_HOMEOSTASIS_DECAY, idle / 60)
     try:
         v_base = float(getattr(settings, "VALENCE_BASELINE", 0.15))
+        if 0.0 <= v_base <= 1.0:
+            v_base = v_base * 2.0 - 1.0
     except Exception:
         v_base = 0.15
     cur_v = float(self.state.get("valence", 0.0))
@@ -680,12 +787,37 @@ async def process_interaction(
     self._last_user_msg = text
 
     try:
-        self._last_msg_emb = await asyncio.wait_for(get_embedding(text), timeout=15.0)
+        emb_task = getattr(self, "_emb_inflight", None)
+        restart = False
+        if emb_task is None or emb_task.done():
+            restart = True
+        else:
+            started_ts = getattr(self, "_emb_inflight_started", None)
+            if started_ts is None or (time.time() - started_ts) > 20.0:
+                try:
+                    emb_task.cancel()
+                except Exception:
+                    pass
+                restart = True
+        if restart:
+            async def _do_embed(msg: str):
+                try:
+                    return await asyncio.wait_for(get_embedding(msg), timeout=15.0)
+                except Exception:
+                    return None
+            self._emb_inflight_started = time.time()
+            self._emb_inflight = asyncio.create_task(
+                _do_embed(text), name="persona-last-msg-emb"
+            )
+
+        emb_task = self._emb_inflight
+        self._last_msg_emb = (
+            emb_task.result()
+            if emb_task.done() and not emb_task.cancelled()
+            else None
+        )
     except Exception:
-        try:
-            self._last_msg_emb = None
-        except Exception:
-            pass
+        self._last_msg_emb = None
 
     imp = self._compute_salience(readings, text)
 
@@ -716,24 +848,42 @@ async def process_interaction(
         do_signals = False
     if do_signals:
         try:
-            signals_llm = await _detect_social_signals_llm(self, text)
+            detector = getattr(self, "_detect_social_signals_llm", None)
+            if detector is not None:
+                signals_llm = await detector(text)
+            else:
+                signals_llm = await _detect_social_signals_llm(self, text)
         except Exception:
             signals_llm = {}
 
     trust = readings.get("trust", 0.5)
-    sigma = (1.0 - trust) * 0.05
-    for m in ANALYSIS_METRICS:
-        if m == "valence":
-            continue
-        base = readings.get(m, self.state.get(m, 0.0))
-        readings[m] = self._clamp(base + self._rng.gauss(0.0, sigma))
-
-    readings["energy"] = self._clamp(len(text)/200 + excl*0.02 + ques*0.01)
 
     try:
-        cur_v = readings.get("valence", 0.0)
-        if 0.0 < cur_v < 1.0:
-            cur_v = cur_v * 2.0 - 1.0
+        max_sigma = float(getattr(settings, "ANALYSIS_NOISE_STD_MAX", 0.05))
+    except Exception:
+        max_sigma = 0.05
+    if max_sigma < 0.0:
+        max_sigma = 0.0
+    sigma = (1.0 - trust) * max_sigma
+
+    if sigma > 0.0 and getattr(self, "_rng", None) is not None:
+        for m in ANALYSIS_METRICS:
+            if m == "valence":
+                continue
+            base = readings.get(m, self.state.get(m, 0.0))
+            readings[m] = self._clamp(base + self._rng.gauss(0.0, sigma))
+    else:
+        for m in ANALYSIS_METRICS:
+            if m == "valence":
+                continue
+            readings.setdefault(m, self.state.get(m, 0.0))
+
+    readings["energy"] = self._clamp(len(text)/200 + excl*0.02 + ques*0.01)
+    if signals_llm:
+        readings["_signals_now"] = dict(signals_llm)
+
+    try:
+        cur_v = float(readings.get("valence", 0.0))
         if "valence" not in self.ema:
             self.ema["valence"] = 0.0
         delta_v = abs(cur_v - self.ema["valence"])
@@ -747,49 +897,6 @@ async def process_interaction(
         delta_f = settings.FATIGUE_ACCUMULATE_RATE * (readings["arousal"] + readings["energy"]) / 2
         self.state["fatigue"] = FAT_CLAMP(self.state.get("fatigue", 0.0) + delta_f)
         self._dirty_metrics.add("fatigue")
-
-
-    def _compute_states(state, readings, change_rates):
-
-        s = [state[m] for m in ALL_METRICS]
-        r = []
-        for m in ALL_METRICS:
-            rv = readings.get(m, state.get(m, 0.0))
-            if m == "valence" and 0.0 < rv < 1.0:
-                rv = rv * 2.0 - 1.0
-            r.append(rv)
-        N = len(s)
-        new = {}
-        integrator = getattr(settings, "EMO_INTEGRATOR", "euler")
-        for i, m in enumerate(ALL_METRICS):
-            base = EMO_DT_BASE.get(m, EMO_DT_DEFAULT)
-            rate = change_rates.get(m, 1.0)
-
-            if base <= 0.0:
-                new[m] = s[i]
-                continue
-
-            if m == "valence":
-                dt = base * rate * (1.0 - min(1.0, abs(s[i])))
-            else:
-                dt = base * rate * (1.0 - s[i])
-            DT_MIN = 1e-3
-            dt = max(DT_MIN, min(dt, 1.0))
-            dotA_full = sum(A[i][j] * s[j] for j in range(N))
-            dotB      = sum(B[i][j] * r[j] for j in range(N))
-            if integrator == "semi_implicit":
-                a_diag = A[i][i]
-                dotA_wo_diag = dotA_full - a_diag * s[i]
-                numer = s[i] + dt * (dotA_wo_diag + dotB)
-                denom = max(1e-6, 1.0 - dt * a_diag)
-                x = numer / denom
-            else:
-                x = s[i] + dt * (dotA_full + dotB)
-            if m == "valence":
-                new[m] = max(-1.0, min(1.0, x))
-            else:
-                new[m] = max(0.0, min(1.0, x))
-        return new
 
     loop = asyncio.get_running_loop()
     snapshot_version = self.state_version
@@ -847,10 +954,6 @@ async def process_interaction(
             except Exception:
                 logger.debug("repair-token handling failed", exc_info=True)
 
-        try:
-            self._curr_signals = dict(signals_llm or {})
-        except Exception:
-            self._curr_signals = {}
         weight = self._update_weight(uid, readings.get("valence", 0.0), imp)
         self._update_attachment(uid, readings, imp, weight)
         weight_eff = self._effective_person_weight(uid, weight)
@@ -861,121 +964,216 @@ async def process_interaction(
         except Exception:
             logger.debug("ltm.extract_and_upsert scheduling failed", exc_info=True)
 
-    async with self._proc_sem:
-        try:
-            MAX_ATTACH = int(getattr(settings, "ATTACHMENT_MAX_USERS", 10000))
-        except Exception:
-            MAX_ATTACH = 10000
-        if len(self.attachments) > MAX_ATTACH:
-            async with self._lock:
-                by_ts = sorted(self.attachments.items(), key=lambda kv: kv[1].get("ts", 0.0), reverse=True)
-                self.attachments = dict(by_ts[:MAX_ATTACH])
+    try:
+        MAX_ATTACH = int(getattr(settings, "ATTACHMENT_MAX_USERS", 10000))
+    except Exception:
+        MAX_ATTACH = 10000
+    if len(self.attachments) > MAX_ATTACH:
+        async with self._lock:
+            by_ts = sorted(self.attachments.items(), key=lambda kv: kv[1].get("ts", 0.0), reverse=True)
+            self.attachments = dict(by_ts[:MAX_ATTACH])
 
-        delta_ticks = self.state_version - snapshot_version
-        if delta_ticks <= 1:
-            atten = 1.0
+    delta_ticks = self.state_version - snapshot_version
+    if delta_ticks <= 1:
+        atten = 1.0
+    else:
+        atten = 0.9 if delta_ticks == 2 else 0.8
+    for m, val in computed.items():
+        if atten != 1.0:
+            cur = self.state.get(m, val)
+            val = cur + atten * (val - cur)
+        self.state[m] = val
+        self._dirty_metrics.add(m)
+    for m in list(self._dirty_metrics):
+        suppress_opposite(m, self.state)
+
+    for metric, delta in trigger_deltas.items():
+        if imp > 0.8:
+            base_rate = self.change_rates.get(metric, 1.0)
+            raw = self.state.get(metric, 0.0) + delta * base_rate
+            lo, hi = (-1.0, 1.0) if metric == "valence" else (0.0, 1.0)
+            self.state[metric] = self._clamp(raw, lo, hi)
+            self._dirty_metrics.add(metric)
+            suppress_opposite(metric, self.state)
         else:
-            atten = 0.9 if delta_ticks == 2 else 0.8
-        for m, val in computed.items():
-            if atten != 1.0:
-                cur = self.state.get(m, val)
-                val = cur + atten * (val - cur)
-            self.state[m] = val
-            self._dirty_metrics.add(m)
-        for m in list(self._dirty_metrics):
-            suppress_opposite(m, self.state)
+            cur = self.state.get(metric, 0.0)
+            self._blend_metric(metric, cur + delta, weight_eff)
 
-        for metric, delta in trigger_deltas.items():
-            if imp > 0.8:
-                base_rate = self.change_rates.get(metric, 1.0)
-                raw = self.state.get(metric, 0.0) + delta * base_rate
-                lo, hi = (-1.0, 1.0) if metric == "valence" else (0.0, 1.0)
-                self.state[metric] = self._clamp(raw, lo, hi)
-                self._dirty_metrics.add(metric)
-                suppress_opposite(metric, self.state)
-            else:
-                self._blend_metric(metric, self.state[metric] + delta, weight_eff)
+    if weight_eff:
+        self._apply_attachment_influence(uid, weight_eff)
 
-        if weight_eff:
-            self._apply_attachment_influence(uid, weight_eff)
+    self._update_mood_label()
+    if hasattr(self, "_compute_secondary"):
+        self._compute_secondary()
+    if hasattr(self, "_compute_tertiary"):
+        self._compute_tertiary()
 
-        self._update_mood_label()
-        if hasattr(self, "_compute_secondary"):
-            self._compute_secondary()
-        if hasattr(self, "_compute_tertiary"):
-            self._compute_tertiary()
+    self.state["arousal"] = self._clamp(
+        self.state.get("arousal", 0.5) + factor_imp * imp * (0.4 + 0.2 * (weight_eff or 0.0))
+    )
+    self._dirty_metrics.add("arousal")
 
-        self.state["arousal"] = self._clamp(
-            self.state.get("arousal", 0.5) + factor_imp * imp * (0.4 + 0.2 * (weight_eff or 0.0))
+    expc = readings.get("anticipation", 0.5)
+    surprise_delta = (1 - expc) * settings.APPRAISAL_EXPECTATION_FACTOR * (1 - self.state["fatigue"])
+    self.state["surprise"] = self._clamp(self.state.get("surprise", 0.0) + surprise_delta)
+    self._dirty_metrics.add("surprise")
+
+    ctrl = readings.get("trust", 0.5) - readings.get("fear", 0.5)
+    self.state["dominance"] = self._clamp(self.state.get("dominance", 0.5) + settings.APPRAISAL_CONTROL_FACTOR * ctrl)
+    self._dirty_metrics.add("dominance")
+
+    if readings.get("fear", 0.0) > 0.8:
+        drop = (readings["fear"] - 0.8) ** 2
+        self.state["dominance"] = self._clamp(
+            self.state.get("dominance", 0.5) * (1 - drop)
         )
-        self._dirty_metrics.add("arousal")
-
-        expc = readings.get("anticipation", 0.5)
-        surprise_delta = (1 - expc) * settings.APPRAISAL_EXPECTATION_FACTOR * (1 - self.state["fatigue"])
-        self.state["surprise"] = self._clamp(self.state.get("surprise", 0.0) + surprise_delta)
-        self._dirty_metrics.add("surprise")
-
-        ctrl = readings.get("trust", 0.5) - readings.get("fear", 0.5)
-        self.state["dominance"] = self._clamp(self.state.get("dominance", 0.5) + settings.APPRAISAL_CONTROL_FACTOR * ctrl)
         self._dirty_metrics.add("dominance")
 
-        if readings.get("fear", 0.0) > 0.8:
-            drop = (readings["fear"] - 0.8) ** 2
-            self.state["dominance"] = self._clamp(
-                self.state.get("dominance", 0.5) * (1 - drop)
-            )
-            self._dirty_metrics.add("dominance")
+    base_alpha = settings.EMO_EMA_ALPHA
+    for e in PRIMARY_EMOTIONS + ["arousal", "energy", "fatigue"]:
+        self.ema.setdefault(e, 0.5)
+        val_e = readings.get(e, self.ema[e])
+        delta = abs(val_e - self.ema[e])
+        alpha_dyn = max(0.05, min(0.30, base_alpha * (1 + 2 * delta)))
+        self.ema[e] = self.ema[e] * (1 - alpha_dyn) + val_e * alpha_dyn
 
-        base_alpha = settings.EMO_EMA_ALPHA
-        for e in PRIMARY_EMOTIONS + ["arousal", "energy", "fatigue"]:
-            self.ema.setdefault(e, 0.5)
-            val_e = readings.get(e, self.ema[e])
-            delta = abs(val_e - self.ema[e])
-            alpha_dyn = max(0.05, min(0.30, base_alpha * (1 + 2 * delta)))
-            self.ema[e] = self.ema[e] * (1 - alpha_dyn) + val_e * alpha_dyn
+    self.ema["arousal"] = self._clamp(
+        self.ema["arousal"] + (text.count("!") * 0.02 + text.count("?") * 0.01)
+    )
 
-        self.ema["arousal"] = self._clamp(
-            self.ema["arousal"] + (text.count("!") * 0.02 + text.count("?") * 0.01)
-        )
-
-        em_list = [(e, self.ema[e]) for e in PRIMARY_ORDER]
+    em_list = [(e, self.ema[e]) for e in PRIMARY_ORDER]
+    if em_list:
         mean_  = sum(v for _, v in em_list) / len(em_list)
         std_   = (sum((v - mean_)**2 for _, v in em_list) / len(em_list))**0.5
+    else:
+        mean_, std_ = 0.0, 0.0
 
-        sigma_k = 0.5 + std_
-        hysteresis = settings.EMO_HYSTERESIS_DELTA * (1 + std_)
+    sigma_k = 0.5 + std_
+    hysteresis = settings.EMO_HYSTERESIS_DELTA * (1 + std_)
 
-        thr_on  = mean_ + sigma_k * std_ + hysteresis
-        thr_off = mean_ + sigma_k * std_ - hysteresis
-
-        top_em, top_val = max(em_list, key=lambda kv: kv[1])
-
-        if not self.dominant_locked and top_val >= thr_on:
-            self.dominant_locked = True
-            self.current_dominant = top_em
-        elif self.dominant_locked and top_val < thr_off:
-            self.dominant_locked = False
-            self.current_dominant = None
-
-        if self.dominant_locked and self.current_dominant:
-            sorted_em = sorted(em_list, key=lambda kv: kv[1], reverse=True)
-            self.last_user_emotions = [
-                self._EMO_LABEL_MAP.get(sorted_em[0][0], sorted_em[0][0]),
-                self._EMO_LABEL_MAP.get(sorted_em[1][0], sorted_em[1][0]),
-            ]
-        else:
-            self.last_user_emotions = []
+    thr_on  = mean_ + sigma_k * std_ + hysteresis
+    thr_off = mean_ + sigma_k * std_ - hysteresis
 
     try:
-        if self._bg_queue.full() and imp < 0.30:
-            logger.warning("BG-queue full → dropped low-salience item (imp=%.2f)", imp)
+        dom_thr = float(getattr(self, "dominant_threshold", 0.0))
+    except Exception:
+        dom_thr = 0.0
+    if dom_thr > 0.0:
+        thr_on = max(thr_on, dom_thr)
+
+    if em_list:
+        top_em, top_val = max(em_list, key=lambda kv: kv[1])
+    else:
+        top_em, top_val = None, 0.0
+
+    if top_em is not None and (not self.dominant_locked and top_val >= thr_on):
+        self.dominant_locked = True
+        self.current_dominant = top_em
+    elif self.dominant_locked and top_val < thr_off:
+        self.dominant_locked = False
+        self.current_dominant = None
+
+    if self.dominant_locked and self.current_dominant and em_list:
+        sorted_em = sorted(em_list, key=lambda kv: kv[1], reverse=True)
+        top_labels = []
+        for name, _v in sorted_em[:2]:
+            top_labels.append(self._EMO_LABEL_MAP.get(name, name))
+        self.persona_dominant_emotions = top_labels
+    else:
+        if self.dominant_locked and not self.current_dominant:
+            self.dominant_locked = False
+        self.persona_dominant_emotions = []
+
+    selfnet_metrics = {}
+    try:
+        sn = getattr(self, "self_net", None)
+        if sn is not None and not getattr(self, "_selfnet_disabled", False):
+            min_s = float(getattr(settings, "SELFNET_MIN_SALIENCE", 0.10))
+            if imp >= min_s:
+                state_snapshot = dict(self.state)
+                selfnet_metrics = await sn.observe(
+                    uid=uid,
+                    text=text,
+                    readings=readings,
+                    state=state_snapshot,
+                    salience=imp,
+                )
+    except Exception:
+        logger.debug("SelfNeuronNetwork.observe failed", exc_info=True)
+        selfnet_metrics = {}
+        try:
+            self._selfnet_disabled = True
+        except Exception:
+            pass
+
+    if selfnet_metrics:
+        try:
+            gain = float(getattr(settings, "SELFNET_GAIN", 0.4))
+        except Exception:
+            gain = 0.4
+        gain = max(0.0, min(0.7, gain))
+        soft_cap = {
+            "valence": 0.15,
+            "energy":  0.20,
+            "fatigue": 0.20,
+        }
+        mode_meta: dict = {}
+        for metric, target in selfnet_metrics.items():
+            mname = str(metric)
+            if mname.startswith("_mode_") or mname == "_mode_id":
+                mode_meta[mname] = target
+                continue
             try:
-                max_len = int(getattr(settings, "MEM_MAX_TEXT_LEN", 1000))
+                if mname in soft_cap:
+                    cur_val = float(self.state.get(mname, 0.0))
+                    delta = target - cur_val
+                    cap = soft_cap[mname]
+                    if abs(delta) > cap:
+                        target = cur_val + cap * (1 if delta > 0 else -1)
+                self._blend_metric(mname, target, gain)
             except Exception:
-                max_len = 1000
-            text_norm = re.sub(r"\s+", " ", text or "").strip()
-            if len(text_norm) > max_len:
-                text_norm = text_norm[:max_len]
+                logger.debug("SelfNeuronNetwork blend failed for %s", mname, exc_info=True)
+
+        try:
+            mode_id_raw = mode_meta.get("_mode_id")
+            if isinstance(mode_id_raw, str) and mode_id_raw:
+                self.current_mode_id = mode_id_raw
+            elif isinstance(mode_id_raw, (int, float)):
+                self.current_mode_id = f"mode_{int(mode_id_raw)}"
+
+            stats: dict = {}
+            for key_src, key_dst in (
+                ("_mode_coherence", "coherence"),
+                ("_mode_novelty", "novelty"),
+                ("_mode_complexity", "complexity"),
+                ("_mode_intensity", "intensity"),
+            ):
+                if key_src in mode_meta:
+                    try:
+                        stats[key_dst] = float(mode_meta[key_src])
+                    except Exception:
+                        pass
+            if stats:
+                self.current_mode_stats = stats
+        except Exception:
+            logger.debug("SelfNeuronNetwork mode snapshot failed", exc_info=True)
+
+    try:
+        text_norm = self._normalize_mem_text(text)
+        q = getattr(self, "_bg_queue", None)
+
+        if q is None:
+            try:
+                self._recent_sketch.append({
+                    "t": time.time(),
+                    "uid": uid,
+                    "imp": float(imp),
+                    "text": text_norm,
+                })
+            except Exception:
+                pass
+        elif q.full() and imp < 0.30:
+            logger.warning("BG-queue full → dropped low-salience item (imp=%.2f)", imp)
             try:
                 self._recent_sketch.append({
                     "t": time.time(),
@@ -986,34 +1184,23 @@ async def process_interaction(
             except Exception:
                 pass
         else:
-            try:
-                max_len = int(getattr(settings, "MEM_MAX_TEXT_LEN", 1000))
-            except Exception:
-                max_len = 1000
-            text_norm = re.sub(r"\s+", " ", text or "").strip()
-            if len(text_norm) > max_len:
-                text_norm = text_norm[:max_len]
             pass_emb = bool(getattr(settings, "BG_QUEUE_PASS_EMB", True))
             emb_val = getattr(self, "_last_msg_emb", None) if pass_emb else None
-            self._bg_queue.put_nowait((text_norm, readings, emb_val, imp, uid))
+            q.put_nowait((text_norm, readings, emb_val, imp, uid))
     except asyncio.QueueFull:
         logger.warning("BG-queue full → memory save skipped")
         try:
+            fallback_txt = text_norm if 'text_norm' in locals() else self._normalize_mem_text(text)
             self._recent_sketch.append({
                 "t": time.time(),
                 "uid": uid,
                 "imp": float(imp),
-                "text": text_norm if 'text_norm' in locals() else (text or "")[:1000],
+                "text": fallback_txt,
             })
         except Exception:
             pass
     finally:
         self.state_version += 1
-
-    try: 
-        self._curr_signals.clear()
-    except Exception: 
-        pass
 
 
 async def _bg_worker(self) -> None:
@@ -1031,9 +1218,11 @@ async def _bg_worker(self) -> None:
             min_store = 0.12
         try:
             att = 0.0
-            if uid_cur is not None and uid_cur in self.attachments:
-                att = float(self.attachments[uid_cur].get("value", 0.0))
-            min_store = max(0.05, min(0.70, min_store - 0.06*att))
+            if uid_cur is not None:
+                rec = self.attachments.get(uid_cur)
+                if isinstance(rec, dict):
+                    att = float(rec.get("value", 0.0))
+            min_store = max(0.05, min(0.70, min_store - 0.06 * att))
         except Exception:
             pass
         try:
@@ -1042,7 +1231,12 @@ async def _bg_worker(self) -> None:
         except Exception:
             pass
         if imp < min_store:
-            return
+            try:
+                hard_min = float(getattr(settings, "MEMORY_ALWAYS_STORE_MIN_SALIENCE", 0.80))
+            except Exception:
+                hard_min = 0.80
+            if imp < hard_min:
+                return
         try:
             max_len = int(getattr(settings, "MEM_MAX_TEXT_LEN", 1000))
         except Exception:
@@ -1061,12 +1255,16 @@ async def _bg_worker(self) -> None:
             "valence": self.state.get("valence", 0.0),
             "stress":  self.state.get("stress",  0.0),
         }
-        if uid_cur is not None and uid_cur in self.attachments:
+        if uid_cur is not None:
             try:
-                state_slice["attachment"] = float(self.attachments[uid_cur].get("value", 0.0))
+                rec = self.attachments.get(uid_cur)
+                if isinstance(rec, dict):
+                    state_slice["attachment"] = float(rec.get("value", 0.0))
             except Exception:
                 pass
-        val01 = (readings["valence"] + 1.0) * 0.5
+        v_raw = readings.get("valence", 0.0)
+        val01 = (v_raw + 1.0) * 0.5
+        val01 = max(0.0, min(1.0, val01))
         await self.enhanced_memory.record(
             text=text_n,
             embedding=emb,

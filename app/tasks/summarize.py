@@ -8,8 +8,7 @@ import contextlib
 
 from typing import List, Tuple
 
-from app.tasks.celery_app import celery
-from app.tasks.utils.bg_loop import get_bg_loop
+from app.tasks.celery_app import celery, _run
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import (
     get_redis, _k_mtm, _k_mtm_tokens,
@@ -21,12 +20,6 @@ from app.config import settings
 from app.emo_engine.persona.memory import PersonaMemory, get_embedding
 
 logger = logging.getLogger(__name__)
-
-
-def _run(coro):
-    loop = get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
 
 
 def _cap_lines(lines: List[str], max_tokens: int) -> str:
@@ -70,6 +63,9 @@ def _compress_prompt(lines: List[str]) -> str:
         "If unsure whether something is durable, DROP it (prefer under-inclusion).\n"
         "If unsure, DROP the content. Prefer under-inclusion to over-inclusion.\n"
         "Treat role prefixes like 'user:'/'assistant:' as metadata; ignore them for language detection.\n"
+        "CRITICAL:\n"
+        "- Preserve factual details exactly when you keep them (names, numbers, dates, relationships).\n"
+        "- Do NOT invert who did what to whom or who feels what about whom.\n"
         "Write concisely as bullet points or short paragraphs, with no headings or markup.\n"
         "LANGUAGE: Use the dominant language of the input excerpts; DO NOT translate.\n"
         "-----\n"
@@ -87,6 +83,9 @@ def _merge_prompt(old: str, new: str, max_tokens: int) -> str:
         "constraints, context, and behavior patterns. No speculation. Be compact.\n"
         f"Target hard limit ≈ {max_tokens} tokens.\n"
         "Exclude sensitive identifiers unless the user explicitly asked to save them. Prefer under-inclusion.\n"
+        "CRITICAL:\n"
+        "- When you keep a fact (numbers, dates, names, relationships), do not change it.\n"
+        "- Do NOT invert who did what to whom or who feels what about whom.\n"
         "LANGUAGE: Preserve the original language(s) from inputs; DO NOT translate.\n"
         "-----\n[OLD_LTM]\n"
         f"{old or ''}\n"

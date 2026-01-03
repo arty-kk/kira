@@ -18,11 +18,14 @@ from typing import Optional, Dict
 from collections import defaultdict
 
 from aiogram.enums import ChatAction
+from aiogram.types import Message as TgMessage
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter, TelegramNetworkError, TelegramForbiddenError
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.config import settings
+from app.bot.utils.debouncer import compute_typing_delay
+import app.bot.components.constants as consts
 from app.clients.telegram_client import get_bot
 from app.clients.openai_client import get_openai
 from app.services.responder import respond_to_user
@@ -31,13 +34,35 @@ from app.services.addons.voice_generator import (
     will_speak, is_tts_eligible_short
 )
 from app.services.addons.passive_moderation import sanitize_for_context
-from app.services.addons.analytics import record_timeout, record_assistant_reply, record_latency
+from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 
 
 logger = logging.getLogger(__name__)
 
 BOT = get_bot()
+
+CHATTY_MODE: bool = bool(getattr(settings, "CHATTY_MODE", True))
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
+EMOJI_TAIL_RE = re.compile(
+    r'^(.*?)(?:\s*)([\U0001F300-\U0001FAFF\U00002700-\U000027BF]+)$'
+)
+_EMOJI_INLINE_RE = re.compile(
+    r'[\U0001F300-\U0001FAFF\U00002700-\U000027BF]'
+)
+EMOJI_ONLY_RE = re.compile(
+    r'^[\U0001F300-\U0001FAFF\U00002700-\U000027BF]+$'
+)
+INTERJECTION_SPLIT_RE = re.compile(
+    r'^(?P<word>Окей|Ок|Да|Нет|Ладно|Ага|Угу|Понял[аи]?|Супер|Круто|Ясно|Верно|Точно|'
+    r'Okay|Ok|Yeah|Yep|Yup|Yes|No|Alright|All right|Sure|Right|Gotcha|Got it|'
+    r'Cool|Great|Nice|Fine|Understood)'
+    r'\b'
+    r'(?P<punc>[.!?…]+(?:\s*[\U0001F300-\U0001FAFF\U00002700-\U000027BF]+)*)'
+    r'\s+(?P<rest>.+)$',
+    re.IGNORECASE,
+)
+
 
 ENABLE_RICH_HTML = bool(getattr(settings, "ENABLE_RICH_HTML", True))
 _SANITIZE_CONTEXT = bool(getattr(settings, "MODERATION_SANITIZE_CONTEXT_ALWAYS", True))
@@ -118,10 +143,288 @@ return allowed
 """
 _CHAT_BUCKET_LUA = _TG_BUCKET_LUA
 
+def _mk_ctx_payload(role: str, text: str, *, speaker_id: int | None = None) -> str:
+    r = (role or "").strip().lower()
+    if r not in ("user", "assistant", "system"):
+        r = "user"
+    t = (text or "").strip()
+    payload: dict = {"role": r, "text": t}
+    if speaker_id is not None:
+        try:
+            payload["speaker_id"] = int(speaker_id)
+        except Exception:
+            pass
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
 def _is_effectively_empty(s: str) -> bool:
     t = _IS_MENTION_RE.sub(' ', (s or ''))
     t = re.sub(r'\s+', ' ', t).strip()
     return t == ''
+
+
+def _split_reply_into_messages(text: str) -> list[str]:
+
+    if not text:
+        return []
+
+    chunks: list[str] = []
+
+    for block in text.splitlines():
+        block = block.strip()
+        if not block:
+            continue
+
+        parts = _SENTENCE_SPLIT_RE.split(block)
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            tail_match = EMOJI_TAIL_RE.match(part)
+            subparts: list[str] = []
+            if tail_match:
+                head = (tail_match.group(1) or "").strip()
+                emojis = (tail_match.group(2) or "").strip()
+                if head and emojis:
+                    subparts.append(head)
+                    subparts.append(emojis)
+                else:
+                    subparts.append(part)
+            else:
+                subparts.append(part)
+
+            for sub in subparts:
+                sub = sub.strip()
+                if not sub:
+                    continue
+
+                m = INTERJECTION_SPLIT_RE.match(sub)
+                if m:
+                    word = m.group("word") or ""
+                    punc = m.group("punc") or ""
+                    rest = m.group("rest") or ""
+                    first = f"{word}{punc}".strip()
+                    rest = rest.strip()
+                    if rest and not EMOJI_ONLY_RE.fullmatch(rest):
+                        if first:
+                            chunks.append(first)
+                        if rest:
+                            chunks.append(rest)
+                    else:
+                        chunks.append(sub)
+                else:
+                    chunks.append(sub)
+    return chunks
+
+
+def _classify_chunk(chunk: str) -> tuple[bool, bool, bool]:
+
+    s = (chunk or "").strip()
+    if not s:
+        return False, False, False
+
+    words = [w for w in s.split() if w]
+    is_one_word = (len(words) == 1)
+
+    has_emoji = bool(_EMOJI_INLINE_RE.search(s))
+
+    tail = s.rstrip()
+    last_char = tail[-1] if tail else ""
+
+    m = re.search(r'([.!?…]+)$', tail)
+    punct_cluster = m.group(1) if m else ""
+
+    is_question = "?" in punct_cluster
+    is_excl = "!" in punct_cluster
+    is_ellipsis = "…" in punct_cluster or "..." in s
+
+    expressive = False
+    if punct_cluster:
+        if re.search(r'(\?\?|!!|!\?|!\?|\?!|\?!)', punct_cluster):
+            expressive = True
+
+    is_special = (
+        is_one_word
+        or has_emoji
+        or is_question
+        or is_excl
+        or is_ellipsis
+        or expressive
+    )
+
+    is_neutral_end = (
+        not is_special
+        and last_char in ".:;"
+    )
+
+    return is_special, is_neutral_end, is_one_word
+
+
+def _group_chatty_chunks(chunks: list[str]) -> list[str]:
+
+    if not chunks:
+        return []
+
+    result: list[str] = []
+    n = len(chunks)
+    i = 0
+
+    while i < n:
+        s = (chunks[i] or "").strip()
+        if not s:
+            i += 1
+            continue
+
+        is_special, is_neutral, is_one_word = _classify_chunk(s)
+
+        if is_one_word:
+            run = [s]
+            j = i + 1
+            while j < n:
+                sj = (chunks[j] or "").strip()
+                if not sj:
+                    j += 1
+                    continue
+                _, _, one_j = _classify_chunk(sj)
+                if not one_j:
+                    break
+                run.append(sj)
+                j += 1
+
+            if len(run) >= 2:
+                result.append(" ".join(run))
+                i = j
+                continue
+
+        if is_special:
+            result.append(s)
+            i += 1
+            continue
+
+        if is_neutral:
+            run = [s]
+            j = i + 1
+            while j < n:
+                sj = (chunks[j] or "").strip()
+                if not sj:
+                    j += 1
+                    continue
+                sp, np, _ = _classify_chunk(sj)
+                if sp or not np:
+                    break
+                run.append(sj)
+                j += 1
+
+            if len(run) >= 2:
+                result.append(" ".join(run))
+            else:
+                result.append(run[0])
+            i = j
+            continue
+
+        result.append(s)
+        i += 1
+
+    return result
+
+def _split_into_two_by_sentences(sentences: list[str]) -> list[str]:
+    sents = [(s or "").strip() for s in (sentences or []) if (s or "").strip()]
+    n = len(sents)
+    if n < 2:
+        return [" ".join(sents).strip()] if sents else []
+
+    mid = (n + 1) // 2
+
+    a = " ".join(sents[:mid]).strip()
+    b = " ".join(sents[mid:]).strip()
+
+    if not a or not b:
+        return [" ".join(sents).strip()]
+    return [a, b]
+
+
+async def _send_chatty_reply(
+    chat_id: int,
+    text: str,
+    reply_to: Optional[int],
+    msg_id: Optional[int],
+    merged_ids: Optional[list[int]] = None,
+    user_id: Optional[int] = None,
+    enable_typing: bool = True,
+) -> None:
+
+    text = (text or "").strip()
+    if not text:
+        return
+    delivered_first = False
+
+    if len(text) >= 350:
+        chunks = [text]
+    else:
+        base_chunks = _split_reply_into_messages(text)
+        if not base_chunks:
+            return
+        chunks = _group_chatty_chunks(base_chunks)
+
+        if len(chunks) == 1 and len(base_chunks) >= 3:
+            forced = _split_into_two_by_sentences(base_chunks)
+            if len(forced) == 2:
+                chunks = forced
+
+    multi_chunk = len(chunks) > 1
+    long_single = (len(text) >= 350 and not multi_chunk)
+
+    first_reply_target: Optional[int] = reply_to
+    for idx, chunk in enumerate(chunks):
+        chunk = (chunk or "").strip()
+        if not chunk:
+            continue
+
+        if idx == 0:
+            if long_single:
+                delay = compute_typing_delay(chunk)
+                if delay > 0:
+                    if enable_typing:
+                        await _typing_for_duration(chat_id, _jitter(delay, 0.25))
+                    else:
+                        await asyncio.sleep(_jitter(delay, 0.25))
+
+            await _send_reply(
+                chat_id=chat_id,
+                text=chunk,
+                reply_to=first_reply_target,
+                msg_id=msg_id,
+                merged_ids=merged_ids,
+                user_id=user_id,
+                skip_dedupe=False,
+            )
+            delivered_first = True
+            first_reply_target = None
+            continue
+
+        delay = compute_typing_delay(chunk) if multi_chunk else 0.0
+        if delay > 0:
+            if enable_typing:
+                await _typing_for_duration(chat_id, _jitter(delay, 0.25))
+            else:
+                await asyncio.sleep(_jitter(delay, 0.25))
+        
+        try:
+            await _send_reply(
+                chat_id=chat_id,
+                text=chunk,
+                reply_to=None,
+                msg_id=msg_id,
+                merged_ids=merged_ids,
+                user_id=user_id,
+                skip_dedupe=True,
+            )
+        except Exception:
+            if delivered_first:
+                logger.warning("Failed to send subsequent chatty chunk chat=%s msg_id=%s idx=%s", chat_id, msg_id, idx, exc_info=True)
+                return
+            raise
+
 
 async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> str:
     tmp_path = None
@@ -153,6 +456,7 @@ async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> s
             with suppress(Exception):
                 os.remove(tmp_path)
 
+
 async def _tg_acquire_permit() -> None:
     key = "ratelimit:tg:global"
     delay = 0.02
@@ -167,6 +471,7 @@ async def _tg_acquire_permit() -> None:
         await asyncio.sleep(delay)
         delay = min(delay * 1.5, 1.0)
 
+
 async def _tg_acquire_chat_permit(chat_id: int) -> None:
     key = f"ratelimit:tg:chat:{chat_id}"
     delay = 0.02
@@ -180,6 +485,7 @@ async def _tg_acquire_chat_permit(chat_id: int) -> None:
             return
         await asyncio.sleep(delay)
         delay = min(delay * 1.5, 0.5)
+
 
 def _get_chat_lock(chat_id: int) -> asyncio.Lock:
     chat_locks_last_used[chat_id] = time.time()
@@ -221,6 +527,7 @@ async def _delete_if_inflight(redis: Redis, key: str, expected_value: str) -> in
     except Exception:
         return 0
 
+
 async def _claim_if_reclaimed(redis: Redis, key: str, new_value: str, ttl: int) -> int:
 
     script = """
@@ -236,43 +543,81 @@ async def _claim_if_reclaimed(redis: Redis, key: str, new_value: str, ttl: int) 
     except Exception:
         return 0
 
-async def _action_loop(chat_id: int, action: ChatAction = ChatAction.TYPING) -> None:
 
-    max_duration = int(getattr(settings, "TYPING_MAX_DURATION_SEC", 60))
-    if max_duration <= 0:
-        max_duration = 60
-    started = time.time()
+async def _typing_for_duration(
+    chat_id: int,
+    total_duration: float,
+    action: ChatAction = ChatAction.TYPING,
+) -> None:
 
     try:
+        total_duration = float(total_duration or 0.0)
+    except Exception:
+        total_duration = 0.0
+    if total_duration <= 0:
+        return
+
+    if not TYPING_ENABLED:
+        await asyncio.sleep(max(0.0, total_duration))
+        return
+
+    max_duration = int(getattr(settings, "TYPING_MAX_DURATION_SEC", 60))
+    if max_duration > 0:
+        total_duration = min(total_duration, max_duration)
+
+    end_ts = time.time() + total_duration
+    try:
         while True:
-            if (time.time() - started) > max_duration:
+            now = time.time()
+            if now >= end_ts:
                 break
+
             try:
                 await _tg_acquire_permit()
                 await _tg_acquire_chat_permit(chat_id)
                 await BOT.send_chat_action(chat_id, action)
-                await asyncio.sleep(5)
+                delay = 5.0
             except TelegramRetryAfter as e:
                 delay = max(1.0, float(getattr(e, "retry_after", 1)))
-                logger.debug("Typing rate-limited for chat_id=%s, sleeping %ss", chat_id, delay)
-                await asyncio.sleep(_jitter(delay, 0.25))
             except (TelegramNetworkError, asyncio.TimeoutError):
-                await asyncio.sleep(_jitter(2.0, 0.5))
+                delay = _jitter(2.0, 0.5)
             except (TelegramBadRequest, TelegramForbiddenError) as e:
-                logger.debug("Typing stopped for chat_id=%s: %s", chat_id, e)
+                logger.debug("typing_for_duration stopped for chat_id=%s: %s", chat_id, e)
                 break
-            try:
-                if TYPING_SKIP_BACKLOG > 0:
-                    q = await REDIS_QUEUE.llen(settings.QUEUE_KEY)
-                    p = await REDIS_QUEUE.llen(settings.QUEUE_KEY + ":processing")
-                    if (q or 0) + (p or 0) > TYPING_SKIP_BACKLOG:
-                        break
-            except Exception:
-                pass
+
+            remaining = end_ts - time.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(delay, max(0.0, remaining)))
     except asyncio.CancelledError:
         raise
     except Exception as e:
-        logger.warning("Typing loop error for chat_id=%s: %s", chat_id, e)
+        logger.warning("typing_for_duration error for chat_id=%s: %s", chat_id, e)
+
+
+async def _typing_during_generation(
+    chat_id: int,
+    initial_delay: float = 3,
+    max_total: float = RESPOND_TIMEOUT,
+) -> None:
+
+    try:
+        try:
+            initial_delay = float(initial_delay or 0.0)
+        except Exception:
+            initial_delay = 0.0
+
+        if initial_delay > 0:
+            await asyncio.sleep(max(0.0, initial_delay))
+
+        remaining = (max_total or 0) - initial_delay
+        if remaining > 0:
+            await _typing_for_duration(chat_id, remaining)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning("typing_during_generation error for chat_id=%s: %s", chat_id, e)
+
 
 async def _get_backlog(redis: Redis, queue_key: str, processing_key: str) -> int:
     try:
@@ -280,13 +625,6 @@ async def _get_backlog(redis: Redis, queue_key: str, processing_key: str) -> int
         return int(qlen or 0) + int(plen or 0)
     except Exception:
         return 0
-
-async def _delayed_typing(chat_id: int, delay: float = 1.5, action: ChatAction = ChatAction.TYPING) -> None:
-    try:
-        await asyncio.sleep(_jitter(delay, 0.25))
-        await _action_loop(chat_id, action)
-    except asyncio.CancelledError:
-        raise
 
 
 async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, interval: int, ttl: int) -> None:
@@ -314,6 +652,7 @@ async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, inter
     except asyncio.CancelledError:
         pass
 
+
 async def _heartbeat_key(redis: Redis, key: str, interval: int, ttl: int) -> None:
     script = """
     if redis.call('EXISTS', KEYS[1]) == 1 then
@@ -337,6 +676,7 @@ async def _heartbeat_key(redis: Redis, key: str, interval: int, ttl: int) -> Non
                 return
     except asyncio.CancelledError:
         pass
+
 
 def _allow_telegram_html(escaped: str) -> str:
 
@@ -368,16 +708,19 @@ async def _send_reply(
     msg_id: Optional[int],
     merged_ids: Optional[list[int]] = None,
     user_id: Optional[int] = None,
+    skip_dedupe: bool = False,
 ) -> None:
    
+    dedupe_set = False
     try:
-        if msg_id is not None:
+        if (not skip_dedupe) and (msg_id is not None):
             sent = await REDIS_QUEUE.set(
                 f"sent_reply:{chat_id}:{msg_id}", 1, nx=True, ex=JOB_DONE_TTL
             )
             if not sent:
                 logger.info("Skip duplicate reply chat=%s msg_id=%s", chat_id, msg_id)
                 return
+            dedupe_set = True
 
         if len(text) > TG_TEXT_LIMIT - 10:
             text = text[: TG_TEXT_LIMIT - 10] + "…"
@@ -398,16 +741,18 @@ async def _send_reply(
         if reply_to:
             kwargs["reply_to_message_id"] = reply_to
 
-        async def _send_with_retries(pm: Optional[str], kw: dict, raw_text_for_plain: str) -> bool:
+        async def _send_with_retries(pm: Optional[str], kw: dict, raw_text_for_plain: str) -> TgMessage | None:
             attempts = 3
             removed_reply = False
             for i in range(attempts):
                 try:
                     if pm:
-                        await BOT.send_message(parse_mode=pm, **kw)
+                        return await BOT.send_message(parse_mode=pm, **kw)
                     else:
-                        await BOT.send_message(text=raw_text_for_plain, **{k: v for k, v in kw.items() if k != "text"})
-                    return True
+                        return await BOT.send_message(
+                            text=raw_text_for_plain,
+                            **{k: v for k, v in kw.items() if k != "text"},
+                        )
                 except TelegramRetryAfter as e:
                     delay = max(1.0, float(getattr(e, "retry_after", 1)))
                     logger.warning("Rate limited (%ss), attempt %d/%d (chat_id=%s)", delay, i+1, attempts, chat_id)
@@ -421,7 +766,7 @@ async def _send_reply(
                         continue
                     if pm:
                         logger.warning("HTML send failed: %s — falling back to plain", e)
-                        return False
+                        return None
                     raise
                 except TelegramForbiddenError as e:
                     logger.info("Forbidden for chat_id=%s, skipping send and marking done: %s", chat_id, e)
@@ -431,22 +776,35 @@ async def _send_reply(
                             asyncio.create_task(purge_user_state(int(user_id), "blocked bot (reply)"))
                     except Exception:
                         logger.debug("schedule purge_user_state failed", exc_info=True)
-                    return True
+                    return None
                 except (TelegramNetworkError, asyncio.TimeoutError) as e:
                     backoff = _jitter(min(4.0, 2.0 ** i), 0.35)
                     logger.warning("Network error (%s), backoff %ss, attempt %d/%d", e, backoff, i+1, attempts)
                     await asyncio.sleep(backoff)
                     continue
-            return False
+            return None
 
         await _tg_acquire_permit()
         await _tg_acquire_chat_permit(chat_id)
 
         plain = text if len(text) <= TG_TEXT_LIMIT - 1 else (text[:TG_TEXT_LIMIT - 1] + "…")
-        ok = await _send_with_retries("HTML", dict(kwargs), text) or \
-             await _send_with_retries(None,  dict(kwargs), plain)
-        if not ok:
+        sent_msg = await _send_with_retries("HTML", dict(kwargs), text) or \
+                   await _send_with_retries(None,  dict(kwargs), plain)
+        if not sent_msg:
             raise RuntimeError("Message send failed in both HTML and plain modes")
+
+        try:
+            assistant_mid = int(getattr(sent_msg, "message_id", 0) or 0)
+            if assistant_mid > 0:
+                ttl = int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400))
+                bot_sid = None
+                with suppress(Exception):
+                    bot_sid = int(getattr(consts, "BOT_ID", None) or 0) or None
+                ctx_payload = _mk_ctx_payload("assistant", text, speaker_id=bot_sid)
+                ctx_redis = get_redis()
+                await ctx_redis.set(f"msg:{chat_id}:{assistant_mid}", ctx_payload, ex=ttl)
+        except Exception:
+            logger.debug("Failed to store assistant reply context", exc_info=True)
 
         try:
             raw_mids = merged_ids if isinstance(merged_ids, (list, tuple)) else []
@@ -472,16 +830,12 @@ async def _send_reply(
             "Failed to send message to chat_id=%s (reply_to=%s): %s",
             chat_id, reply_to, e,
         )
-        if msg_id is not None:
-            try:
+        if msg_id is not None and dedupe_set:
+            with suppress(Exception):
                 await REDIS_QUEUE.delete(f"sent_reply:{chat_id}:{msg_id}")
-                for mid in (merged_ids or []):
-                    if mid is None:
-                        continue
-                    await REDIS_QUEUE.delete(f"sent_reply:{chat_id}:{mid}")
-            except Exception:
-                pass
         logger.debug(traceback.format_exc())
+        raise
+
 
 async def _mark_sent_reply_keys(chat_id: int, msg_id: int | None, merged_ids: list[int] | None) -> None:
     if msg_id is None:
@@ -508,6 +862,7 @@ async def _mark_sent_reply_keys(chat_id: int, msg_id: int | None, merged_ids: li
     except Exception:
         pass
 
+
 def _register_task(chat_id: Optional[int], t: asyncio.Task) -> None:
     if chat_id is not None:
         pending_per_chat[chat_id] += 1
@@ -519,12 +874,16 @@ def _register_task(chat_id: Optional[int], t: asyncio.Task) -> None:
                 pending_per_chat.pop(_chat_id, None)
     t.add_done_callback(_done)
 
+
 async def _try_start_task_or_requeue(raw, queue_key: str, processing_key: str) -> bool:
     if isinstance(raw, (bytes, bytearray)):
         try:
             raw = raw.decode("utf-8")
         except Exception:
-            logger.error("Failed to decode queue item (bytes)"); return False
+            logger.error("Failed to decode queue item (bytes); dropping from processing")
+            with suppress(Exception):
+                await REDIS_QUEUE.lrem(processing_key, 1, raw)
+            return False
 
     chat_id: Optional[int] = None
     try:
@@ -554,6 +913,7 @@ async def _try_start_task_or_requeue(raw, queue_key: str, processing_key: str) -
     _register_task(chat_id, t)
     return True
 
+
 async def handle_job(raw, processing_key: str) -> None:
 
     if isinstance(raw, (bytes, bytearray)):
@@ -567,8 +927,6 @@ async def handle_job(raw, processing_key: str) -> None:
     
     redis = get_redis()
     queue_key = settings.QUEUE_KEY
-    t_start_ms = int(time.time() * 1000)
-    analytics_fallback = False
 
     try:
         job = json.loads(raw)
@@ -597,6 +955,14 @@ async def handle_job(raw, processing_key: str) -> None:
     trigger    = job.get("trigger")  # 'mention' | 'check_on_topic' | 'channel_post'
     enforce_on_topic = bool(job.get("enforce_on_topic", False))
     allow_web  = bool(job.get("allow_web", False))
+    billing_tier = job.get("billing_tier")
+    if isinstance(billing_tier, (bytes, bytearray)):
+        billing_tier = billing_tier.decode("utf-8", "ignore")
+    if billing_tier is not None and not isinstance(billing_tier, str):
+        billing_tier = str(billing_tier)
+    billing_tier = (billing_tier or "").strip().lower() or None
+    if billing_tier not in ("paid", "free", "none"):
+        billing_tier = None
     entities   = job.get("entities") or []
 
     try:
@@ -609,8 +975,20 @@ async def handle_job(raw, processing_key: str) -> None:
     except Exception:
         reply_to = None
 
+    has_tg_reply_to = ("tg_reply_to" in job)
+    tg_reply_to_raw = job.get("tg_reply_to")
+    try:
+        tg_reply_to = int(tg_reply_to_raw) if tg_reply_to_raw is not None else 0
+    except Exception:
+        tg_reply_to = 0
+
     pm_chat = (chat_id == user_id)
-    reply_target = reply_to if pm_chat else msg_id
+    reply_target = reply_to if pm_chat else msg_id  # keep for context logic
+
+    if has_tg_reply_to:
+        send_reply_target: Optional[int] = (tg_reply_to if tg_reply_to > 0 else None)
+    else:
+        send_reply_target = reply_target
 
     if not (isinstance(chat_id, int) and isinstance(user_id, int) and (text is not None or image_b64 or voice_file_id)):
         logger.error(
@@ -699,7 +1077,6 @@ async def handle_job(raw, processing_key: str) -> None:
                 JOB_PROCESSING_TTL,
             )
         )
-        typing_task = None
         hb_task = asyncio.create_task(
             _heartbeat_inflight(REDIS_QUEUE, job_key, value, JOB_HEARTBEAT_INTERVAL, JOB_PROCESSING_TTL)
         )
@@ -719,6 +1096,7 @@ async def handle_job(raw, processing_key: str) -> None:
                 pref = pref.strip().lower()
             except Exception:
                 pref = ""
+
             base_expect_voice = True if pref == "always" else (False if pref == "never" else will_speak(voice_in=voice_in))
             chat_voice_disabled = bool(await REDIS_QUEUE.get(f"vmsg:disabled:chat:{chat_id}") or 0)
             expect_voice_out_flag = base_expect_voice and (not chat_voice_disabled)
@@ -729,19 +1107,23 @@ async def handle_job(raw, processing_key: str) -> None:
             if (TTS_SKIP_BACKLOG > 0) and (backlog > TTS_SKIP_BACKLOG) and not voice_in:
                 expect_voice_out_flag = False
 
-            if (not expect_voice_out_flag) and ((TYPING_SKIP_BACKLOG <= 0) or (backlog <= TYPING_SKIP_BACKLOG)) \
-               and not (is_group and ((trigger == "check_on_topic") or enforce_on_topic)):
-                try:
-                    await _tg_acquire_permit()
-                    await _tg_acquire_chat_permit(chat_id)
-                    await BOT.send_chat_action(chat_id, ChatAction.TYPING)
-                    typing_task = asyncio.create_task(_delayed_typing(chat_id, delay=0.0))
-                except (TelegramForbiddenError, TelegramBadRequest):
-                    if typing_task:
-                        typing_task.cancel()
-                        typing_task = None
-                except Exception:
-                    pass
+            allow_typing_before_send = (
+                TYPING_ENABLED
+                and not (TYPING_SKIP_GROUPS and (is_group or is_channel))
+                and not expect_voice_out_flag
+                and ((TYPING_SKIP_BACKLOG <= 0) or (backlog <= TYPING_SKIP_BACKLOG))
+                and not (is_group and ((trigger == "check_on_topic") or enforce_on_topic))
+            )
+
+            typing_task: Optional[asyncio.Task] = None
+            if allow_typing_before_send:
+                typing_task = asyncio.create_task(
+                    _typing_during_generation(
+                        chat_id=chat_id,
+                        initial_delay=3,
+                        max_total=RESPOND_TIMEOUT,
+                    )
+                )
 
             if (not isinstance(text, str) or not text.strip()) and voice_file_id:
                 text = await _transcribe_voice_file_id(
@@ -753,7 +1135,7 @@ async def handle_job(raw, processing_key: str) -> None:
                         await _send_reply(
                             chat_id,
                             "⚠️ Voice recognition failed. Please try again.",
-                            reply_target,
+                            send_reply_target,
                             msg_id,
                             merged_ids,
                             user_id=user_id,
@@ -761,6 +1143,25 @@ async def handle_job(raw, processing_key: str) -> None:
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     return
+
+            if image_b64:
+                cap = (text or "").strip()
+                tagged = "[Image]" + (f" {cap}" if cap else "")
+                with suppress(Exception):
+                    await redis.set(
+                        f"msg:{chat_id}:{msg_id}",
+                        _mk_ctx_payload("user", tagged, speaker_id=int(user_id)),
+                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+                    )
+
+            if voice_in and isinstance(text, str) and text.strip():
+                tagged = f"[Voice→Text] {text.strip()}"
+                with suppress(Exception):
+                    await redis.set(
+                        f"msg:{chat_id}:{msg_id}",
+                        _mk_ctx_payload("user", tagged, speaker_id=int(user_id)),
+                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+                    )
 
             if isinstance(text, str) and _SANITIZE_CONTEXT:
                 try:
@@ -773,16 +1174,8 @@ async def handle_job(raw, processing_key: str) -> None:
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     return
 
-            try:
-                if voice_in and isinstance(text, str) and text.strip():
-                    await redis.set(
-                        f"msg:{chat_id}:{msg_id}",
-                        text.strip(),
-                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
-                    )
-            except Exception:
-                logger.debug("worker: failed to store voice context", exc_info=True)
-
+            soft_reply_context = bool(job.get("soft_reply_context"))
+            
             resp_task = asyncio.create_task(
                 respond_to_user(
                     text, chat_id, user_id,
@@ -798,6 +1191,10 @@ async def handle_job(raw, processing_key: str) -> None:
                     allow_web=allow_web,
                     enforce_on_topic=enforce_on_topic,
                     expect_voice_out=expect_voice_out_flag,
+                    billing_tier=billing_tier,
+                    persona_owner_id=None,
+                    memory_uid=None,
+                    soft_reply_context=soft_reply_context,
                 )
             )
 
@@ -817,9 +1214,13 @@ async def handle_job(raw, processing_key: str) -> None:
                     "⏳ Sorry, I was thinking longer than usual. "
                     "Try asking the question again."
                 )
-                analytics_fallback = True
                 with suppress(Exception):
                     await record_timeout(chat_id)
+            finally:
+                if typing_task is not None:
+                    typing_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await typing_task
 
             if is_group and ((trigger == "check_on_topic") or enforce_on_topic):
                 rt = (reply_text or "").strip()
@@ -831,12 +1232,7 @@ async def handle_job(raw, processing_key: str) -> None:
             reply_text = (reply_text or "").strip() or "Sorry, I’ve got nothing to add 😅"
             try:
                 eligible_short = is_tts_eligible_short(reply_text)
-                if expect_voice_out_flag and typing_task and eligible_short:
-                    typing_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await typing_task
-                    typing_task = None
-            
+
                 want_caption = bool(getattr(settings, "TTS_VOICE_CAPTION_ENABLED",
                                    os.environ.get("TTS_VOICE_CAPTION_ENABLED", "0") not in ("0","false","False")))
                 caption_len = int(getattr(settings, "TTS_VOICE_CAPTION_LEN",
@@ -853,7 +1249,7 @@ async def handle_job(raw, processing_key: str) -> None:
                                 reply_text=reply_text,
                                 voice_in=effective_voice_in,
                                 force=True,
-                                reply_to=reply_target,
+                                reply_to=send_reply_target,
                                 exclusive=not want_caption,
                                 caption_max=(caption_len if want_caption else 0),
                                 user_text_hint=text,
@@ -884,9 +1280,32 @@ async def handle_job(raw, processing_key: str) -> None:
                     except Exception:
                         pass
                 else:
-                    with suppress(Exception):
-                        pass
-                    await _send_reply(chat_id, reply_text, reply_target, msg_id, merged_ids, user_id=user_id)
+                    if CHATTY_MODE:
+                        await _send_chatty_reply(
+                            chat_id=chat_id,
+                            text=reply_text,
+                            reply_to=send_reply_target,
+                            msg_id=msg_id,
+                            merged_ids=merged_ids,
+                            user_id=user_id,
+                            enable_typing=allow_typing_before_send,
+                        )
+                    else:
+                        if len(reply_text) >= 350 and allow_typing_before_send:
+                            delay = compute_typing_delay(reply_text)
+                            if delay > 0:
+                                await _typing_for_duration(chat_id, _jitter(delay, 0.25))
+
+                        await _send_reply(
+                            chat_id=chat_id,
+                            text=reply_text,
+                            reply_to=send_reply_target,
+                            msg_id=msg_id,
+                            merged_ids=merged_ids,
+                            user_id=user_id,
+                        )
+
+
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     try:
@@ -927,13 +1346,12 @@ async def handle_job(raw, processing_key: str) -> None:
                 "⏳ Sorry, I was thinking longer than usual. "
                 "Try asking the question again."
             )
-            analytics_fallback = True
             if is_group and ((trigger == "check_on_topic") or enforce_on_topic):
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                 return
             try:
-                await _send_reply(chat_id, reply_text, reply_target, msg_id, merged_ids, user_id=user_id)
+                await _send_reply(chat_id, reply_text, send_reply_target, msg_id, merged_ids, user_id=user_id)
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
             except Exception:
@@ -957,11 +1375,6 @@ async def handle_job(raw, processing_key: str) -> None:
                         logger.error("Failed to requeue after fallback send failure: %s", ex)
                         remove_from_processing = False
         finally:
-            if typing_task:
-                typing_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await typing_task
-                
             hb_task.cancel()
             with suppress(asyncio.CancelledError):
                 await hb_task
@@ -987,6 +1400,7 @@ async def handle_job(raw, processing_key: str) -> None:
 
             if busy_key:
                 await REDIS_QUEUE.delete(busy_key)
+
 
 async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
     try:
@@ -1055,6 +1469,7 @@ async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, b
     except Exception as e:
         logger.warning("sweep_processing error: %s", e)
 
+
 async def _sweep_chatbusy(redis: Redis) -> None:
     async for key in redis.scan_iter(match="chatbusy:*", count=500):
         ttl_ms = await redis.pttl(key)
@@ -1073,6 +1488,7 @@ async def _sweep_chatbusy(redis: Redis) -> None:
         if not exists:
             await redis.delete(key)
 
+
 async def _sweeper_loop(stop_evt: asyncio.Event, queue_key: str, processing_key: str) -> None:
     try:
         while not stop_evt.is_set():
@@ -1083,6 +1499,7 @@ async def _sweeper_loop(stop_evt: asyncio.Event, queue_key: str, processing_key:
             await asyncio.sleep(_jitter(PROCESSING_SWEEP_INTERVAL, 0.1))
     except asyncio.CancelledError:
         pass
+
 
 async def _cleanup_chat_locks_loop(stop_evt: asyncio.Event) -> None:
     try:
@@ -1098,6 +1515,7 @@ async def _cleanup_chat_locks_loop(stop_evt: asyncio.Event) -> None:
                     chat_locks_last_used.pop(cid, None)
     except asyncio.CancelledError:
         pass
+
 
 async def queue_worker(stop_evt: asyncio.Event) -> None:
 
@@ -1161,6 +1579,7 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
         with suppress(asyncio.CancelledError):
             await sweeper
 
+
 async def _async_main() -> None:
 
     stop_evt = asyncio.Event()
@@ -1208,6 +1627,7 @@ async def _async_main() -> None:
     with suppress(Exception):
         await close_redis_pools()
     logger.info("Redis connections closed, bye!")
+
 
 def main() -> None:
     level = os.environ.get("QUEUE_LOG_LEVEL", "INFO").upper()

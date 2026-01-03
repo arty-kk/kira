@@ -8,8 +8,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from app.clients.telegram_client import get_bot
 from app.config import settings
-from app.tasks.celery_app import celery
-from app.tasks.utils.bg_loop import get_bg_loop
+from app.tasks.celery_app import celery, _run
 from app.tasks.cleanup import cleanup_nonbuyers
 from app.services.addons.analytics import generate_and_send_daily_reports
 from app.services.addons import (
@@ -21,12 +20,6 @@ from app.services.addons import (
 
 
 logger = logging.getLogger(__name__)
-
-
-def _run(coro):
-    loop = get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
 
 
 @celery.task(name="cleanup_nonbuyers")

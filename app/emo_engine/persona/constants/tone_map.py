@@ -1,5 +1,5 @@
 #app/emo_engine/persona/constants/tone_map.py
-from typing import Dict
+from typing import Dict, Mapping, MutableMapping
 from enum import Enum, auto
 
 class Tone(Enum):
@@ -338,3 +338,149 @@ TONE_MAP: Dict[str, Tone] = {
     "unease_mod": Tone.Discomfort,
     "swamped_mod": Tone.Exhaustion,
 }
+
+def _clamp01(x: float) -> float:
+    if x <= 0.0:
+        return 0.0
+    if x >= 1.0:
+        return 1.0
+    return x
+
+
+TONE_TO_METRICS: Dict[Tone, Dict[str, float]] = {
+    Tone.Anger: {
+        "anger": 1.0,
+        "aggressiveness": 0.5,
+        "stress": 0.3,
+    },
+    Tone.Affection: {
+        "affection": 1.0,
+        "warmth": 0.5,
+        "trust": 0.4,
+    },
+    Tone.Love: {
+        "love": 1.0,
+        "intimacy": 0.5,
+        "attachment": 0.3,
+    },
+    Tone.Sadness: {
+        "sadness": 1.0,
+        "gloom": 0.5,
+        "despair": 0.3,
+    },
+    Tone.Joy: {
+        "joy": 1.0,
+        "cheerfulness": 0.5,
+        "merriment": 0.3,
+    },
+    Tone.Fear: {
+        "fear": 1.0,
+        "anxiety": 0.5,
+        "stress": 0.3,
+    },
+    Tone.Surprise: {
+        "surprise": 1.0,
+        "amazement": 0.5,
+    },
+    Tone.Trust: {
+        "trust": 1.0,
+        "reliance": 0.4,
+    },
+    Tone.Calm: {
+        "tranquility": 1.0,
+        "peace": 0.6,
+        "fatigue": 0.3,
+    },
+    Tone.Playfulness: {
+        "playfulness": 1.0,
+        "humor": 0.4,
+        "energy": 0.3,
+    },
+    Tone.LustfulExcitement: {
+        "lustful_excitement": 1.0,
+        "sexual_arousal": 0.6,
+        "excitement": 0.4,
+    },
+    Tone.Burnout: {
+        "burnout": 1.0,
+        "fatigue": 0.6,
+        "stress": 0.4,
+    },
+    Tone.Valence: {
+        "valence": 1.0,
+    },
+}
+
+
+def project_state_to_tones(state: Mapping[str, float]) -> Dict[Tone, float]:
+
+    scores: Dict[Tone, float] = {}
+
+    def _metric_level(metric: str) -> float:
+        if metric == "valence":
+            v = float(state.get("valence", 0.0))
+            if v < -1.0:
+                v = -1.0
+            elif v > 1.0:
+                v = 1.0
+            return 0.5 * (v + 1.0)
+        return float(state.get(metric, 0.0))
+
+    for tone, weights in TONE_TO_METRICS.items():
+        if not weights:
+            continue
+        val = 0.0
+        for metric, w in weights.items():
+            val += float(w) * _metric_level(metric)
+        scores[tone] = val
+
+    if not scores:
+        return {}
+
+    max_v = max(scores.values())
+    if max_v <= 0.0:
+        return {t: 0.0 for t in scores}
+
+    return {t: v / max_v for t, v in scores.items()}
+
+
+def apply_tone_to_state(
+    state: MutableMapping[str, float],
+    tone: Tone,
+    intensity: float,
+    lr: float = 0.1,
+) -> None:
+
+    weights = TONE_TO_METRICS.get(tone)
+    if not weights:
+        return
+
+    intensity = _clamp01(float(intensity))
+    lr = _clamp01(float(lr))
+
+    for metric, w in weights.items():
+        w = float(w)
+        if metric == "valence":
+            old = float(state.get("valence", 0.0))
+            if old < -1.0:
+                old = -1.0
+            elif old > 1.0:
+                old = 1.0
+
+            w = max(-1.0, min(1.0, w))
+            target = (2.0 * intensity - 1.0) * w
+            if target < -1.0:
+                target = -1.0
+            elif target > 1.0:
+                target = 1.0
+
+            new = old + lr * (target - old)
+            if new < -1.0:
+                new = -1.0
+            elif new > 1.0:
+                new = 1.0
+            state["valence"] = new
+        else:
+            target = _clamp01(intensity * w)
+            old = float(state.get(metric, 0.0))
+            state[metric] = old + lr * (target - old)

@@ -2,10 +2,10 @@
 import asyncio
 import logging
 import json
-from typing import Any
-from asyncio import Semaphore
-
 import httpx
+
+from typing import Any, Optional
+from asyncio import Semaphore
 from openai import AsyncOpenAI, APIStatusError
 
 RETRYABLE_EXC_TYPES = tuple()
@@ -30,12 +30,16 @@ logger = logging.getLogger(__name__)
 OPENAI_MAX_ATTEMPTS = int(getattr(settings, "OPENAI_MAX_ATTEMPTS", 3))
 OPENAI_TOTAL_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_TOTAL_TIMEOUT_SECONDS", 55.0))
 OPENAI_REQ_CONNECT_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_CONNECT_TIMEOUT_SECONDS", 5.0))
-OPENAI_REQ_READ_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_READ_TIMEOUT_SECONDS", 18.0))
-OPENAI_REQ_WRITE_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_WRITE_TIMEOUT_SECONDS", 10.0))
-OPENAI_REQ_POOL_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_POOL_TIMEOUT_SECONDS", 5.0))
+OPENAI_REQ_READ_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_READ_TIMEOUT_SECONDS", 30.0))
+OPENAI_REQ_WRITE_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_WRITE_TIMEOUT_SECONDS", 20.0))
+OPENAI_REQ_POOL_TIMEOUT_SECONDS = float(getattr(settings, "OPENAI_REQ_POOL_TIMEOUT_SECONDS", 10.0))
 
 _openai: AsyncOpenAI | None = None
-OPENAI_SEMAPHORE = Semaphore(getattr(settings, "OPENAI_MAX_CONCURRENT_REQUESTS", 100))
+try:
+    _max_conc = int(getattr(settings, "OPENAI_MAX_CONCURRENT_REQUESTS", 100) or 100)
+except Exception:
+    _max_conc = 100
+OPENAI_SEMAPHORE = Semaphore(max(1, _max_conc))
 
 
 def _build_httpx_timeout() -> httpx.Timeout:
@@ -102,13 +106,22 @@ def _should_retry(exc: Exception) -> bool:
 
 async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
+    total_timeout_override: Optional[float] = None
+    if "total_timeout" in kwargs:
+        try:
+            total_timeout_override = float(kwargs.pop("total_timeout"))
+        except Exception:
+            total_timeout_override = None
+
     client = get_openai()
 
     async with OPENAI_SEMAPHORE:
         base_kwargs = dict(kwargs)
 
+        total_timeout = total_timeout_override if total_timeout_override is not None else OPENAI_TOTAL_TIMEOUT_SECONDS
+        
         async for attempt in AsyncRetrying(
-            stop=(stop_after_attempt(OPENAI_MAX_ATTEMPTS) | stop_after_delay(OPENAI_TOTAL_TIMEOUT_SECONDS)),
+            stop=(stop_after_attempt(OPENAI_MAX_ATTEMPTS) | stop_after_delay(total_timeout)),
             wait=wait_exponential(min=0.5, max=2),
             retry=retry_if_exception(_should_retry),
             reraise=True,
@@ -162,10 +175,10 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
                 params = _normalize_params(endpoint, params)
 
-                if endpoint not in ("responses.create", "embeddings.create", "chat.completions.create"):
+                if endpoint not in ("responses.create", "embeddings.create", "chat.completions.create", "images.generate"):
                     raise ValueError(
                         f"Unsupported endpoint '{endpoint}'. "
-                        "Use 'responses.create', 'chat.completions.create' or 'embeddings.create'."
+                        "Use 'responses.create', 'chat.completions.create', 'embeddings.create' or 'images.generate'."
                     )
 
                 safe_params = {

@@ -42,6 +42,7 @@ async def style_modifiers(self) -> Dict[str, float]:
     async with self._mods_lock:
         if self._style_mods_version == self.state_version and self._mods_cache:
             return self._mods_cache.copy()
+        state_ver = self.state_version
         if not hasattr(self, "_fallback_delta"):
             self._fallback_delta = self._rng.uniform(0.03, 0.07)
         FALLBACK_DELTA = self._fallback_delta
@@ -72,7 +73,7 @@ async def style_modifiers(self) -> Dict[str, float]:
 
     async with self._mods_lock:
         self._mods_cache = result
-        self._style_mods_version = self.state_version
+        self._style_mods_version = state_ver
         if getattr(self, "_mods_inflight", None) is task:
             self._mods_inflight = None
             self._mods_inflight_ver = -1
@@ -310,6 +311,10 @@ def _compute_style_modifiers_sync(
         raw   = raw + noise
         if key in prev:
             smoothed = 0.3 * prev[key] + 0.7 * raw
+            mid = 0.5
+            extreme = abs(prev[key] - mid) > 0.35
+            if extreme:
+                smoothed = 0.85 * smoothed + 0.15 * mid
             max_step = 0.12 + 0.18 * (a_norm - 0.5) - 0.10 * fatigue
             max_step = max(0.08, min(0.20, max_step))
             delta = smoothed - prev[key]

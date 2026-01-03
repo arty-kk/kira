@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import re
 import time
-import base64
 import asyncio
 import hashlib
 import unicodedata
@@ -21,7 +20,6 @@ from app.clients.openai_client import get_openai
 logger = logging.getLogger(__name__)
 
 _LIGHT_SEMAPHORE = asyncio.Semaphore(10)
-_DEEP_SEMAPHORE = asyncio.Semaphore(3)
 MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
 MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
 DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
@@ -34,6 +32,7 @@ TELEGRAM_DOMAINS = [d.lower() for d in getattr(
 
 SANITIZE_REPLACE_ANY_LINK = getattr(settings, "SANITIZE_REPLACE_ANY_LINK", "[link]")
 SANITIZE_REPLACE_TG_LINK  = getattr(settings, "SANITIZE_REPLACE_TG_LINK", "[tg-link]")
+
 
 def is_telegram_link(url: str) -> bool:
     try:
@@ -342,50 +341,8 @@ async def moderate_with_openai(
 
     return False
 
-
 async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
-
-    if not settings.ENABLE_AI_MODERATION:
-        return False
-
-    if not urls:
-        return False
-    urls = urls[:MAX_URLS]
-    text = text[:MAX_PROMPT_TEXT]
-
-    prompt = (
-        "The user sent the following message and URLs:\n\n"
-        f"{text}\n\nURLs:\n" + "\n".join(urls) +
-        "\n\nRespond with YES if these URLs are promotional or advertising, otherwise respond with NO."
-    )
-
-    async with _DEEP_SEMAPHORE:
-        client = get_openai()
-        try:
-            resp = await asyncio.wait_for(
-                client.responses.create(
-                    model=settings.BASE_MODEL,
-                    input=[
-                        {"role": "system", "content": (
-                            "You are a moderation classifier. "
-                            "Reply only YES or NO."
-                        )},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_output_tokens=16,
-                ),
-                timeout=15.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("is_promo_via_ai: timeout")
-            return False
-        except Exception:
-            logger.exception("is_promo_via_ai: API error")
-            return False
-
-    reply = (getattr(resp, "output_text", "") or "").strip().upper()
-    return reply.startswith("YES")
-
+    return False
 
 async def check_light(
     chat_id: int,
@@ -416,9 +373,6 @@ async def check_light(
     for u in urls:
         if url_is_unwanted(u):
             return "link_violation"
-
-    if source == "user" and urls and await is_promo_via_ai(text, urls):
-        return "promo"
 
     if source == "user" and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"
@@ -463,39 +417,20 @@ async def check_deep(
 
     snippet = [x for x in map(_as_resp_msg, history[-DEEP_HISTORY:]) if x]
 
-    async with _DEEP_SEMAPHORE:
-        client = get_openai()
-        user_content = [{"type": "input_text", "text": text}]
-        if image_b64:
-            user_content.append({
-                "type": "input_image",
-                "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"
-            })
+    ctx_parts: List[str] = []
+    for m in snippet:
         try:
-            resp = await asyncio.wait_for(
-                client.responses.create(
-                    model=settings.BASE_MODEL,
-                    input=[
-                        {"role": "system", "content": (
-                            "You are a context-aware moderator. Given recent conversation, "
-                            "respond ONLY 'BLOCK' if the message is toxic or violates rules, "
-                            "otherwise respond ONLY 'ALLOW'."
-                        )},
-                        *snippet,
-                        {"role": "user", "content": user_content},
-                    ],
-                    max_output_tokens=16,
-                ),
-                timeout=20.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("check_deep: timeout for chat %s", chat_id)
-            return False
+            role = (m.get("role") or "user").upper()
+            content = (m.get("content") or "")
+            if content:
+                ctx_parts.append(f"{role}: {content}")
         except Exception:
-            logger.exception("check_deep: API error for chat %s", chat_id)
-            return False
+            continue
+    ctx = "\n".join(ctx_parts)
+    combined = (ctx + "\n\nNEW MESSAGE:\n" + (text or "")).strip()
 
-    ans = (getattr(resp, "output_text", "") or "").strip().upper()
-    logger.debug("check_deep answer=%r", ans)
-
-    return ans.startswith("BLOCK")
+    try:
+        return await moderate_with_openai(combined, image_b64=image_b64, image_mime=image_mime)
+    except Exception:
+        logger.exception("check_deep: moderate_with_openai failed for chat %s", chat_id)
+        return False

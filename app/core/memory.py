@@ -1,7 +1,6 @@
 #app/core/memory.py
 from __future__ import annotations
 
-import contextvars
 import json
 import logging
 import asyncio
@@ -12,7 +11,6 @@ import unicodedata
 import threading
 import time as time_module
 import atexit
-import signal
 
 from typing import Any, Dict, List, Optional, Union
 from redis.asyncio import Redis, from_url
@@ -26,9 +24,8 @@ logger = logging.getLogger(__name__)
 
 SCAN_COUNT: int = int(getattr(settings, "CLEANUP_REDIS_SCAN_COUNT", 1000))
 
-_redis_ctx: contextvars.ContextVar[dict[int, dict[str, "SafeRedis"]]] = contextvars.ContextVar(
-    "redis_client_map"
-)
+_redis_global: Dict[int, Dict[str, "SafeRedis"]] = {}
+_redis_lock = threading.Lock()
 _local_spam: Dict[tuple[int, int], tuple[int, float]] = {}
 
 def _get_default_tz():
@@ -106,27 +103,27 @@ class SafeRedis:
                 finally:
                     dt_ms = (time.perf_counter() - start) * 1000
                     if dt_ms > WARN_MS:
-                            def _safe_arg(a):
-                                try:
-                                    s = repr(a)
-                                except Exception:
-                                    s = "<unrepr>"
-                                if len(s) > 64:
-                                    s = s[:64] + "…"
-                                s = re.sub(r'(["\'])(?:(?=(\\?))\2.)*?\1', '"***"', s)
-                                return s
-                            if name == "eval" and args:
-                                try:
-                                    numkeys = int(args[1]) if len(args) >= 2 else 0
-                                    total_extra = max(0, len(args) - 2)
-                                    keys = min(numkeys, total_extra)
-                                    argv = max(0, total_extra - keys)
-                                    arg_preview = f"<LUA>, numkeys={numkeys}, keys={keys}, argv={argv}"
-                                except Exception:
-                                    arg_preview = "<LUA>"
-                            else:
-                                arg_preview = ", ".join(_safe_arg(a) for a in args[:3])
-                            logger.warning("Redis slow: %s %.1f ms args=%s", name, dt_ms, arg_preview)
+                        def _safe_arg(a):
+                            try:
+                                s = repr(a)
+                            except Exception:
+                                s = "<unrepr>"
+                            if len(s) > 64:
+                                s = s[:64] + "…"
+                            s = re.sub(r'(["\'])(?:(?=(\\?))\2.)*?\1', '"***"', s)
+                            return s
+                        if name == "eval" and args:
+                            try:
+                                numkeys = int(args[1]) if len(args) >= 2 else 0
+                                total_extra = max(0, len(args) - 2)
+                                keys = min(numkeys, total_extra)
+                                argv = max(0, total_extra - keys)
+                                arg_preview = f"<LUA>, numkeys={numkeys}, keys={keys}, argv={argv}"
+                            except Exception:
+                                arg_preview = "<LUA>"
+                        else:
+                            arg_preview = ", ".join(_safe_arg(a) for a in args[:3])
+                        logger.warning("Redis slow: %s %.1f ms args=%s", name, dt_ms, arg_preview)
         return _wrapper
 
     def pipeline(self, *args, **kwargs):
@@ -177,28 +174,18 @@ class SafeRedis:
 def get_redis(name: str = "default") -> SafeRedis:
 
     try:
-        loop = asyncio.get_running_loop()
-        loop_id = id(loop)
+        loop_id = id(asyncio.get_running_loop())
     except RuntimeError:
         logger.debug("get_redis: no running loop; using thread id as key")
         loop_id = threading.get_ident()
 
-    try:
-        mapping = _redis_ctx.get()
-    except LookupError:
-        mapping = {}
-
-    per_loop = mapping.get(loop_id) or {}
-    client = per_loop.get(name)
-
-    if client is None:
-        raw = _create_client(name)
-        client = SafeRedis(raw)
-        per_loop[name] = client
-        mapping[loop_id] = per_loop
-        _redis_ctx.set(mapping)
-
-    return client
+    with _redis_lock:
+        per_loop = _redis_global.setdefault(loop_id, {})
+        client = per_loop.get(name)
+        if client is None:
+            client = SafeRedis(_create_client(name))
+            per_loop[name] = client
+        return client
 
 def get_redis_queue() -> SafeRedis:
     return get_redis("queue")
@@ -207,7 +194,10 @@ def get_redis_vector() -> SafeRedis:
     return get_redis("vector")
 
 async def close_redis_pools() -> None:
-    mapping: dict[int, dict[str, SafeRedis]] = _redis_ctx.get({})
+    with _redis_lock:
+        mapping = dict(_redis_global)
+        _redis_global.clear()
+
     for per_loop in mapping.values():
         for client in per_loop.values():
             raw: Redis = getattr(client, "_client", client)
@@ -239,7 +229,6 @@ async def close_redis_pools() -> None:
                         logger.debug("close_redis_pools: client.close() failed", exc_info=True)
             except Exception as exc:
                 logger.warning("Failed to close Redis pool: %s", exc)
-    _redis_ctx.set({})
 
 def _graceful_close(*_a):
     try:
@@ -252,12 +241,6 @@ def _graceful_close(*_a):
         pass
 
 atexit.register(_graceful_close)
-for _sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
-    if _sig:
-        try:
-            signal.signal(_sig, lambda *_: _graceful_close())
-        except Exception:
-            pass
 
 def _b2s(x: Any, default: Any = None) -> Any:
     if isinstance(x, (bytes, bytearray)):
@@ -637,6 +620,8 @@ async def record_activity(chat_id: int, user_id: int) -> None:
                 f"last_message_ts:{chat_id}",
                 int(getattr(settings, "GROUP_PING_ACTIVE_TTL_SECONDS", 3600))
             )
+            pipe.set(f"last_user_ts:{user_id}", now)
+            pipe.expire(f"last_user_ts:{user_id}", MEMORY_TTL)
             if chat_id == user_id:
                 pipe.set(f"last_private_ts:{user_id}", now)
                 pipe.expire(f"last_private_ts:{user_id}", MEMORY_TTL)
@@ -674,15 +659,24 @@ async def push_message(
     content: str,
     *,
     user_id: int,
+    speaker_id: int | None = None,
     namespace: str = "default",
-    ) -> None:
+) -> None:
+    r = (role or "").strip().lower()
+    if r not in ("user", "assistant", "system"):
+        r = "user"
     entry: Dict[str, Any] = {
-        "role": role,
+        "role": r,
         "content": content,
         "chat_id": chat_id,
         "user_id": user_id,
         "ts": time_module.time(),
     }
+    if speaker_id is not None:
+        try:
+            entry["speaker_id"] = int(speaker_id)
+        except Exception:
+            pass
 
     redis = get_redis()
     try:
@@ -717,9 +711,9 @@ async def push_message(
             
             if not settings.ENABLE_DIALOG_LOGGING:
                 return
-            if role == "user":
+            if r == "user":
                 await log_user_message(user_id, await _display_name(user_id), content)
-            elif role == "assistant":
+            elif r == "assistant":
                 bot_name = getattr(settings, "BOT_NAME", "BOT")
                 await log_bot_message(user_id, bot_name, content)
     except Exception:
@@ -996,7 +990,7 @@ async def push_ltm_slice(
 async def get_ltm_slices(
     chat_id: int,
     user_id: int,
-    cap_items: int = 120,
+    cap_items: int = 40,
     namespace: str = "default",
 ) -> List[str]:
 
@@ -1037,11 +1031,31 @@ async def get_all_mtm_texts(
     if n <= 0:
         return []
 
+    if cap_tokens is None or int(cap_tokens) <= 0:
+        rows = await redis.lrange(key, 0, -1)
+        out: List[str] = []
+        for r in rows or []:
+            try:
+                s = _b2s(r)
+                obj = json.loads(s)
+                ts = int(obj.get("ts") or 0)
+                role = (obj.get("role") or "").strip()
+                content = (obj.get("content") or "").strip()
+                if ts > 0:
+                    txt = f"[{ts}] {role}: {content}" if content else f"[{ts}] {role}"
+                else:
+                    txt = f"{role}: {content}" if (role or content) else s
+            except Exception:
+                txt = _b2s(r)
+            out.append(txt)
+        return out
+
+    cap = max(1, int(cap_tokens))
     out_rev: List[str] = []
     acc = 0
     CHUNK = 500
     end = n - 1
-    while end >= 0 and acc < max(1, int(cap_tokens)):
+    while end >= 0 and acc < cap:
         start = max(0, end - CHUNK + 1)
         rows = await redis.lrange(key, start, end)
         if not rows:
@@ -1061,7 +1075,7 @@ async def get_all_mtm_texts(
                 txt = _b2s(r)
             acc += approx_tokens(txt)
             out_rev.append(txt)
-            if acc >= cap_tokens:
+            if acc >= cap:
                 break
         end = start - 1
     return list(reversed(out_rev))
@@ -1070,6 +1084,16 @@ async def last_activity_ts(user_id: int) -> float:
 
     r = get_redis()
     best = 0.0
+
+    try:
+        raw = await r.get(f"last_user_ts:{user_id}")
+        if raw:
+            try:
+                best = max(best, float(_b2s(raw)))
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     try:
         raw = await r.get(f"last_private_ts:{user_id}")
@@ -1158,6 +1182,7 @@ async def delete_user_redis_data(user_id: int) -> int:
         f"api:mem:ltm:p:{user_id}",
         f"api:mem:ltm_slices:p:{user_id}",
         f"personal_enrolled:{user_id}",
+        f"last_user_ts:{user_id}",
         f"last_private_ts:{user_id}",
         f"private_idle_list:{user_id}",
         f"personal_ping_streak:{user_id}",

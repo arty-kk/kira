@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter, TelegramBadRequest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from redis.exceptions import RedisError
 from zoneinfo import ZoneInfo
 
@@ -192,6 +192,45 @@ class EmotionContext:
     care_reason: Optional[str] = None
     anchor: Optional[str] = None 
 
+def _ping_get_default_tz() -> timezone:
+    try:
+        name = getattr(settings, "DEFAULT_TZ", "UTC") or "UTC"
+        return ZoneInfo(name)
+    except Exception:
+        return timezone.utc
+
+def _ping_tz_name() -> str:
+    try:
+        return getattr(settings, "DEFAULT_TZ", "UTC") or "UTC"
+    except Exception:
+        return "UTC"
+
+def _build_ping_time_hint() -> str:
+
+    try:
+        dt_now = datetime.now(_ping_get_default_tz())
+        now_local = dt_now.strftime("%d %b %Y, %H:%M")
+        weekday = (dt_now.strftime("%a") or "").strip()
+        tz_abbr = (dt_now.strftime("%Z") or "").strip()
+        tz_off = (dt_now.strftime("%z") or "").strip()
+        if len(tz_off) == 5:
+            tz_off = tz_off[:3] + ":" + tz_off[3:]
+        tz_name = tz_abbr or _ping_tz_name()
+        tz_utc = f"UTC{tz_off}" if tz_off else ""
+    except Exception:
+        weekday = ""
+        now_local = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        tz_name = _ping_tz_name()
+        tz_utc = ""
+
+    w = f"{weekday}, " if weekday else ""
+    utc_part = f" ({tz_utc})" if tz_utc else ""
+    return (
+        "TIME\n"
+        f"- Now (assistant local): {w}{now_local} {tz_name}{utc_part}.\n"
+        "- Use this to resolve relative time (now/today/yesterday/weekdays/durations/future/past).\n"
+        "- Avoid implying ongoing periods are completed unless time clearly indicates that.\n"
+    )
 
 async def user_zoneinfo(user_id: int) -> ZoneInfo:
 
@@ -1159,17 +1198,26 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
         history = await load_context(chat_id, user_id)
         summary: str | None = None
         if history and history[0].get("role") == "system":
-            summary = history[0]["content"].replace("Summary:", "").strip()
-            history = history[1:]
+            c0 = str(history[0].get("content") or "")
+            if c0.strip().lower().startswith("summary:"):
+                summary = c0.split(":", 1)[1].strip()
+                history = history[1:]
 
-        personal_msgs = [m for m in history if m.get("user_id") == user_id or m.get("role") == "assistant"][-PERSONAL_WINDOW:]
+        personal_msgs = []
+        for m in history or []:
+            r = m.get("role")
+            if r == "assistant":
+                personal_msgs.append(m)
+            elif r == "user" and m.get("user_id") == user_id:
+                personal_msgs.append(m)
+        personal_msgs = personal_msgs[-PERSONAL_WINDOW:]
 
         blocks: list[str] = []
         if summary:
             blocks.append(f"Summary: {summary}")
         for m in personal_msgs:
-            author = "You" if m.get("user_id") == user_id else "Me"
-            blocks.append(f"{author}: {m['content']}")
+            author = "You" if m.get("role") == "user" else "Me"
+            blocks.append(f"{author}: {m.get('content','')}")
         mem_ctx = "\n".join(blocks)
     except Exception:
         logger.exception("load_context failed for chat_id=%s", chat_id)
@@ -1194,7 +1242,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
                 pass
         except Exception:
             pass
-        logger.info("PP SKIP negative_signal user=%s (был DND/negative сигнал в истории)", user_id)
+        logger.info("PP SKIP negative_signal user=%s (DND/negative signal detected in history)", user_id)
         return False
 
     now_ts = time_module.time()
@@ -1353,11 +1401,12 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
     )
 
     async def _gen_once(temp: float, top_p: float) -> str:
+        time_sys = _build_ping_time_hint()
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.RESPONSE_MODEL,
-                input=[_msg("system", system_msg), _msg("user", prompt)],
+                input=[_msg("system", time_sys), _msg("system", system_msg), _msg("user", prompt)],
                 max_output_tokens=max_tokens,
                 temperature=temp,
                 top_p=top_p,

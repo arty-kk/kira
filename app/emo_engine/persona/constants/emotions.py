@@ -1,4 +1,10 @@
 #app/emo_engine/persona/constants/emotions.py
+import inspect
+import re
+
+from dataclasses import dataclass
+from enum import Enum
+
 from typing import Dict, List, Callable
 
 PRIMARY_COORDS: Dict[str, tuple[float, float]] = {
@@ -93,7 +99,7 @@ SECONDARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
         "annoyance":    lambda s: 0.5*s["anger"] + 0.5*s["sarcasm"],
         "hidden_anger": lambda s: 0.5*s["anger"] + 0.5*s["restraint"],
         "malice":       lambda s: 0.6*s["anger"] + 0.4*s["contempt"],
-        "madness":      lambda s: 0.6*s["rage"] + 0.4*s["stress"],
+        "madness":      lambda s: 0.6*s["anger"] + 0.4*s["stress"],
     },
     "fear": {
         "apprehension": lambda s: 0.6*s["fear"] + 0.4*s["anxiety"],
@@ -154,21 +160,21 @@ SECONDARY_EMOTIONS: Dict[str, Dict[str, Callable[[dict], float]]] = {
     "self_reflection": {
         "restraint": lambda s: 0.7*s["self_reflection"] + 0.3*s["patience"],
     },
-   "derived": {
-       "love": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("trust", 0.0),
-       "affection": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
-       "intimacy": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
-       "excitement": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("arousal", 0.0),
-       "euphoria": lambda s: 0.8*s.get("joy", 0.0) + 0.2*s.get("arousal", 0.0),
-       "playfulness": lambda s: 0.5*s.get("joy", 0.0) + 0.3*s.get("humor", 0.0) + 0.2*s.get("energy", 0.0),
-       "burnout": lambda s: 0.7*s.get("fatigue", 0.0) + 0.3*s.get("stress", 0.0),
-       "exhaustion": lambda s: 0.8*s.get("fatigue", 0.0) + 0.2*(1.0 - s.get("energy", 0.0)),
-       "lust": lambda s: s.get("sexual_arousal", 0.0),
-       "remorse": lambda s: 0.6*s.get("guilt", 0.0) + 0.4*s.get("regret", 0.0),
-       "submission": lambda s: 0.6*s.get("trust", 0.0) + 0.4*(1.0 - s.get("dominance", 0.5)),
-       "creative_collaboration": lambda s: 0.6*s.get("creativity", 0.0) + 0.4*s.get("friendliness", 0.0),
-       "disappointment": lambda s: 0.6*s.get("sadness", 0.0) + 0.4*(1.0 - s.get("joy", 0.0)),
-   },
+    "derived": {
+        "love": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("trust", 0.0),
+        "affection": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
+        "intimacy": lambda s: 0.6*s.get("trust", 0.0) + 0.4*s.get("warmth", 0.0),
+        "excitement": lambda s: 0.6*s.get("joy", 0.0) + 0.4*s.get("arousal", 0.0),
+        "euphoria": lambda s: 0.8*s.get("joy", 0.0) + 0.2*s.get("arousal", 0.0),
+        "playfulness": lambda s: 0.5*s.get("joy", 0.0) + 0.3*s.get("humor", 0.0) + 0.2*s.get("energy", 0.0),
+        "burnout": lambda s: 0.7*s.get("fatigue", 0.0) + 0.3*s.get("stress", 0.0),
+        "exhaustion": lambda s: 0.8*s.get("fatigue", 0.0) + 0.2*(1.0 - s.get("energy", 0.0)),
+        "lust": lambda s: s.get("sexual_arousal", 0.0),
+        "remorse": lambda s: 0.6*s.get("guilt", 0.0) + 0.4*s.get("regret", 0.0),
+        "submission": lambda s: 0.6*s.get("trust", 0.0) + 0.4*(1.0 - s.get("dominance", 0.5)),
+        "creative_collaboration": lambda s: 0.6*s.get("creativity", 0.0) + 0.4*s.get("friendliness", 0.0),
+        "disappointment": lambda s: 0.6*s.get("sadness", 0.0) + 0.4*(1.0 - s.get("joy", 0.0)),
+    },
 }
 SECONDARY_KEYS = list({key for subs in SECONDARY_EMOTIONS.values() for key in subs})
 
@@ -357,3 +363,106 @@ for a, b in _raw_pairs:
 OPPOSITES: dict[str, str] = _OPP
 
 FAT_CLAMP = lambda x: max(0.0, min(1.0, x))
+
+class MetricKind(str, Enum):
+    DIMENSION = "dimension"        # valence, arousal, dominance...
+    PRIMARY = "primary"            # joy, fear, anger...
+    SECONDARY = "secondary"        # optimism, irritation...
+    TERTIARY = "tertiary"          # hope, fury, bliss...
+    DYAD = "dyad"                  # joy_trust ...
+    TRIAD = "triad"                # joy_trust_fear ...
+    SOCIAL = "social"              # empathy, engagement...
+    DRIVE = "drive"                # curiosity, sexual_arousal...
+    STYLE = "style"                # sarcasm, profanity...
+    COGNITIVE = "cognitive"        # creativity, wit...
+    RELATIONSHIP = "relationship"  # attachment...
+    EXTRA_TRIGGER = "extra_trigger"# confusion, guilt...
+    DERIVED = "derived"            # love, burnout, disappointment...
+    LEARNED = "learned"            # новые «нейроны», появившиеся в рантайме
+
+
+@dataclass(frozen=True)
+class MetricSpec:
+    name: str
+    kind: MetricKind
+    parents: tuple[str, ...] = ()
+
+def _build_metric_specs() -> dict[str, MetricSpec]:
+    specs: dict[str, MetricSpec] = {}
+
+    def add(names: List[str], kind: MetricKind):
+        for n in names:
+            specs.setdefault(n, MetricSpec(name=n, kind=kind))
+
+    add(DIMENSIONS,           MetricKind.DIMENSION)
+    add(PRIMARY_EMOTIONS,     MetricKind.PRIMARY)
+    add(SOCIAL_METRICS,       MetricKind.SOCIAL)
+    add(DRIVE_METRICS,        MetricKind.DRIVE)
+    add(STYLE_METRICS,        MetricKind.STYLE)
+    add(COGNITIVE_METRICS,    MetricKind.COGNITIVE)
+    add(RELATIONSHIP_METRICS, MetricKind.RELATIONSHIP)
+    add(EXTRA_TRIGGER_METRICS,MetricKind.EXTRA_TRIGGER)
+    add(DYAD_KEYS,            MetricKind.DYAD)
+    add(TRIAD_KEYS,           MetricKind.TRIAD)
+
+    def extract_parents(fn: Callable[[dict], float]) -> tuple[str, ...]:
+        try:
+            src = inspect.getsource(fn)
+        except OSError:
+            return ()
+        keys = set(re.findall(r's\[\s*"([^"]+)"\s*\]', src))
+        keys |= set(re.findall(r's\.get\(\s*"([^"]+)"', src))
+        return tuple(sorted(keys))
+
+    for base, subs in SECONDARY_EMOTIONS.items():
+        for name, fn in subs.items():
+            kind = MetricKind.DERIVED if base == "derived" else MetricKind.SECONDARY
+            specs[name] = MetricSpec(
+                name=name,
+                kind=kind,
+                parents=extract_parents(fn),
+            )
+
+    for base, subs in TERTIARY_EMOTIONS.items():
+        for name, fn in subs.items():
+            if name in specs and specs[name].kind not in (
+                MetricKind.SECONDARY,
+                MetricKind.DERIVED,
+            ):
+                continue
+            specs[name] = MetricSpec(
+                name=name,
+                kind=MetricKind.TERTIARY,
+                parents=extract_parents(fn),
+            )
+
+    return specs
+
+
+METRIC_SPECS: dict[str, MetricSpec] = _build_metric_specs()
+
+def make_learned_secondary(
+    name: str,
+    parents: dict[str, float],
+) -> Callable[[dict[str, float]], float]:
+
+    if name in ALL_METRICS:
+        raise ValueError(f"Metric '{name}' already exists")
+
+    total = sum(parents.values()) or 1.0
+    weights = {k: v / total for k, v in parents.items()}
+
+    def _fn(state: dict[str, float]) -> float:
+        return sum(weights[k] * state.get(k, 0.0) for k in weights)
+
+    SECONDARY_EMOTIONS.setdefault("derived", {})[name] = _fn
+    SECONDARY_KEYS.append(name)
+    ALL_METRICS.append(name)
+
+    METRIC_SPECS[name] = MetricSpec(
+        name=name,
+        kind=MetricKind.LEARNED,
+        parents=tuple(weights.keys()),
+    )
+
+    return _fn

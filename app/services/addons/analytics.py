@@ -15,7 +15,7 @@ from app.core.memory import get_redis
 
 RETENTION_DAYS = int(getattr(settings, "ANALYTICS_RETENTION_DAYS", 21))
 ENABLE_ANALYTICS = bool(getattr(settings, "ANALYTICS_ENABLED", True))
-USE_LLM_INSIGHTS = bool(getattr(settings, "ANALYTICS_USE_LLM", True))
+USE_LLM_INSIGHTS = bool(getattr(settings, "ANALYTICS_USE_LLM", False))
 ADMIN_IDS = list(getattr(settings, "ANALYTICS_REPORT_ADMIN_IDS", [])) or list(getattr(settings, "MODERATOR_IDS", []))
 ALLOWED_CHATS = list(getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
 
@@ -227,7 +227,6 @@ async def record_timeout(chat_id: int) -> None:
         p.incr(_k(chat_id, d, "timeouts"))
         p.expire(_k(chat_id, d, "timeouts"), _expire_sec())
         await p.execute()
-
 
 def _approx_quantiles_from_buckets(total: int, buckets: Dict[str, int]) -> Tuple[Optional[int], Optional[int]]:
     if total <= 0:

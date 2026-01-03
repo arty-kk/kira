@@ -20,8 +20,8 @@ GLOBAL_MAX_BUFFERS   = int(getattr(settings, "DEBOUNCE_GLOBAL_MAX", 10000))
 
 DEBOUNCE_MODE = getattr(settings, "DEBOUNCE_MODE", "human").lower()  # human | merge | single
 MAX_BATCH_CHARS = int(getattr(settings, "DEBOUNCE_MAX_BATCH_CHARS", 1800))
-MIN_DELAY = float(getattr(settings, "DEBOUNCE_MIN_DELAY", 1.0))
-MAX_DELAY = float(getattr(settings, "DEBOUNCE_MAX_DELAY", 4.0))
+MIN_DELAY = float(getattr(settings, "DEBOUNCE_MIN_DELAY", 2.0))
+MAX_DELAY = float(getattr(settings, "DEBOUNCE_MAX_DELAY", 120.0))
 BUSY_HOLD_TIMEOUT = float(getattr(settings, "DEBOUNCE_BUSY_HOLD_TIMEOUT", 3.0))
 BUSY_POLL_INTERVAL = float(getattr(settings, "DEBOUNCE_BUSY_POLL_INTERVAL", 0.25))
 IDLE_GRACE = float(getattr(settings, "DEBOUNCE_IDLE_GRACE", 0.2))
@@ -30,17 +30,19 @@ CHAT_BUSY_PREFIX = "chatbusy:"
 def _get_lock(key: str) -> asyncio.Lock:
     return _locks.setdefault(key, asyncio.Lock())
 
+TYPING_BASE_DELAY = float(getattr(settings, "TYPING_BASE_DELAY", 1.0))
+TYPING_PER_CHAR   = float(getattr(settings, "TYPING_PER_CHAR", 0.1))
+
 def compute_typing_delay(text: str) -> float:
-    words = [w for w in (text or "").split() if w]
-    n = len(words)
-    if n <= 1:
-        d = 3.0
-    else:
-        extra = n - 1
-        base_extra = 0.1 * extra
-        progressive = 0.01 * extra * (extra - 1) / 2
-        d = 3 + base_extra + progressive
+    s = (text or "").strip()
+    n = len(s)
+
+    if n <= 0:
+        return MIN_DELAY
+
+    d = TYPING_BASE_DELAY + TYPING_PER_CHAR * n
     return max(MIN_DELAY, min(MAX_DELAY, d))
+
 
 async def _enqueue(payload: dict):
     await consts.redis_queue.lpush(settings.QUEUE_KEY, json.dumps(payload))
@@ -52,10 +54,6 @@ async def schedule_response(key: str):
             async with lock:
                 if not message_buffers.get(key):
                     break
-                last_text = (message_buffers[key][-1].get("text") or "")
-
-            delay = compute_typing_delay(last_text)
-            await asyncio.sleep(delay)
 
             if DEBOUNCE_MODE == "single":
                 async with lock:
@@ -129,9 +127,32 @@ async def _merge_and_send(msgs: list[dict]):
     batch: list[dict] = []
     cur_len = 0
     out_payloads: list[dict] = []
+    cur_reply_to = None
+
+    def _pick_first_nonzero(items: list[dict], key: str):
+        for it in items:
+            v = it.get(key)
+            try:
+                iv = int(v) if v is not None else 0
+            except Exception:
+                iv = 0
+            if iv > 0:
+                return iv
+        return None
+
+    def _pick_last_nonzero(items: list[dict], key: str):
+        for it in reversed(items):
+            v = it.get(key)
+            try:
+                iv = int(v) if v is not None else 0
+            except Exception:
+                iv = 0
+            if iv > 0:
+                return iv
+        return None
 
     def _flush():
-        nonlocal batch, cur_len
+        nonlocal batch, cur_len, cur_reply_to
         if not batch:
             return
         if any(m.get("image_b64") or m.get("voice_in") for m in batch):
@@ -145,14 +166,18 @@ async def _merge_and_send(msgs: list[dict]):
             payload["merged_msg_ids"] = [b.get("msg_id") for b in batch if b.get("msg_id") is not None]
             if any(bool(b.get("allow_web")) for b in batch):
                 payload["allow_web"] = True
-            first_reply_to = next((b.get("reply_to") for b in batch if b.get("reply_to")), None)
-            if first_reply_to and not payload.get("reply_to"):
-                payload["reply_to"] = first_reply_to
+            picked_reply_to = _pick_first_nonzero(batch, "reply_to")
+            if picked_reply_to and not payload.get("reply_to"):
+                payload["reply_to"] = picked_reply_to
+            picked_tg_reply_to = _pick_last_nonzero(batch, "tg_reply_to")
+            if picked_tg_reply_to and not payload.get("tg_reply_to"):
+                payload["tg_reply_to"] = picked_tg_reply_to
             enforce_any = any(bool(b.get("enforce_on_topic")) for b in batch)
             payload["enforce_on_topic"] = enforce_any
             out_payloads.append(payload)
         batch = []
         cur_len = 0
+        cur_reply_to = None
 
     for m in msgs:
         t = (m.get("text") or "").strip()
@@ -160,6 +185,17 @@ async def _merge_and_send(msgs: list[dict]):
             _flush()
             out_payloads.append(m.copy())
             continue
+
+        try:
+            m_r = int(m.get("reply_to") or 0)
+        except Exception:
+            m_r = 0
+        if m_r > 0:
+            if cur_reply_to is None:
+                cur_reply_to = m_r
+            elif cur_reply_to != m_r:
+                _flush()
+                cur_reply_to = m_r
 
         prospective = cur_len + len(t) + (1 if batch else 0)
         if batch and prospective > MAX_BATCH_CHARS:

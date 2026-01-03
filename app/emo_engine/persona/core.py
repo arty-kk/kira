@@ -15,7 +15,7 @@ import weakref
 from collections import defaultdict, deque
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, List, ClassVar, Optional, Any, TypeVar
+from typing import Dict, List, ClassVar, Optional, Any, TypeVar, Awaitable
 from collections.abc import Coroutine, Callable
 from types import MethodType
 
@@ -31,6 +31,7 @@ from .states import (
     _decayed_weight, _compute_salience, _update_weight,
     _update_attachment, _ensure_attachment_defaults,
     _effective_person_weight, _apply_attachment_influence,
+    _detect_social_signals_llm, _attachment_label
 )
 from .utils.emotion_math import (
     _compute_secondary, _clamp as _global_clamp,
@@ -40,6 +41,8 @@ from .utils.text_analyzer import TextAnalyzer
 from .stylers.modifiers import style_modifiers
 from .stylers.guidelines import style_guidelines
 from .constants.tone_map import Tone
+from .brain import PersonaBrain
+from .neurograph import SelfNeuronNetwork
 from .constants.labels import EMO_LABEL_MAP as EMO_LABELS
 from .constants.metrics_keys import metrics_keys as all_key_mods
 from .constants.emotions import (  
@@ -52,6 +55,8 @@ from .constants.user_prefs import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 def _normalize_temperament(t: dict | None, default_json: str) -> dict:
     try:
@@ -94,10 +99,11 @@ class Persona:
     change_rates: Dict[str, float] = field(init=False, default_factory=dict)
     user_gender: str = field(init=False, default="unknown", repr=False)
     mood: str = "steady"
+    brain: PersonaBrain = field(init=False, repr=False, compare=False)
     _dirty_metrics: set[str] = field(init=False, default_factory=set)
     enhanced_memory: PersonaMemory = field(init=False, repr=False, compare=False)
     user_weights: Dict[int, List[float]] = field(init=False, default_factory=dict)
-    last_user_emotions: list = field(init=False, default_factory=list)
+    persona_dominant_emotions: list = field(init=False, default_factory=list)
     _just_pushed_back: bool = field(init=False, default=False)
     _restored_evt: asyncio.Event = field(init=False, repr=False, compare=False, default=None)
     state_version: int = field(init=False, default=0)
@@ -118,12 +124,15 @@ class Persona:
     _style_mods_version: int = field(init=False, default=-1)
     _last_user_msg: str = field(init=False, default="")
     attachments: Dict[int, dict] = field(init=False, default_factory=dict)
+    current_mode_id: str | None = field(init=False, default=None)
+    current_mode_stats: dict = field(init=False, default_factory=dict)
+    _brain_top_tones: list = field(init=False, default_factory=list)
     _rds_loop_id: Optional[int] = field(init=False, repr=False, compare=False, default=None)
     _user_locks: Dict[int, asyncio.Lock] = field(init=False, default_factory=dict, repr=False, compare=False)
     _bg_started: bool = field(init=False, default=False)
-    _bg_task: Optional[asyncio.Task] = field(init=False, default=None)
-    _bg_start_lock: asyncio.Lock = field(init=False, repr=False, compare=False)
+    _bg_start_lock: asyncio.Lock = field(init=False, repr=False, compare=False, default_factory=asyncio.Lock)
     _worker_task: Optional[asyncio.Task] = field(init=False, default=None, repr=False, compare=False)
+    _bg_stop: bool = field(init=False, default=False, repr=False, compare=False)
     _spawned_tasks: set = field(init=False, default_factory=set, repr=False, compare=False)
     _memfu_cap: int = field(init=False, default=256)
     _memfu_ttl: float = field(init=False, default=3600.0)
@@ -146,37 +155,40 @@ class Persona:
         self._bg_queue = asyncio.Queue(maxsize=getattr(settings, "BG_QUEUE_MAX", 1000))
         self._mods_lock = asyncio.Lock()
         self._proc_sem = asyncio.Semaphore(1)
-        self._bg_start_lock = asyncio.Lock()
         self._rng = random.Random(self.chat_id)
         self._restored_evt = asyncio.Event()
         self._in_peak = False
         self._last_mono = time.monotonic()
         self._last_valence_peak_ts = time.time()
-        self._style_mods_version = -1
+        self._emb_inflight: asyncio.Task | None = None
         for fn in (
             _recompute_rates, _blend_metric, _update_mood_label,
             _compute_secondary, _compute_tertiary, _bg_worker,
             _decayed_weight, _compute_salience, _update_weight,
             _update_attachment, _ensure_attachment_defaults,
             _effective_person_weight, _apply_attachment_influence,
+            _detect_social_signals_llm
         ):
             setattr(self, fn.__name__, MethodType(fn, self))
-
         self.style_modifiers = MethodType(style_modifiers, self)
         self.style_guidelines = MethodType(style_guidelines, self)
         self._recompute_rates()
         
         try:
-            self._loop_id = id(asyncio.get_running_loop())
+            loop = asyncio.get_running_loop()
+            self._loop_id = id(loop)
         except RuntimeError:
             self._loop_id = None
 
         center = settings.EMO_INITIAL_CENTER
         self.state = {m: center for m in ALL_METRICS}
         try:
-            self.state["valence"] = float(getattr(settings, "VALENCE_BASELINE", 0.15))
+            base_v = float(getattr(settings, "VALENCE_BASELINE", 0.15))
         except Exception:
-            self.state["valence"] = 0.15
+            base_v = 0.15
+        if 0.0 <= base_v <= 1.0:
+            base_v = base_v * 2.0 - 1.0
+        self.state["valence"] = self._clamp(base_v, -1.0, 1.0)
         for subs in SECONDARY_EMOTIONS.values():
             for name in subs.keys():
                 self.state.setdefault(name, 0.0)
@@ -200,12 +212,15 @@ class Persona:
         self._last_prompt_version = -1
         self._last_prompt_guidelines = None
         self._prompt_cache = ""
-        self.last_user_emotions = []
+        self.persona_dominant_emotions = []
         self._just_pushed_back = False
         self._cached_style_modifiers = {}
         self._mods_cache = {}
         self._last_uid = None
         self.flowstate = 0.0
+        self._brain_top_tones = []
+        self.brain = PersonaBrain(state=self.state.copy())
+        self.brain.state = self.state
         self.enhanced_memory = PersonaMemory(chat_id=self.chat_id)
         try:
             self.enhanced_memory.parent = weakref.proxy(self)
@@ -218,6 +233,7 @@ class Persona:
             logger.warning("Persona init: no running event loop detected; background tasks will start lazily.")
         self._last_mood_change_ts = time.time()
         self._prev_mood = self.mood
+        self._style_mods_version = -1
         self._text_analyzer = TextAnalyzer()
         self.attachments = {}
         self._rds = None
@@ -234,6 +250,94 @@ class Persona:
             self._memfu_ttl = float(getattr(settings, "MEMFU_LOCAL_CACHE_TTL_SECS", 3600.0))
         except Exception:
             self._memfu_ttl = 3600.0
+        try:
+            self.self_net = SelfNeuronNetwork(chat_id=self.chat_id)
+        except Exception:
+            logger.debug("SelfNeuronNetwork init failed", exc_info=True)
+            self.self_net = None
+        self._selfnet_disabled = False
+
+    def _ensure_loop_objects(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        cur_loop_id = id(loop)
+
+        if self._loop_id is None:
+            self._loop_id = cur_loop_id
+            return
+
+        if self._loop_id == cur_loop_id:
+            return
+
+        logger.warning(
+            "Persona(chat_id=%s) detected event loop change (%s → %s); "
+            "re-binding background objects to the new loop.",
+            self.chat_id,
+            self._loop_id,
+            cur_loop_id,
+        )
+
+        self._loop_id = cur_loop_id
+    
+        try:
+            self._mods_cache.clear()
+        except Exception:
+            pass
+    
+        try:
+            self._lock = asyncio.Lock()
+            self._mods_lock = asyncio.Lock()
+            self._bg_start_lock = asyncio.Lock()
+            self._proc_sem = asyncio.Semaphore(1)
+            self._restored_evt = asyncio.Event()
+        except Exception:
+            logger.debug("Failed to re-create core async primitives on loop change", exc_info=True)
+    
+        try:
+            self._user_locks.clear()
+        except Exception:
+            self._user_locks = {}
+
+        wt = getattr(self, "_worker_task", None)
+        if wt and not wt.done():
+            try:
+                wt.cancel()
+            except Exception:
+                logger.debug("failed to cancel previous bg-worker on loop change", exc_info=True)
+        self._worker_task = None
+        self._bg_started = False
+        self._bg_stop = False
+
+        try:
+            maxsize = getattr(settings, "BG_QUEUE_MAX", 1000)
+            self._bg_queue = asyncio.Queue(maxsize=maxsize)
+        except Exception:
+            logger.error("Failed to re-create bg_queue on loop change", exc_info=True)
+            self._bg_queue = None
+
+        try:
+            self._emb_inflight = None
+            self._emb_inflight_started = None
+        except Exception:
+            pass
+
+        try:
+            sn = getattr(self, "self_net", None)
+            if sn is not None and hasattr(sn, "close"):
+                res = sn.close()
+                if asyncio.iscoroutine(res):
+                    self._spawn(res, name="selfnet-close-on-loop-change")
+        except Exception:
+            logger.debug("SelfNeuronNetwork close on loop change failed", exc_info=True)
+        try:
+            self.self_net = SelfNeuronNetwork(chat_id=self.chat_id)
+            self._selfnet_disabled = False
+        except Exception:
+            logger.debug("SelfNeuronNetwork re-init failed", exc_info=True)
+            self.self_net = None
 
     async def ready(self, timeout: float | None = 5.0) -> bool:
         try:
@@ -276,31 +380,53 @@ class Persona:
         return await self._text_analyzer.analyze_text(text)
 
     async def _notify_ready(self) -> None:
-        await self.enhanced_memory.ready()
+        try:
+            await self.enhanced_memory.ready()
+        except Exception:
+            logger.debug("PersonaMemory.ready failed", exc_info=True)
+        try:
+            sn = getattr(self, "self_net", None)
+            if sn is not None:
+                await sn.ready()
+        except Exception:
+            logger.debug("SelfNeuronNetwork.ready failed", exc_info=True)
         self._restored_evt.set()
+
 
     async def _start_bg_worker(self) -> None:
         if self._worker_task and not self._worker_task.done():
             return
-
+        if getattr(self, "_bg_queue", None) is None:
+            logger.error("persona: cannot start bg_worker because _bg_queue is None")
+            return
+        self._bg_stop = False
         self._worker_task = asyncio.create_task(self._bg_worker(), name="persona-bg-worker")
-        try:
-            await self._worker_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception("persona BG worker crashed")
 
     async def _ensure_background_started(self) -> None:
         try:
             _ = asyncio.get_running_loop()
         except RuntimeError:
             return
+
+        self._ensure_loop_objects()
+        
         async with self._bg_start_lock:
+            if self._worker_task is not None and self._worker_task.done():
+                try:
+                    exc = self._worker_task.exception()
+                    if exc is not None:
+                        logger.error("persona-bg-worker crashed", exc_info=exc)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._worker_task = None
+                    self._bg_started = False
+
             if self._bg_started and self._worker_task and not self._worker_task.done():
                 return
-            self._bg_task = self._spawn(self._start_bg_worker, name="persona-start-worker")
-            self._spawn(self._notify_ready, name="persona-notify-ready")
+
+            await self._start_bg_worker()
+            self.spawn_coro(self._notify_ready, name="persona-notify-ready")
             self._bg_started = True
 
     def tweak(self, knob: str, delta: float) -> None:
@@ -357,37 +483,30 @@ class Persona:
         #guide_str = ", ".join(unique_guides)
 
         sections: List[str] = [
-            f"Your Name: {self.name}.",
-            f"Your Age: {self.age} years old.",
-            f"Your Gender: {self.gender}.",
-            f"Your Zodiac: {self.zodiac}.",
-            f"Your Temperament: {json.dumps(self.temperament, ensure_ascii=False, sort_keys=True, separators=(',',':'))}.",
-            f"Your Sociality: {self.sociality}.",
-            f"Your Archetypes: {', '.join(self.archetypes) or 'None'}.",
-            f"Your Role: {self.role}.",
-            #f"Your Mood & Character Modifiers: {guide_str}",
-            #f"Mood State: {self.mood}",
-            #f"Internal Metrics: {metrics_str}",
-            #f"ChangeRates: {cr_str}",
-            #f"Style Modifiers: {mods_str}",
+            "PERSONA: "
+            f"name={self.name}; age={self.age}; gender={self.gender}; zodiac={self.zodiac}; "
+            f"sociality={self.sociality}; archetypes={', '.join(self.archetypes) or 'None'}; role={self.role}.",
+            "Temperament=" + json.dumps(self.temperament, ensure_ascii=False, sort_keys=True, separators=(',',':')),
         ]
 
         if want_any_memory and has_query:
             try:
                 if query_emb is None:
-                    t0 = time.perf_counter()
-                    try:
-                        query_emb = await asyncio.wait_for(
-                            get_embedding(self._last_user_msg),
-                            timeout=15.0
-                        )
-                        logger.info("openai.embedding t=%.3fs", time.perf_counter() - t0)
-                    except Exception as e:
-                        logger.warning("openai.embedding failed after %.3fs: %s",
-                                       time.perf_counter() - t0, e)
-                        query_emb = None
-                else:
-                    pass
+                    emb_task = getattr(self, "_emb_inflight", None)
+                    if emb_task is not None and not emb_task.done():
+                        query_emb = await emb_task
+                    else:
+                        t0 = time.perf_counter()
+                        try:
+                            query_emb = await asyncio.wait_for(
+                                get_embedding(self._last_user_msg),
+                                timeout=15.0
+                            )
+                            logger.info("openai.embedding t=%.3fs", time.perf_counter() - t0)
+                        except Exception as e:
+                            logger.warning("openai.embedding failed after %.3fs: %s",
+                                           time.perf_counter() - t0, e)
+                            query_emb = None
             except Exception as e:
                 logger.warning("to_prompt: embedding failed: %s", e)
                 query_emb = None
@@ -414,7 +533,7 @@ class Persona:
                 logger.warning("to_prompt: memory.query_time failed: %s", e)
                 past_cands = present_cands = future_cands = []
 
-        if want_any_memory:
+        if want_any_memory and has_query:
             try:
                 await self.ltm.ready()
                 ltm_pick = await asyncio.wait_for(
@@ -450,7 +569,7 @@ class Persona:
                 )
                 if prof_pairs:
                     sections.append("USER.Profile: " + "; ".join(f"{k}={v}" for k, v in prof_pairs))
-                    sections.append("Rule: Do NOT conflate USER.Profile with your own attributes.")
+                    sections.append("Rule: USER.Profile describes only the user; do NOT treat it as your own attributes/biography.")
                     try:
                         await asyncio.wait_for(
                             self.ltm.mark_profile_used(
@@ -468,7 +587,7 @@ class Persona:
 
         selected = {}
         if want_mem_followup:
-            sim_thr = getattr(settings, "MEMORYFOLLOWUP_SIM_THRESHOLD", 0.60)
+            sim_thr = settings.MEMORYFOLLOWUP_SIM_THRESHOLD
             try:
                 uid0 = self._last_uid or 0
                 trust_ema = float(self.attachments.get(uid0, {}).get("trust_ema", 0.5))
@@ -570,14 +689,26 @@ class Persona:
         if self.current_dominant:
             sections.append(f"DominantEmotion: {self.current_dominant}")
 
-        if self.last_user_emotions:
+        try:
+            if getattr(self, "_brain_top_tones", None):
+                tones_str = ", ".join(
+                    f"{t.name}:{score:.2f}"
+                    for t, score in self._brain_top_tones
+                    if score >= 0.15
+                )
+                if tones_str:
+                    sections.append(f"PersonaBrainTones: {tones_str}")
+        except Exception:
+            pass
+
+        if self.persona_dominant_emotions:
             emotions_str = ", ".join(
                 e if isinstance(e, str)
                 else e.name if isinstance(e, Tone)
                 else str(e)
-                for e in self.last_user_emotions
+                for e in self.persona_dominant_emotions
             )
-            sections.append(f"UserRecentEmotions: {emotions_str}")
+            sections.append(f"PersonaDominantEmotions: {emotions_str}")
 
         #if self._last_user_msg:
             #tone_sample = self._safe_snippet(self._last_user_msg)[:120]
@@ -614,6 +745,69 @@ class Persona:
                         sections.append(f"MemoryHint[{0.50 + 0.40*s:.2f}]: {t}")
             except Exception:
                 logger.debug("weak-sketch recall failed", exc_info=True)
+
+        try:
+            v = float(self.state.get("valence", 0.0))
+            a = float(self.state.get("arousal", 0.5))
+            stress = float(self.state.get("stress", 0.0))
+            anx = float(self.state.get("anxiety", 0.0))
+            fatigue = float(self.state.get("fatigue", 0.0))
+            dom = float(self.state.get("dominance", 0.5))
+
+            emo_snapshot = (
+                f"mood={self.mood}, "
+                f"valence={v:+.2f}, "
+                f"arousal={a:.2f}, "
+                f"stress={stress:.2f}, "
+                f"anxiety={anx:.2f}, "
+                f"fatigue={fatigue:.2f}, "
+                f"dominance={dom:.2f}"
+            )
+            sections.append(f"EmotionalSnapshot: {emo_snapshot}")
+        except Exception:
+            logger.debug("to_prompt: EmotionalSnapshot failed", exc_info=True)
+
+        try:
+            uid0 = getattr(self, "_last_uid", None)
+            if uid0 is not None:
+                rec = self.attachments.get(uid0)
+                if isinstance(rec, dict):
+                    att_v = float(rec.get("value", 0.0))
+                    stage = rec.get("stage") or _attachment_label(att_v)
+                    trust_ema = float(rec.get("trust_ema", 0.5))
+                    rel_snapshot = (
+                        f"user_id={uid0}, "
+                        f"attachment_stage={stage}, "
+                        f"attachment_value={att_v:.2f}, "
+                        f"trust={trust_ema:.2f}"
+                    )
+                    sections.append(f"RelationalContext: {rel_snapshot}")
+        except Exception:
+            logger.debug("to_prompt: RelationalContext failed", exc_info=True)
+
+        try:
+            mode_id = getattr(self, "current_mode_id", None)
+            stats = getattr(self, "current_mode_stats", None) or {}
+            if mode_id or stats:
+                parts: list[str] = []
+                try:
+                    if "coherence" in stats:
+                        parts.append(f"coherence={float(stats['coherence']):.2f}")
+                    if "novelty" in stats:
+                        parts.append(f"novelty={float(stats['novelty']):.2f}")
+                    if "complexity" in stats:
+                        parts.append(f"complexity={float(stats['complexity']):.2f}")
+                    if "intensity" in stats:
+                        parts.append(f"intensity={float(stats['intensity']):.2f}")
+                except Exception:
+                    parts = []
+
+                stats_str = ", ".join(parts) if parts else "n/a"
+                sections.append(
+                    f"SelfMode: id={mode_id or 'baseline'}, {stats_str}"
+                )
+        except Exception:
+            logger.debug("to_prompt: SelfMode snapshot failed", exc_info=True)
 
         result = "\n".join(sections)
         total = time.time() - start_ts
@@ -658,6 +852,7 @@ class Persona:
                 self.archetypes = ["Rebel","Jester","Sage"]
             self.role = getattr(settings, "PERSONA_ROLE", self.role)
 
+            self._recompute_rates()
             self.state_version += 1
             self._last_prompt_guidelines = None
             return
@@ -719,6 +914,7 @@ class Persona:
         if isinstance(role, str) and role.strip():
             self.role = role.strip()[:1000]
 
+        self._recompute_rates()
         self.state_version += 1
         self._last_prompt_guidelines = None
 
@@ -853,23 +1049,15 @@ class Persona:
             return {"past": [], "present": [], "future": []}
 
         system_prompt = (
-            "You are a memory selector.\n"
-            "- Understand ANY language in the items below.\n"
-            "- DO NOT translate or paraphrase anything.\n"
-            "- Each category lists items as [index] text.\n"
-            "- Select up to 2 indices per category that are most relevant right now.\n"
-            "OUTPUT POLICY:\n"
-            "- Return ONLY one minified JSON object with EXACT lowercase ASCII keys: past, present, future.\n"
-            "- Each value must be an array of INTEGER indices (not strings). Use an empty array if none.\n"
-            "- NO code fences, NO comments, NO prose.\n"
-            "Example: {\"past\":[0,2],\"present\":[],\"future\":[1]}"
-            f"\nCurrent time: {now}.\n"
-            f"Conversation context: \"{context}\""
+            "Select relevant memory ITEMS by index.\n"
+            "- Items may be any language; do not translate or paraphrase.\n"
+            "- Choose up to 2 indices per category (past/present/future) relevant to NOW and the context.\n"
+            "- Output ONLY JSON with keys past,present,future and integer arrays.\n"
+            f"Now: {now}\n"
+            f"Context: {context}\n"
         )
 
-        user_prompt = (
-            "Return ONLY a single minified JSON object."
-        )
+        user_prompt = "Select indices."
 
         for cat, items in candidates.items():
             if items:
@@ -909,7 +1097,7 @@ class Persona:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
-                    model=settings.REASONING_MODEL,
+                    model=settings.BASE_MODEL,
                     instructions=system_prompt,
                     input=user_prompt,
                     text={
@@ -923,11 +1111,11 @@ class Persona:
                     temperature=0,
                     max_output_tokens=250,
                 ),
-                timeout=30.0,
+                timeout=settings.BASE_MODEL_TIMEOUT,
             )
             logger.info(
                 "openai.timing: responses.create model=%s input_chars=%d duration=%.3fs",
-                settings.REASONING_MODEL, len(user_prompt), time.perf_counter() - t0
+                settings.BASE_MODEL, len(user_prompt), time.perf_counter() - t0
             )
             content = (_get_output_text(resp) or "").strip()
         except Exception:
@@ -1011,8 +1199,11 @@ class Persona:
 
     async def summary(self) -> str:
         t = self.temperament
-        top_temp = max(t, key=t.get)
-        low_temp = min(t, key=t.get)
+        if t:
+            top_temp = max(t, key=t.get)
+            low_temp = min(t, key=t.get)
+        else:
+            top_temp, low_temp = "unknown", "unknown"
         last_uid = getattr(self, "_last_uid", None)
         weight_pct = (
             f"{(self._decayed_weight(last_uid) * 100):.0f}%"
@@ -1029,7 +1220,30 @@ class Persona:
             attach_str = f"{att_label}:{att_v:.2f}"
         else:
             attach_str = "N/A"
+
         mem_count = await self.enhanced_memory.count_entries()
+
+        try:
+            sn = getattr(self, "self_net", None)
+            selfnet_str = sn.describe_state() if sn is not None else "SelfPatterns:disabled"
+        except Exception:
+            selfnet_str = "SelfPatterns:error"
+
+        try:
+            mode_id = getattr(self, "current_mode_id", None)
+            mode_stats = getattr(self, "current_mode_stats", {}) or {}
+            if mode_id:
+                try:
+                    coh = float(mode_stats.get("coherence", 0.0))
+                    nov = float(mode_stats.get("novelty", 0.0))
+                    mode_str = f"{mode_id}(C={coh:.2f},N={nov:.2f})"
+                except Exception:
+                    mode_str = str(mode_id)
+            else:
+                mode_str = "None"
+        except Exception:
+            mode_str = "error"
+
         return (
             f"{self.name} | Mood={self.mood} | V={self.state.get('valence', 0.0):.2f} "
             f"A={self.state.get('arousal', 0.0):.2f} E={self.state.get('energy',0.0):.2f} "
@@ -1038,9 +1252,39 @@ class Persona:
             f"Sa{t.get('sanguine',0)*100:.0f}% Ch{t.get('choleric',0)*100:.0f}% "
             f"Ph{t.get('phlegmatic',0)*100:.0f}% Me{t.get('melancholic',0)*100:.0f}% | "
             f"TopTemp={top_temp}:{t.get(top_temp,0.0):.2f} LowTemp={low_temp}:{t.get(low_temp,0.0):.2f} | "
-            f"Weight={weight_pct} | Attach={attach_str} | MemEntries={mem_count}"
+            f"Weight={weight_pct} | Attach={attach_str} | Mode={mode_str} | MemEntries={mem_count} | {selfnet_str}"
         )
-    
+
+    async def _update_self_patterns(self, uid: int, text: str) -> None:
+        brain = getattr(self, "brain", None)
+        if brain is None:
+            return
+
+        try:
+            brain.set_state_from_snapshot(self.state)
+        except Exception:
+            logger.debug("PersonaBrain.update_state failed", exc_info=True)
+            return
+
+        try:
+            tone_scores = brain.project_to_tones()
+        except Exception:
+            tone_scores = {}
+
+        if not tone_scores:
+            self._brain_top_tones = []
+            return
+
+        try:
+            top = sorted(
+                tone_scores.items(),
+                key=lambda kv: kv[1],
+                reverse=True,
+            )[:3]
+            self._brain_top_tones = top
+        except Exception:
+            logger.debug("PersonaBrain tone projection failed", exc_info=True)
+
     async def process_interaction(
         self,
         uid: int,
@@ -1048,17 +1292,39 @@ class Persona:
         user_gender: str | None = None
     ) -> None:
 
+        self._ensure_loop_objects()
+
         try:
-            self._spawn(lambda: _mem_record_activity(self.chat_id, uid))
+            if inspect.iscoroutinefunction(_mem_record_activity):
+                self.spawn_coro(
+                    _mem_record_activity,
+                    self.chat_id,
+                    uid,
+                    name="core-mem-record-activity",
+                )
+            else:
+                self._spawn(
+                    lambda: _mem_record_activity(self.chat_id, uid),
+                    name="core-mem-record-activity",
+                )
         except Exception:
             logger.debug("core.memory.record_activity spawn failed", exc_info=True)
-        try:
-            await self.ltm.record_activity(uid)
-        except Exception:
-            logger.debug("ltm.record_activity error", exc_info=True)
         
         await self._ensure_background_started()
-        return await _process_interaction_impl(self, uid, text, user_gender=user_gender,)
+
+        result = await _process_interaction_impl(
+            self,
+            uid,
+            text,
+            user_gender=user_gender,
+        )
+
+        try:
+            await self._update_self_patterns(uid, text)
+        except Exception:
+            logger.debug("Persona._update_self_patterns failed", exc_info=True)
+
+        return result
 
     def _prune_memfu_cache(self) -> None:
         try:
@@ -1076,9 +1342,10 @@ class Persona:
             pass
 
     async def close(self) -> None:
-        t = getattr(self, "_bg_task", None)
-        if t and not t.done():
+        wt = getattr(self, "_worker_task", None)
+        if wt and not wt.done():
             try:
+                self._bg_stop = True
                 n = int(getattr(settings, "BG_WORKER_CONCURRENCY", 8))
             except Exception:
                 n = 8
@@ -1095,26 +1362,30 @@ class Persona:
                     if sent:
                         timeout = float(getattr(settings, "BG_DRAIN_TIMEOUT", 1.5))
                         try:
-                            await asyncio.wait_for(t, timeout=timeout)
+                            await asyncio.wait_for(wt, timeout=timeout)
                         except asyncio.TimeoutError:
                             pass
             except Exception:
                 logger.debug("persona.close drain failed", exc_info=True)
-            t.cancel()
-            try:
-                await t
-            except asyncio.CancelledError:
-                pass
-        wt = getattr(self, "_worker_task", None)
+
         if wt and not wt.done():
             wt.cancel()
             try:
                 await wt
             except asyncio.CancelledError:
                 pass
+
+        sn = getattr(self, "self_net", None)
+        if sn is not None and hasattr(sn, "close"):
+            try:
+                res = sn.close()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                logger.debug("SelfNeuronNetwork.close failed", exc_info=True)
+
         self._worker_task = None
         self._bg_started = False
-        self._bg_task = None
         pending = [x for x in list(self._spawned_tasks) if not x.done()]
         for x in pending:
             x.cancel()
@@ -1138,10 +1409,19 @@ class Persona:
         except Exception:
             return text.replace("\n", " ").strip()
 
-    T = TypeVar("T")
+    def _normalize_mem_text(self, text: str, *, max_len_setting: str = "MEM_MAX_TEXT_LEN") -> str:
+        try:
+            max_len = int(getattr(settings, max_len_setting, 1000))
+        except Exception:
+            max_len = 1000
+        base = re.sub(r"\s+", " ", text or "").strip()
+        if len(base) > max_len:
+            base = base[:max_len]
+        return base
+
     def _spawn(
         self,
-        fn_or_coro: Callable[[], Coroutine[Any, Any, T]] | Coroutine[Any, Any, T] | asyncio.Task[T],
+        fn_or_coro: Callable[[], Awaitable[T]] | Awaitable[T] | asyncio.Task[T],
         *,
         name: Optional[str] = None,
     ) -> asyncio.Task[T]:
@@ -1149,20 +1429,46 @@ class Persona:
         if isinstance(fn_or_coro, asyncio.Task):
             t: asyncio.Task[T] = fn_or_coro
         elif inspect.iscoroutine(fn_or_coro):
-            raise TypeError("_spawn(): pass a callable (async function) or Task, not a coroutine object")
+            t = asyncio.create_task(fn_or_coro, name=name or "spawned-coro")
         elif callable(fn_or_coro):
-            if inspect.iscoroutinefunction(fn_or_coro):
-                t = asyncio.create_task(fn_or_coro(), name=name or "spawned-task")
+            target = getattr(fn_or_coro, "__func__", fn_or_coro)
+
+            if inspect.iscoroutinefunction(target):
+                async def _runner_direct(fn: Callable[[], Awaitable[T]]) -> T:
+                    try:
+                        return await fn()
+                    except Exception as exc:
+                        logger.error(
+                            "Exception in async callable %s: %s", fn, exc, exc_info=True
+                        )
+                        raise
+
+                t = asyncio.create_task(
+                    _runner_direct(fn_or_coro),
+                    name=name or "spawned-task",
+                )
             else:
-                async def _runner_call_maybe_coro(fn: Callable[[], Any]):
-                    res = await asyncio.to_thread(fn)
+                async def _runner_call_maybe_coro(fn: Callable[[], Any]) -> T:
+                    try:
+                        res = await asyncio.to_thread(fn)
+                    except Exception as exc:
+                        logger.error("Exception in threaded callable %s: %s", fn, exc, exc_info=True)
+                        raise
                     if inspect.iscoroutine(res):
                         return await res
                     return res
-                t = asyncio.create_task(_runner_call_maybe_coro(fn_or_coro), name=name or "spawned-task")
-        else:
-            raise TypeError(f"_spawn(): expected coroutine/callable/Task, got {type(fn_or_coro)!r}")
 
+                t = asyncio.create_task(
+                    _runner_call_maybe_coro(fn_or_coro),
+                    name=name or "spawned-task",
+                )
+        else:
+            raise TypeError(
+                f"_spawn(): expected async callable, Task, or sync callable; "
+                f"got {type(fn_or_coro)!r}. Did you accidentally pass a coroutine object?"
+            )
+
+        self._spawned_tasks = {tsk for tsk in self._spawned_tasks if not tsk.done()}
         self._spawned_tasks.add(t)
 
         def _done(fut: asyncio.Task[T]) -> None:
@@ -1179,10 +1485,20 @@ class Persona:
         t.add_done_callback(_done)
         return t
 
-    def spawn_coro(self, coro_fn: Callable[..., Coroutine[Any, Any, T]], *args, name: Optional[str] = None, **kwargs) -> asyncio.Task[T]:
+    def spawn_coro(self, coro_fn: Callable[..., Awaitable[T]], *args, name: Optional[str] = None, **kwargs) -> asyncio.Task[T]:
 
         if not inspect.iscoroutinefunction(coro_fn):
             raise TypeError("spawn_coro expects an async function")
-        async def _runner():
+        
+        async def _runner() -> T:
             return await coro_fn(*args, **kwargs)
         return self._spawn(_runner, name=name or "spawned-coro")
+        
+    def compute_salience(self, readings: dict, text: str) -> float:
+        return self._compute_salience(readings, text)
+
+    def decayed_weight(self, uid: int) -> float:
+        return self._decayed_weight(uid)
+
+    def effective_person_weight(self, uid: int, base_weight: float) -> float:
+        return self._effective_person_weight(uid, base_weight)

@@ -130,7 +130,7 @@ class TextAnalyzer:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
-                    model=settings.REASONING_MODEL,
+                    model=settings.BASE_MODEL,
                     instructions=system_prompt,
                     input=user_prompt,
                     text={
@@ -144,7 +144,7 @@ class TextAnalyzer:
                     temperature=0,
                     max_output_tokens=300,
                 ),
-                settings.REASONING_MODEL_TIMEOUT
+                settings.BASE_MODEL_TIMEOUT
             )
             content = (_get_output_text(resp) or "").strip()
         except Exception:

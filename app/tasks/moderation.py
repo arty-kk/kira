@@ -6,18 +6,12 @@ import asyncio
 import logging
 
 from celery import shared_task
-from app.tasks.utils.bg_loop import get_bg_loop
+from app.tasks.celery_app import _run
 
 
 logger = logging.getLogger(__name__)
 
 MODERATION_TIMEOUT = int(os.getenv("MODERATION_TIMEOUT", "30"))
-
-
-def _run(coro):
-    loop = get_bg_loop()
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
 
 
 @shared_task(name="moderation.passive_moderate", bind=True, acks_late=True)

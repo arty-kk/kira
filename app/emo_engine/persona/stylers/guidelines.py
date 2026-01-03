@@ -22,10 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 def _metric(state: Dict[str, float], mods: Dict[str, float], key: str, fallback: float = 0.5) -> float:
+    if not key:
+        return float(fallback)
     raw = mods.get(key)
     if raw is None:
         raw = state.get(key.replace("_mod", ""), fallback)
-    return float(raw)
+    try:
+        return float(raw)
+    except Exception:
+        return float(fallback)
 
 
 def _append_once(gl: list[str], flag: str) -> None:
@@ -194,6 +199,9 @@ async def style_guidelines(
         "prev_addr": prev_addr,
     }
 
+    snapshot["mode_id"] = getattr(self, "current_mode_id", None)
+    snapshot["mode_stats"] = getattr(self, "current_mode_stats", None) or {}
+
     snapshot["tone_hist"] = getattr(self, "_tone_hist", [])
 
     loop = asyncio.get_running_loop()
@@ -211,7 +219,22 @@ async def style_guidelines(
     self._prev_address_score = result["address_score"]
 
     base_flags = result["flags"]
-    extras = _gather_extras(self, state, max_items, mods)
+
+    mode_stats = getattr(self, "current_mode_stats", None) or {}
+    try:
+        novelty = float(mode_stats.get("novelty", 0.0))
+    except Exception:
+        novelty = 0.0
+    try:
+        coherence = float(mode_stats.get("coherence", 0.5))
+    except Exception:
+        coherence = 0.5
+
+    creativity_drive = max(0.0, min(1.0, 0.6 * novelty + 0.4 * (1.0 - coherence)))
+    extra_scale = 0.7 + 0.7 * creativity_drive   # 0.7 .. 1.4
+    eff_max_for_extras = max(2, int(round(max_items * extra_scale)))
+
+    extras = _gather_extras(self, state, eff_max_for_extras, mods)
     hostility = _compute_hostility(state, mods)
     _set_flag(base_flags, "HostilityLevel", f"HostilityLevel={_hostility_code(hostility)}")
 
@@ -230,7 +253,7 @@ async def style_guidelines(
             trust_ema = float(getattr(self, "attachments", {}).get(uid, {}).get("trust_ema", 0.5))
         except Exception:
             trust_ema = None
-    min_trust = float(getattr(settings, "MEMORYFOLLOWUP_MIN_TRUST", 0.35))
+    min_trust = float(getattr(settings, "MEMORYFOLLOWUP_MIN_TRUST", 0.3))
     if trust_ema is not None and trust_ema < min_trust:
         allow_mem_fu = False
     if allow_mem_fu:
@@ -261,7 +284,7 @@ async def style_guidelines(
                     hits = []
                 if hits:
                     _txt, _sim = hits[0]
-                    thr = float(getattr(settings, "MIN_MEMORY_SIMILARITY", 0.62))
+                    thr = float(getattr(settings, "MIN_MEMORY_SIMILARITY", 0.28))
                     if _sim >= thr:
                         extras.append("RecallPastSnippet")
     except Exception:
@@ -327,8 +350,34 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     prev_int = snapshot["prev_int"]
     prev_addr = snapshot["prev_addr"]
     dominant  = snapshot.get("dominant")
+    mode_id   = snapshot.get("mode_id")
+    mode_stats = snapshot.get("mode_stats") or {}
 
     gl: List[str] = []
+
+    def _as_f(stats: dict, key: str, default: float) -> float:
+        try:
+            return float(stats.get(key, default))
+        except Exception:
+            return default
+
+    mode_nov = _as_f(mode_stats, "novelty", 0.0)
+    mode_coh = _as_f(mode_stats, "coherence", 0.5)
+    mode_int = _as_f(mode_stats, "intensity", 0.5)
+    mode_cplx = _as_f(mode_stats, "complexity", 0.0)
+
+    mode_exp_drive = max(0.0, min(1.0, 0.6 * mode_nov + 0.3 * mode_int + 0.1 * mode_cplx))
+    mode_stab_drive = max(
+        0.0,
+        min(1.0, 0.6 * mode_coh + 0.2 * (1.0 - mode_nov) + 0.2 * (1.0 - mode_int)),
+    )
+
+    try:
+        mode_index = None
+        if isinstance(mode_id, str) and mode_id.startswith("mode_"):
+            mode_index = int(mode_id.split("_", 1)[1])
+    except Exception:
+        mode_index = None
 
     civ = float(mods.get("civility_mod", state.get("civility", 0.5)))
     hostility = _compute_hostility(state, mods)
@@ -494,6 +543,22 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         denom = max(1e-6, (100.0 - knee))
         intensity_pct = knee + (100.0 - knee) * (1.0 - math.exp(-over / denom))
 
+    mode_factor = 1.0 + 0.18 * (mode_exp_drive - mode_stab_drive)
+    if mode_factor < 0.80:
+        mode_factor = 0.80
+    elif mode_factor > 1.25:
+        mode_factor = 1.25
+
+    intensity_pct *= mode_factor
+
+    if mode_index is None or mode_index == 0:
+        mid = 55.0
+        dev = intensity_pct - mid
+        intensity_pct = mid + 0.7 * dev
+    elif mode_index is not None and mode_index >= 6:
+        if intensity_pct < 40.0:
+            intensity_pct = 40.0 + 0.6 * (intensity_pct - 40.0)
+
     intensity_pct = max(0.0, min(100.0, intensity_pct))
     _set_flag(gl, "EmotionalIntensity", f"EmotionalIntensity={_ei_code(intensity_pct)}")
 
@@ -516,6 +581,13 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         addr_score = max(0.0, min(1.0, addr_score + rng_addr.uniform(-noise_amp, noise_amp)))
         addr_score -= 0.5 * hostility * (0.7 + 0.3 * (1.0 - civ))
         addr_score = max(0.0, min(1.0, addr_score))
+
+        if mode_index is None or mode_index == 0:
+            mid = 0.5
+            dev = addr_score - mid
+            addr_score = max(0.0, min(1.0, mid + 0.7 * dev))
+        elif mode_index is not None and mode_index >= 6:
+            addr_score = max(0.0, min(1.0, addr_score + 0.10 * mode_exp_drive))
 
         v_pos = (v_signed + 1.0) * 0.5
         thr_warm     = 0.65 + 0.20 * (1.0 - v_pos)

@@ -35,10 +35,12 @@ celery = Celery(
     backend=None,
     include=[
         "app.tasks.summarize",
+        "app.tasks.gifts",
         "app.tasks.periodic",
         "app.tasks.welcome",
         "app.tasks.moderation",
         "app.tasks.api_cleanup",
+        "app.tasks.kb"
     ],
 )
 

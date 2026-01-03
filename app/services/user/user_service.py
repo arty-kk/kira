@@ -3,13 +3,11 @@ from __future__ import annotations
 
 import logging
 
-from typing import Optional
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import case, and_, or_, func, update
+from sqlalchemy import func, update
 
 from aiogram.types import User as TelegramUser
 
@@ -41,26 +39,65 @@ async def get_or_create_user(db: AsyncSession, tg_user: TelegramUser) -> User:
     user = await db.get(User, user_id)
     return user
 
-async def increment_usage(db: AsyncSession, user_id: int) -> None:
-    dec_free = case((User.free_requests > 0, User.free_requests - 1), else_=User.free_requests)
-    dec_paid = case(
-        (and_(User.free_requests <= 0, User.paid_requests > 0), User.paid_requests - 1),
-        else_=User.paid_requests,
-    )
+@dataclass(frozen=True)
+class ConsumeResult:
+    consumed: bool
+    used_paid: bool
+
+async def consume_request(db: AsyncSession, user_id: int, *, prefer_paid: bool = False) -> ConsumeResult:
+
+    if prefer_paid:
+        res = await db.execute(
+            update(User)
+            .where(User.id == user_id, User.paid_requests > 0)
+            .values(
+                paid_requests=User.paid_requests - 1,
+                used_requests=User.used_requests + 1,
+            )
+            .returning(User.id)
+        )
+        if res.scalar() is not None:
+            return ConsumeResult(consumed=True, used_paid=True)
+
+        res2 = await db.execute(
+            update(User)
+            .where(User.id == user_id, User.free_requests > 0)
+            .values(
+                free_requests=User.free_requests - 1,
+                used_requests=User.used_requests + 1,
+            )
+            .returning(User.id)
+        )
+        return ConsumeResult(consumed=(res2.scalar() is not None), used_paid=False)
+
     res = await db.execute(
         update(User)
-        .where(
-            User.id == user_id,
-            or_(User.free_requests > 0, User.paid_requests > 0),
-        )
+        .where(User.id == user_id, User.free_requests > 0)
         .values(
-            free_requests=dec_free,
-            paid_requests=dec_paid,
+            free_requests=User.free_requests - 1,
             used_requests=User.used_requests + 1,
         )
         .returning(User.id)
     )
-    if res.scalar() is None:
+    if res.scalar() is not None:
+        return ConsumeResult(consumed=True, used_paid=False)
+
+    res2 = await db.execute(
+        update(User)
+        .where(User.id == user_id, User.paid_requests > 0)
+        .values(
+            paid_requests=User.paid_requests - 1,
+            used_requests=User.used_requests + 1,
+        )
+        .returning(User.id)
+    )
+    if res2.scalar() is not None:
+        return ConsumeResult(consumed=True, used_paid=True)
+    return ConsumeResult(consumed=False, used_paid=False)
+
+async def increment_usage(db: AsyncSession, user_id: int) -> None:
+    r = await consume_request(db, user_id, prefer_paid=False)
+    if not r.consumed:
         logger.warning("User %s tried to use request with zero balance", user_id)
 
 async def add_paid_requests(db: AsyncSession, user_id: int, amount: int) -> None:
@@ -79,7 +116,9 @@ async def add_paid_requests(db: AsyncSession, user_id: int, amount: int) -> None
     )
 
 def compute_remaining(user: User) -> int:
-    return user.free_requests + user.paid_requests
+    free = int(getattr(user, "free_requests", 0) or 0)
+    paid = int(getattr(user, "paid_requests", 0) or 0)
+    return max(0, free + paid)
 
 def get_total_paid_usd(user: User) -> float:
     cents = int(getattr(user, "total_paid_cents", 0) or 0)

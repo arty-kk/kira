@@ -70,22 +70,24 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
     key: _Key = (chat_id, user_id or 0, 1 if group_mode else 0)
     closers: list[Persona] = []
     persona_hit: Persona | None = None
+    fut: asyncio.Future[Persona] | None = None
 
     async with _lock:
         entry = _cache.get(key)
+        now = _now()
         if entry is not None:
             persona, ts = entry
-            now = _now()
             if now - ts <= _TTL:
                 _cache[key] = (persona, now)
                 _cache.move_to_end(key, last=True)
                 logger.debug("persona.cache hit key=%s", key)
-                closers += _purge_locked(now)
                 persona_hit = persona
             else:
                 _cache.pop(key, None)
+                persona_hit = None
         else:
             persona_hit = None
+
         fut = _inflight.get(key)
         if persona_hit is None and fut is None:
             loop = asyncio.get_running_loop()
@@ -94,7 +96,8 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
             creator = True
         else:
             creator = False
-        closers += _purge_locked(_now())
+
+        closers += _purge_locked(now)
 
     _schedule_closes(closers)
 
@@ -107,7 +110,8 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
 
     if not creator:
         logger.debug("persona.cache wait key=%s – awaiting in-flight build", key)
-        return await _inflight[key]
+        assert fut is not None
+        return await fut
 
     logger.debug("persona.cache miss key=%s – constructing", key)
 

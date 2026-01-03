@@ -15,7 +15,7 @@ from typing import Any, Dict, Set
 from app.config import settings
 from app.clients.openai_client import get_openai
 from app.core.memory import get_redis_queue, close_redis_pools
-from app.services.responder.core import respond_to_user
+from app.services.responder import respond_to_user
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
     memory_uid = job.get("memory_uid")
     persona_owner_id = job.get("persona_owner_id")
     billing_tier = job.get("billing_tier")
+    if isinstance(billing_tier, (bytes, bytearray)):
+        billing_tier = billing_tier.decode("utf-8", "ignore")
+    if billing_tier is not None and not isinstance(billing_tier, str):
+        billing_tier = str(billing_tier)
+    billing_tier = (billing_tier or "").strip().lower() or None
+    if billing_tier not in ("paid", "free", "none"):
+        billing_tier = None
     result_key = job.get("result_key")
     msg_id = job.get("msg_id")
     image_b64 = job.get("image_b64")
