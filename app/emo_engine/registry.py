@@ -84,6 +84,7 @@ async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: b
                 persona_hit = persona
             else:
                 _cache.pop(key, None)
+                closers.append(persona)
                 persona_hit = None
         else:
             persona_hit = None
