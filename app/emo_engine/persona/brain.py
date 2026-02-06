@@ -165,6 +165,12 @@ class PersonaBrain:
                 suffix += 1
 
             make_learned_secondary(name, {a: 0.5, b: 0.5})
+            parent = getattr(self, "parent", None)
+            if parent is not None and hasattr(parent, "register_metric"):
+                parent.register_metric(name)
+            else:
+                # Без контекста Persona новые метрики применяются только для новых сессий.
+                pass
             self.learned_metrics[name] = (a, b)
 
             self.state.setdefault(name, 0.0)

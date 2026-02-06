@@ -459,6 +459,8 @@ def make_learned_secondary(
     SECONDARY_EMOTIONS.setdefault("derived", {})[name] = _fn
     SECONDARY_KEYS.append(name)
     ALL_METRICS.append(name)
+    from ..utils.emotion_math import refresh_dynamic_metrics
+    refresh_dynamic_metrics()
 
     METRIC_SPECS[name] = MetricSpec(
         name=name,
