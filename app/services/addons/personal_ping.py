@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 LAST_PRIVATE_TS_KEY = "last_private_ts:{}"
 IDLE_LIST_KEY = "private_idle_list:{}"
 PING_SCHEDULE_KEY = "personal_ping_schedule"
+PING_SCHEDULE_INFLIGHT = "personal_ping_schedule_inflight"
 PING_STREAK_KEY = "personal_ping_streak:{}"
 PENDING_PING_KEY = "pending_ping:{}"
 ARM_STATS_KEY    = "ping_arm_stats:{}"
@@ -74,6 +75,7 @@ _REANIMATE_IDLE_HOURS     = getattr(settings, "PERSONAL_PING_REANIMATE_IDLE_HOUR
 _REANIMATE_MIN_GAP_HOURS  = getattr(settings, "PERSONAL_PING_REANIMATE_MIN_GAP_HOURS", 168)
 
 _CLAIM_DUE_SHA: str | None = None
+_REQUEUE_INFLIGHT_SHA: str | None = None
 _BACKOFF_MULT = getattr(settings, "PERSONAL_PING_BACKOFF_MULT", 3.0)
 _BACKOFF_MAX_HOURS = getattr(settings, "PERSONAL_PING_BACKOFF_MAX_HOURS", 48)
 _BACKOFF_JITTER_PCT = getattr(settings, "PERSONAL_PING_BACKOFF_JITTER_PCT", 0.10)
@@ -82,6 +84,7 @@ _RANDOM_MIN_HOURS = getattr(settings, "PERSONAL_PING_RANDOM_MIN_HOURS", 2)
 _RANDOM_MAX_HOURS = getattr(settings, "PERSONAL_PING_RANDOM_MAX_HOURS", 8)
 
 _ARM_STATS_TTL = getattr(settings, "PERSONAL_PING_ARM_STATS_TTL_SECONDS", 30 * 24 * 3600)
+_PING_INFLIGHT_LEASE_SECONDS = getattr(settings, "PERSONAL_PING_INFLIGHT_LEASE_SECONDS", 120)
 
 MOTIVES: dict[str, str] = {
     "missed_you": "You genuinely missed the user; a mild natural warmth.",
@@ -708,8 +711,7 @@ async def purge_user_state(user_id: int, reason: str) -> None:
     except Exception:
         logger.exception("DB delete failed for user_id=%s reason=%s", user_id, reason)
 
-async def schedule_next_ping(user_id: int, reference_ts: float) -> None:
-
+async def _calculate_next_ping_ts(user_id: int, reference_ts: float) -> float:
     redis = get_redis()
 
     hist_key = IDLE_LIST_KEY.format(user_id)
@@ -792,6 +794,11 @@ async def schedule_next_ping(user_id: int, reference_ts: float) -> None:
     except Exception:
         pass
 
+    return next_ts
+
+async def schedule_next_ping(user_id: int, reference_ts: float) -> None:
+    redis = get_redis()
+    next_ts = await _calculate_next_ping_ts(user_id, reference_ts)
     try:
         async with redis.pipeline(transaction=True) as pipe:
             pipe.zrem(PING_SCHEDULE_KEY, str(user_id))
@@ -857,29 +864,119 @@ async def schedule_random_ping(user_id: int, reference_ts: float) -> None:
 
 CLAIM_DUE_LUA = """
 -- KEYS[1] = schedule zset
--- ARGV[1] = now_ts, ARGV[2] = batch_size
+-- KEYS[2] = inflight zset
+-- ARGV[1] = now_ts, ARGV[2] = batch_size, ARGV[3] = lease_seconds, ARGV[4] = reclaim_limit
 local now_ts = tonumber(ARGV[1])
 local n = tonumber(ARGV[2]) or 50
+local lease = tonumber(ARGV[3]) or 120
+local reclaim = tonumber(ARGV[4]) or n
+local expired = redis.call('ZRANGEBYSCORE', KEYS[2], 0, now_ts, 'LIMIT', 0, reclaim)
+if #expired > 0 then
+  redis.call('ZREM', KEYS[2], unpack(expired))
+  for _, uid in ipairs(expired) do
+    redis.call('ZADD', KEYS[1], now_ts, uid)
+  end
+end
 local due = redis.call('ZRANGEBYSCORE', KEYS[1], 0, now_ts, 'LIMIT', 0, n)
 if #due == 0 then return {} end
 redis.call('ZREM', KEYS[1], unpack(due))
+local lease_until = now_ts + lease
+for _, uid in ipairs(due) do
+  redis.call('ZADD', KEYS[2], lease_until, uid)
+end
 return due
+"""
+
+REQUEUE_INFLIGHT_LUA = """
+-- KEYS[1] = schedule zset
+-- KEYS[2] = inflight zset
+-- ARGV[1] = uid, ARGV[2] = target_ts
+local uid = ARGV[1]
+local target_ts = tonumber(ARGV[2])
+if not uid or not target_ts then return 0 end
+redis.call('ZREM', KEYS[2], uid)
+redis.call('ZADD', KEYS[1], target_ts, uid)
+return 1
 """
 
 async def claim_due(redis, now_ts: float, batch_size: int):
     global _CLAIM_DUE_SHA
     try:
         if _CLAIM_DUE_SHA:
-            return await redis.evalsha(_CLAIM_DUE_SHA, 1, PING_SCHEDULE_KEY, now_ts, int(batch_size))
+            return await redis.evalsha(
+                _CLAIM_DUE_SHA,
+                2,
+                PING_SCHEDULE_KEY,
+                PING_SCHEDULE_INFLIGHT,
+                now_ts,
+                int(batch_size),
+                int(_PING_INFLIGHT_LEASE_SECONDS),
+                int(batch_size),
+            )
     except RedisError as e:
         if "NOSCRIPT" not in str(e):
             raise
         _CLAIM_DUE_SHA = None
     try:
         _CLAIM_DUE_SHA = await redis.script_load(CLAIM_DUE_LUA)
-        return await redis.evalsha(_CLAIM_DUE_SHA, 1, PING_SCHEDULE_KEY, now_ts, int(batch_size))
+        return await redis.evalsha(
+            _CLAIM_DUE_SHA,
+            2,
+            PING_SCHEDULE_KEY,
+            PING_SCHEDULE_INFLIGHT,
+            now_ts,
+            int(batch_size),
+            int(_PING_INFLIGHT_LEASE_SECONDS),
+            int(batch_size),
+        )
     except RedisError:
-        return await redis.eval(CLAIM_DUE_LUA, 1, PING_SCHEDULE_KEY, now_ts, int(batch_size))
+        return await redis.eval(
+            CLAIM_DUE_LUA,
+            2,
+            PING_SCHEDULE_KEY,
+            PING_SCHEDULE_INFLIGHT,
+            now_ts,
+            int(batch_size),
+            int(_PING_INFLIGHT_LEASE_SECONDS),
+            int(batch_size),
+        )
+
+async def requeue_inflight(redis, uid: str, target_ts: float) -> None:
+    global _REQUEUE_INFLIGHT_SHA
+    try:
+        if _REQUEUE_INFLIGHT_SHA:
+            await redis.evalsha(
+                _REQUEUE_INFLIGHT_SHA,
+                2,
+                PING_SCHEDULE_KEY,
+                PING_SCHEDULE_INFLIGHT,
+                uid,
+                float(target_ts),
+            )
+            return
+    except RedisError as e:
+        if "NOSCRIPT" not in str(e):
+            raise
+        _REQUEUE_INFLIGHT_SHA = None
+    try:
+        _REQUEUE_INFLIGHT_SHA = await redis.script_load(REQUEUE_INFLIGHT_LUA)
+        await redis.evalsha(
+            _REQUEUE_INFLIGHT_SHA,
+            2,
+            PING_SCHEDULE_KEY,
+            PING_SCHEDULE_INFLIGHT,
+            uid,
+            float(target_ts),
+        )
+    except RedisError:
+        await redis.eval(
+            REQUEUE_INFLIGHT_LUA,
+            2,
+            PING_SCHEDULE_KEY,
+            PING_SCHEDULE_INFLIGHT,
+            uid,
+            float(target_ts),
+        )
 
 async def personal_ping() -> None:
     redis = get_redis()
@@ -888,6 +985,10 @@ async def personal_ping() -> None:
         now = time_module.time()
         try:
             raw = await claim_due(redis, now, settings.PERSONAL_PING_BATCH_SIZE)
+            try:
+                await redis.expire(PING_SCHEDULE_INFLIGHT, settings.PERSONAL_PING_RETENTION_SECONDS)
+            except RedisError:
+                logger.debug("personal_ping: cannot update inflight TTL", exc_info=True)
         except RedisError:
             logger.debug("personal_ping: cannot claim schedule")
             return
@@ -906,15 +1007,22 @@ async def personal_ping() -> None:
             logger.debug("personal_ping: EXISTS check failed; requeueing due users")
             try:
                 when = time_module.time() + 60 + random.uniform(-10, 20)
-                async with redis.pipeline(transaction=True) as pipe:
-                    for uid in due:
-                        pipe.zadd(PING_SCHEDULE_KEY, {str(uid): when})
-                    pipe.expire(PING_SCHEDULE_KEY, settings.PERSONAL_PING_RETENTION_SECONDS)
-                    await pipe.execute()
+                for uid in due:
+                    await requeue_inflight(redis, str(uid), when)
+                await redis.expire(PING_SCHEDULE_KEY, settings.PERSONAL_PING_RETENTION_SECONDS)
             except RedisError:
                 logger.exception("personal_ping: requeue after EXISTS failure failed")
             continue
-        due = [uid for uid, alive in zip(due, exists_flags) if int(alive) == 1]
+        alive_due = []
+        for uid, alive in zip(due, exists_flags):
+            if int(alive) == 1:
+                alive_due.append(uid)
+            else:
+                try:
+                    await redis.zrem(PING_SCHEDULE_INFLIGHT, str(uid))
+                except RedisError:
+                    logger.debug("personal_ping: failed to drop inflight uid=%s", uid, exc_info=True)
+        due = alive_due
         if not due:
             continue
 
@@ -927,20 +1035,24 @@ async def personal_ping() -> None:
                 continue
 
             async def safe_handle(uid: int):
+                success = False
                 try:
                     await asyncio.wait_for(handle_user_ping(uid, uid), timeout=75)
+                    success = True
                 except asyncio.TimeoutError:
                     logger.warning("personal_ping: user %s timed out — rescheduling", uid)
-                    try:
-                        await schedule_next_ping(uid, time_module.time())
-                    except Exception:
-                        logger.exception("personal_ping: reschedule after timeout failed for %s", uid)
                 except Exception:
                     logger.exception("personal_ping: error for user %s", uid)
+                finally:
                     try:
-                        await schedule_next_ping(uid, time_module.time())
-                    except Exception:
-                        logger.exception("personal_ping: reschedule after error failed for %s", uid)
+                        await redis.zrem(PING_SCHEDULE_INFLIGHT, str(uid))
+                    except RedisError:
+                        logger.debug(
+                            "personal_ping: failed to clear inflight uid=%s success=%s",
+                            uid,
+                            success,
+                            exc_info=True,
+                        )
             tasks.append(safe_handle(user_id))
 
         if tasks:

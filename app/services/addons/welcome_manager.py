@@ -115,7 +115,11 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
         gender = await get_cached_gender(user.id)
     user_gender_val = gender if gender in ("male", "female") else None
 
-    style_mods = await persona.style_modifiers() or {}
+    try:
+        style_mods = await persona.style_modifiers() or {}
+    except Exception:
+        logger.exception("style_modifiers acquisition failed (group)")
+        style_mods = persona._mods_cache or {}
     mods = _merge_and_clamp_mods(style_mods)
     guidelines = await persona.style_guidelines(user.id)
 

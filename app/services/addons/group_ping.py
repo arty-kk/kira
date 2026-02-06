@@ -428,14 +428,19 @@ return nil
 
 
 async def _send_with_retry(chat_id: int, text: str) -> int | None:
+    max_attempts = int(getattr(settings, "GROUP_PING_SEND_MAX_ATTEMPTS", 4))
+    max_attempts = max(1, min(max_attempts, 10))
     attempt = 1
-    while True:
+    while attempt <= max_attempts:
         try:
             msg = await bot.send_message(chat_id, text, parse_mode="HTML")
             return int(msg.message_id)
         except TelegramRetryAfter as e:
             delay = max(1, int(getattr(e, "retry_after", 5)))
             logger.warning("RetryAfter %ss on send_message (attempt %d)", delay, attempt)
+            if attempt >= max_attempts:
+                logger.warning("send_message exceeded retry limit (%d) after RetryAfter", max_attempts)
+                return None
             await asyncio.sleep(delay)
             attempt += 1
         except TelegramBadRequest as e:
@@ -445,11 +450,12 @@ async def _send_with_retry(chat_id: int, text: str) -> int | None:
             logger.warning("Forbidden on send_message: %s", e)
             return None
         except Exception as e:
-            if attempt >= 3:
+            if attempt >= max_attempts:
                 logger.exception("send_message failed after %d attempts: %s", attempt, e)
                 return None
             await asyncio.sleep(1.5 * attempt)
             attempt += 1
+    return None
 
 
 async def group_ping() -> None:
