@@ -6,7 +6,7 @@ import json
 import time as time_module
 
 import aiofiles
-from aiohttp import web
+from aiohttp import web, ContentTypeError
 from aiogram import types
 from aiogram.types import FSInputFile
 
@@ -86,8 +86,17 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
 
     async def handle_webhook(request: web.Request) -> web.Response:
 
-        data = await request.json()
+        try:
+            data = await request.json()
+        except (json.JSONDecodeError, ContentTypeError):
+            logger.warning("Invalid webhook payload", exc_info=True)
+            return web.Response(status=400)
+
         update_id = data.get("update_id")
+
+        if update_id is None:
+            logger.warning("Webhook payload missing update_id: %s", data)
+            return web.Response(status=200)
 
         response = web.Response(status=200)
 
