@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
-import random
 import math
+import random
 import re
-import time
 import secrets
+import time
 
 from typing import Dict, List, Set, Tuple, Optional
 
@@ -187,6 +189,9 @@ async def style_guidelines(
     prev_addr = getattr(self, "_prev_address_score", None)
 
     snapshot = {
+        "chat_id": getattr(self, "chat_id", None),
+        "state_version": getattr(self, "state_version", None),
+        "uid": uid,
         "state": state.copy(),
         "mods": mods.copy(),
         "weight": weight,
@@ -456,7 +461,18 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         probs = []
 
     state_seed = int(snapshot["state"].get("seed", 0)) & 0xFFFFFFFF
-    base_seed = (hash((n, prev_int, prev_addr)) & 0xFFFFFFFF) if (n is not None) else secrets.randbits(32)
+    if n is None:
+        base_seed = secrets.randbits(32)
+    else:
+        payload = [
+            snapshot.get("chat_id"),
+            snapshot.get("state_version"),
+            snapshot.get("uid"),
+            prev_int,
+            prev_addr,
+        ]
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=False)
+        base_seed = int.from_bytes(hashlib.sha256(serialized.encode("utf-8")).digest()[:4], "big") & 0xFFFFFFFF
     seed = (base_seed ^ state_seed) & 0xFFFFFFFF
     rng = random.Random(seed)
     r = rng.random()
