@@ -10,7 +10,7 @@ import secrets
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, constr, model_validator
-from sqlalchemy import select
+from sqlalchemy import case, literal, or_, select, update
 
 from app.config import settings
 from app.core.db import session_scope
@@ -277,14 +277,41 @@ async def conversation_endpoint(
     async with session_scope(
         stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
     ) as db:
-        res = await db.execute(
-            select(User)
+        billing_cte = (
+            select(
+                User.id,
+                User.free_requests,
+                User.paid_requests,
+                User.used_requests,
+            )
             .where(User.id == owner_id)
-            .with_for_update()
+            .cte("billing_cte")
         )
-        user = res.scalar_one_or_none()
+        billing_stmt = (
+            update(User)
+            .where(User.id == billing_cte.c.id)
+            .where(or_(billing_cte.c.free_requests > 0, billing_cte.c.paid_requests > 0))
+            .values(
+                free_requests=case(
+                    (billing_cte.c.free_requests > 0, billing_cte.c.free_requests - 1),
+                    else_=billing_cte.c.free_requests,
+                ),
+                paid_requests=case(
+                    (billing_cte.c.free_requests > 0, billing_cte.c.paid_requests),
+                    else_=billing_cte.c.paid_requests - 1,
+                ),
+                used_requests=billing_cte.c.used_requests + 1,
+            )
+            .returning(
+                case(
+                    (billing_cte.c.free_requests > 0, literal("free")),
+                    else_=literal("paid"),
+                ).label("billing_tier")
+            )
+        )
+        billing_tier = (await db.execute(billing_stmt)).scalar_one_or_none()
 
-        if not user or (user.free_requests <= 0 and user.paid_requests <= 0):
+        if not billing_tier:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
                 detail={
@@ -293,33 +320,43 @@ async def conversation_endpoint(
                 },
             )
 
-        if user.free_requests > 0:
-            billing_tier = "free"
-            user.free_requests -= 1
-        else:
-            billing_tier = "paid"
-            user.paid_requests -= 1
-
-        user.used_requests += 1
-        await db.flush()
-
         if payload.persona is not None:
             raw_prefs = payload.persona.model_dump(exclude_unset=True, exclude_none=True)
             norm = normalize_prefs(raw_prefs)
             if norm:
                 if getattr(settings, "API_PERSONA_PER_KEY", True):
-                    ak = await db.get(ApiKey, api_key_id)
-                    if not ak:
+                    ak_result = await db.execute(
+                        select(ApiKey.persona_prefs).where(ApiKey.id == api_key_id)
+                    )
+                    ak_row = ak_result.one_or_none()
+                    if ak_row is None:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
                             detail={"code": "invalid_api_key", "message": "Invalid or inactive API key"},
                         )
-                    ak.persona_prefs = merge_prefs(ak.persona_prefs, norm)
+                    ak_prefs = ak_row[0]
+                    await db.execute(
+                        update(ApiKey)
+                        .where(ApiKey.id == api_key_id)
+                        .values(persona_prefs=merge_prefs(ak_prefs, norm))
+                    )
                 else:
-                    user.persona_prefs = merge_prefs(user.persona_prefs, norm)
+                    user_result = await db.execute(
+                        select(User.persona_prefs).where(User.id == owner_id)
+                    )
+                    user_row = user_result.one_or_none()
+                    if user_row is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail={"code": "invalid_user", "message": "Invalid or inactive user"},
+                        )
+                    user_prefs = user_row[0]
+                    await db.execute(
+                        update(User)
+                        .where(User.id == owner_id)
+                        .values(persona_prefs=merge_prefs(user_prefs, norm))
+                    )
                 norm_prefs = norm
-
-        await db.flush()
 
     if norm_prefs:
         try:
