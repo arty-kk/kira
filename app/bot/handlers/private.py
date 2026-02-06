@@ -33,7 +33,14 @@ from sqlalchemy.sql import func
 from app.api.api_keys import create_key, deactivate_key, list_keys_for_user
 from app.bot.components.constants import WELCOME_MESSAGES, redis_client
 from app.bot.components.dispatcher import dp
-from app.bot.handlers.payments import cmd_buy, show_pending_invoice_stub
+from app.bot.handlers.payments import (
+    RedisKeys,
+    clear_payment_runtime_keys,
+    clear_payment_ui,
+    cmd_buy,
+    send_transient_notice,
+    show_pending_invoice_stub,
+)
 from app.bot.i18n import t
 from app.bot.i18n.menu_translation import LANG_BUTTONS
 from app.bot.utils.debouncer import buffer_message_for_response
@@ -535,7 +542,24 @@ async def _store_reply_target_best_effort(chat_id: int, msg: Message) -> None:
 # ---------------------------
 async def _ui_close_impl(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
+    chat_id = cb.message.chat.id if cb.message else uid
     await _cb_ack(cb)
+    if cb.message:
+        msg_id = cb.message.message_id
+        pending_msg_id = _to_int(await redis_client.get(RedisKeys.pending_msg(uid)))
+        buy_info_msg_id = _to_int(await redis_client.get(RedisKeys.buy_info_msg(uid)))
+        if msg_id and msg_id in {pending_msg_id, buy_info_msg_id}:
+            had_pending = False
+            with suppress(Exception):
+                had_pending = bool(await redis_client.exists(RedisKeys.pending(uid)))
+            await clear_payment_ui(uid, chat_id)
+            await clear_payment_runtime_keys(uid)
+            if had_pending:
+                await send_transient_notice(
+                    chat_id,
+                    (await tr(uid, "payments.cancelled", "Canceled.")),
+                    parse_mode="HTML",
+                )
     if cb.message:
         await _delete_or_hide(cb.message)
 
