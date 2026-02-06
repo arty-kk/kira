@@ -738,7 +738,8 @@ async def schedule_next_ping(user_id: int, reference_ts: float) -> None:
     try:
         raw_streak = await redis.get(PING_STREAK_KEY.format(user_id))
         streak = int((raw_streak.decode() if isinstance(raw_streak, (bytes, bytearray)) else raw_streak) or 0)
-        if streak < 0: streak = 0
+        if streak < 0:
+            streak = 0
     except Exception:
         streak = 0
 
@@ -1325,10 +1326,14 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
         dynamic_temperature *= (1.0 + 0.10 * float(mods["valence_mod"]))
     except Exception:
         pass
-    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
-    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
-    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+    if dynamic_temperature < 0.55:
+        dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70:
+        dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85:
+        dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98:
+        dynamic_top_p = 0.98
 
     try:
         logger.info(

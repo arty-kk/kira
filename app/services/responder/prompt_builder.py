@@ -4,11 +4,10 @@ from __future__ import annotations
 import logging
 import traceback
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from app.config import settings
 from app.emo_engine.persona.core import Persona
-from app.emo_engine.persona.states import _attachment_label
 
 logger = logging.getLogger(__name__)
 
@@ -159,4 +158,3 @@ def build_fallback_system_prompt(
         tag_line,
         RESTRICTIONS,
     ]))
-EOF

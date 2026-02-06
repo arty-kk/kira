@@ -78,13 +78,15 @@ async def _safe_send_dm(chat_id: int, html_text: str) -> None:
             return
         except TelegramRetryAfter as e:
             delay = max(1, int(getattr(e, "retry_after", 5)))
-            await asyncio.sleep(delay); attempt += 1
+            await asyncio.sleep(delay)
+            attempt += 1
         except (TelegramBadRequest, TelegramForbiddenError):
             return
         except Exception:
             if attempt >= MAX_ATTEMPTS:
                 return
-            await asyncio.sleep(1.5 * attempt); attempt += 1
+            await asyncio.sleep(1.5 * attempt)
+            attempt += 1
 
 def _bucket_for_latency(ms: float) -> str:
     for edge in LAT_BUCKETS:

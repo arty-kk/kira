@@ -4,9 +4,8 @@ import logging
 from typing import Optional, Any, Dict
 
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.types import Message
 
-from app.bot.components.constants import redis_client
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 

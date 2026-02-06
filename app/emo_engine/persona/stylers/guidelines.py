@@ -81,20 +81,30 @@ def _compute_hostility(state: Dict[str, float], mods: Dict[str, float]) -> float
 
 def _ei_code(pct: float) -> str:
     p = max(0.0, min(100.0, float(pct)))
-    if p <= 25: return "VeryLow"
-    if p <= 40: return "Low"
-    if p <= 54: return "Normal"
-    if p <= 67: return "Moderate"
-    if p <= 79: return "High"
-    if p <= 90: return "VeryHigh"
+    if p <= 25:
+        return "VeryLow"
+    if p <= 40:
+        return "Low"
+    if p <= 54:
+        return "Normal"
+    if p <= 67:
+        return "Moderate"
+    if p <= 79:
+        return "High"
+    if p <= 90:
+        return "VeryHigh"
     return "Extreme"
 
 def _hostility_code(h: float) -> str:
     x = max(0.0, min(1.0, float(h)))
-    if x < 0.15: return "FriendlyAttitude"
-    if x < 0.33: return "PositiveAttitude"
-    if x < 0.66: return "NeutralAttitude"
-    if x < 0.85: return "NegativeAttitude"
+    if x < 0.15:
+        return "FriendlyAttitude"
+    if x < 0.33:
+        return "PositiveAttitude"
+    if x < 0.66:
+        return "NeutralAttitude"
+    if x < 0.85:
+        return "NegativeAttitude"
     return "HostileAttitude"
 
 def _gather_extras(
@@ -453,7 +463,7 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
         logits.append((tone, logit))
 
     if logits:
-        exps = [math.exp(l) for _, l in logits]
+        exps = [math.exp(logit_value) for _, logit_value in logits]
         Z = sum(exps)
         probs = [e / Z for e in exps] if Z > 0 else [1.0 / len(exps)] * len(exps)
     else:
@@ -646,8 +656,10 @@ def _compute_guidelines_sync(snapshot: dict) -> dict:
     else:
         _label = "InformalNeutral"
 
-    if   hostility >= 0.65 and civ < 0.45: _label = "DirectBlunt"
-    elif hostility >= 0.45:                _label = "DirectCool"
+    if hostility >= 0.65 and civ < 0.45:
+        _label = "DirectBlunt"
+    elif hostility >= 0.45:
+        _label = "DirectCool"
     _set_flag(gl, "AddressTone", f"AddressTone={_label}")
 
     _set_flag(gl, "AddressToneScore", f"AddressToneScore={addr_score:.2f}")

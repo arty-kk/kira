@@ -362,7 +362,8 @@ for a, b in _raw_pairs:
         _OPP[b] = a
 OPPOSITES: dict[str, str] = _OPP
 
-FAT_CLAMP = lambda x: max(0.0, min(1.0, x))
+def FAT_CLAMP(x: float) -> float:
+    return max(0.0, min(1.0, x))
 
 class MetricKind(str, Enum):
     DIMENSION = "dimension"        # valence, arousal, dominance...

@@ -1,7 +1,6 @@
 #app/clients/elevenlabs_client.py
 from __future__ import annotations
 
-import asyncio
 import json
 import aiohttp
 import logging

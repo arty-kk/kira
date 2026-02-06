@@ -15,7 +15,7 @@ import unicodedata
 from contextlib import suppress
 from functools import wraps
 from pathlib import Path
-from typing import Any, Optional, Callable, Awaitable
+from typing import Any, Optional, Awaitable
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from aiogram import F
@@ -23,8 +23,7 @@ from aiogram.enums import ChatType, ContentType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import (
-    CallbackQuery, FSInputFile, MessageEntity,
-    InlineKeyboardButton, InlineKeyboardMarkup,
+    CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
     KeyboardButton, Message, ReplyKeyboardMarkup,
 )
 from sqlalchemy import delete, or_, select, update

@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
 import re
 import time as time_module
 
@@ -367,12 +366,14 @@ async def _expand_queries_for_ltm(query: str) -> List[str]:
         except Exception:
             arr = []
         outs = [q] + [str(x).strip() for x in arr if str(x).strip()]
-        seen = set(); uniq = []
+        seen = set()
+        uniq = []
         for s in outs:
             k = s.casefold()
-            if k in seen: 
+            if k in seen:
                 continue
-            seen.add(k); uniq.append(s)
+            seen.add(k)
+            uniq.append(s)
         return uniq[:4]
     except Exception:
         return [q]
@@ -562,7 +563,8 @@ def _uniform_sample(lines: List[str], max_n: int) -> List[str]:
         if idx >= n:
             idx = n - 1
         if idx not in seen:
-            out.append(lines[idx]); seen.add(idx)
+            out.append(lines[idx])
+            seen.add(idx)
     return out
 
 async def preselect_mtm_candidates(query: str, mtm_lines: List[str], topn: int = 40) -> List[str]:

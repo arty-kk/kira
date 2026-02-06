@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import asyncio
 
 from app.tasks.celery_app import celery, _run
 from app.core.memory import cleanup_api_key_memory

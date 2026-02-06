@@ -21,7 +21,7 @@ Output format:
 
 def _build_user_prompt(text: str, *, force_yesno: bool = False) -> str:
     suffix = " YES or NO" if force_yesno else ""
-    return f'Text:\n"""' + (text or "") + f'"""\nReply:{suffix}'
+    return 'Text:\n"""' + (text or "") + f'"""\nReply:{suffix}'
 
 async def _ask_model(text: str, *, force_yesno: bool = False) -> str:
 

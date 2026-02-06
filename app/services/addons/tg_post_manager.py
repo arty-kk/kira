@@ -2318,7 +2318,6 @@ async def generate_and_post_tg() -> None:
         return
 
     post_timeout = _coerce_float(getattr(settings, "POST_MODEL_TIMEOUT", None), 60.0)
-    resp_timeout = _coerce_float(getattr(settings, "RESPONSE_MODEL_TIMEOUT", None), 15.0)
 
     time_bucket, time_bucket_label = _get_time_bucket()
     start_hour = _coerce_int(getattr(settings, "SCHED_TG_START_HOUR", None), 8)
@@ -2339,7 +2338,6 @@ async def generate_and_post_tg() -> None:
         logger.info("tg_post_manager skip: redis lock busy (channel=%s)", channel_id)
         return
     lock_key, lock_token = lock
-    keep_lock = False
 
     persona = await get_persona(persona_chat_id)
     try:
@@ -2591,7 +2589,7 @@ async def generate_and_post_tg() -> None:
 
     last_fail_reason = ""
     for i_try, story in enumerate(attempts, start=1):
-        image_disabled_reason = await _get_image_disabled_reason(redis, channel_id)
+        _ = await _get_image_disabled_reason(redis, channel_id)
 
         planned = _context_override_rubrics(list(planned_base), mood, story)
 
@@ -2903,7 +2901,6 @@ async def generate_and_post_tg() -> None:
             await _release_redis_lock(redis, lock_key, lock_token)
             return
 
-        keep_lock = True
         await _bump_daily_pacing_state(redis, channel_id, local_now)
         await _remember_opener(redis, channel_id, local_now, opener_fp)
 

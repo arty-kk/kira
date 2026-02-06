@@ -18,7 +18,6 @@ import app.bot.components.constants as consts
 from app.bot.components.constants import (
     LANG_FILE,
     WELCOME_MESSAGES,
-    redis_client,
 )
 
 logger = logging.getLogger(__name__)

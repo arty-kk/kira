@@ -135,12 +135,12 @@ async def cmd_battle_stats(message: Message) -> None:
 
     overall_key = f"battle:bot_stats:{chat_id}"
     try:
-        w, l, t = await redis_client.hmget(overall_key, "win", "loss", "tie")
+        wins, losses, ties = await redis_client.hmget(overall_key, "win", "loss", "tie")
     except Exception:
         logger.exception("Failed to read overall bot stats")
-        w = l = t = 0
-    w, l, t = _to_int(w), _to_int(l), _to_int(t)
-    total = w + l + t
+        wins = losses = ties = 0
+    wins, losses, ties = _to_int(wins), _to_int(losses), _to_int(ties)
+    total = wins + losses + ties
 
     target_id = await _resolve_stats_target_user_id(message)
     if target_id and target_id == str(SELF_BOT_ID):
@@ -153,8 +153,8 @@ async def cmd_battle_stats(message: Message) -> None:
         except Exception:
             logger.exception("Failed to read vs-user bot stats")
             pw = pl = pt = 0
-        pw, pl, pt = _to_int(pw), _to_int(pl), _to_int(pt)
-        ptotal = pw + pl + pt
+        per_wins, per_losses, per_ties = _to_int(pw), _to_int(pl), _to_int(pt)
+        ptotal = per_wins + per_losses + per_ties
         try:
             m = await bot.get_chat_member(chat_id, int(target_id))
             uname = f"@{m.user.username}" if m.user.username else (m.user.full_name or target_id)
@@ -163,7 +163,7 @@ async def cmd_battle_stats(message: Message) -> None:
         per_user_text = (
             f"\n\n<b>Vs {escape(uname)}</b>\n"
             f"• Games: <b>{ptotal}</b>\n"
-            f"• W/L/T: <b>{pw}</b>/<b>{pl}</b>/<b>{pt}</b>"
+            f"• W/L/T: <b>{per_wins}</b>/<b>{per_losses}</b>/<b>{per_ties}</b>"
         )
 
     if total == 0 and not per_user_text:
@@ -183,7 +183,7 @@ async def cmd_battle_stats(message: Message) -> None:
     text = (
         f"<b>Battle Stats with {escape(bot_disp)}</b>\n"
         f"• Games: <b>{total}</b>\n"
-        f"• W/L/T: <b>{w}</b>/<b>{l}</b>/<b>{t}</b>"
+        f"• W/L/T: <b>{wins}</b>/<b>{losses}</b>/<b>{ties}</b>"
         f"{per_user_text}"
     )
     await message.reply(text, parse_mode="HTML", quote=True)

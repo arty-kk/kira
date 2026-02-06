@@ -12,11 +12,11 @@ import re
 import unicodedata
 import weakref
 
-from collections import defaultdict, deque
+from collections import deque
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, ClassVar, Optional, Any, TypeVar, Awaitable
-from collections.abc import Coroutine, Callable
+from collections.abc import Callable
 from types import MethodType
 
 from app.config import settings
@@ -44,7 +44,6 @@ from .constants.tone_map import Tone
 from .brain import PersonaBrain
 from .neurograph import SelfNeuronNetwork
 from .constants.labels import EMO_LABEL_MAP as EMO_LABELS
-from .constants.metrics_keys import metrics_keys as all_key_mods
 from .constants.emotions import (  
     ALL_METRICS, PRIMARY_EMOTIONS, SECONDARY_EMOTIONS,
     TERTIARY_EMOTIONS, DYAD_KEYS, TRIAD_KEYS,
@@ -459,7 +458,6 @@ class Persona:
 
         norm_guides = [g.name if hasattr(g, "name") else str(g) for g in guidelines]
         guide_str_key = ",".join(sorted(set(norm_guides)))
-        unique_guides = list(dict.fromkeys(norm_guides))
         msg_hash = hashlib.md5((self._last_user_msg or "").encode("utf-8")).hexdigest()[:8]
         cache_key = f"{self.state_version}|{self._last_uid or 0}|{guide_str_key}|{msg_hash}"
         if cache_key == self._last_prompt_guidelines:
@@ -470,7 +468,8 @@ class Persona:
         want_any_memory = (want_mem_followup or want_recall_snippet)
         try:
             use_llm_selector = bool(getattr(settings, "MEMORYFOLLOWUP_USE_LLM_SELECTOR", True))
-        except Exception: use_llm_selector = True
+        except Exception:
+            use_llm_selector = True
         has_query = bool(self._last_user_msg)
 
         #metrics_str = "; ".join(f"{k}={s.get(k, 0.0):.2f}" for k in all_key_mods)
@@ -1145,14 +1144,19 @@ class Persona:
                 sel_raw = {}
 
             def _as_idx_list(x, n):
-                seen = set(); out = []
+                seen = set()
+                out = []
                 if isinstance(x, list):
                     for it in x:
-                        try: idx = int(it)
-                        except Exception: continue
+                        try:
+                            idx = int(it)
+                        except Exception:
+                            continue
                         if 0 <= idx < n and idx not in seen:
-                            seen.add(idx); out.append(idx)
-                        if len(out) == 2: break
+                            seen.add(idx)
+                            out.append(idx)
+                        if len(out) == 2:
+                            break
                 return out
                 
             past_idx    = _as_idx_list(sel_raw.get("past"),    len(candidates.get("past",    [])))

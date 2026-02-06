@@ -12,7 +12,7 @@ import math
 import time
 import unicodedata
 
-from typing import Dict, List, Optional, Tuple, Any, Iterable, Callable
+from typing import Dict, List, Optional, Tuple, Callable
 from collections import OrderedDict
 
 from dateparser import parse as dp_parse
@@ -501,15 +501,19 @@ class LongTermMemory:
                 pass
             if self._normalize_cosine:
                 try:
-                    import array, math as _m
-                    a = array.array("f"); a.frombytes(vec)
+                    import array
+                    import math as _m
+                    a = array.array("f")
+                    a.frombytes(vec)
                     s = 0.0
-                    for x in a: s += x * x
+                    for x in a:
+                        s += x * x
                     if s > 0.0:
                         if 0.98 <= s <= 1.02:
                             return bytes(vec)
                         inv = 1.0 / _m.sqrt(s)
-                        for i in range(len(a)): a[i] *= inv
+                        for i in range(len(a)):
+                            a[i] *= inv
                         return a.tobytes()
                 except Exception:
                     pass
@@ -620,8 +624,10 @@ class LongTermMemory:
             try:
                 stale = await self._redis.zrangebyscore(_LTM_LAST_ACTIVE_Z, "-inf", cutoff, start=0, num=self._IDLE_WIPE_BATCH)
                 for u in stale or []:
-                    try: su = int(_as_str(u))
-                    except Exception: continue
+                    try:
+                        su = int(_as_str(u))
+                    except Exception:
+                        continue
                     if su > 0:
                         await self.drop_user(su)
             except Exception:
@@ -839,8 +845,10 @@ class LongTermMemory:
                     if _is_missing_index_error(e):
                         await self._ensure_indexes()
                         if _RS_SERVER_TIMEOUT_MS > 0:
-                            try: q = q.timeout(_RS_SERVER_TIMEOUT_MS)
-                            except Exception: pass
+                            try:
+                                q = q.timeout(_RS_SERVER_TIMEOUT_MS)
+                            except Exception:
+                                pass
                         res = await asyncio.wait_for(self._redis.ft(self.FACTS_IX).search(q), timeout=_RS_TIMEOUT)
                     else:
                         return
@@ -867,9 +875,11 @@ class LongTermMemory:
                         continue
                     did = getattr(d, "id", None) or d.id
                     try:
-                        pipe.unlink(did); deletions += 1
+                        pipe.unlink(did)
+                        deletions += 1
                     except AttributeError:
-                        pipe.delete(did); deletions += 1
+                        pipe.delete(did)
+                        deletions += 1
                 except Exception:
                     continue
             if deletions:
@@ -898,8 +908,10 @@ class LongTermMemory:
                     if _is_missing_index_error(e):
                         await self._ensure_indexes()
                         if _RS_SERVER_TIMEOUT_MS > 0:
-                            try: q = q.timeout(_RS_SERVER_TIMEOUT_MS)
-                            except Exception: pass
+                            try:
+                                q = q.timeout(_RS_SERVER_TIMEOUT_MS)
+                            except Exception:
+                                pass
                         res = await asyncio.wait_for(self._redis.ft(self.BOUNDS_IX).search(q), timeout=_RS_TIMEOUT)
                     else:
                         return
@@ -917,9 +929,11 @@ class LongTermMemory:
                         continue
                     did = _as_str(getattr(d, "id", "")) or getattr(d, "id", "")
                     try:
-                        pipe.unlink(did); deletions += 1
+                        pipe.unlink(did)
+                        deletions += 1
                     except AttributeError:
-                        pipe.delete(did); deletions += 1
+                        pipe.delete(did)
+                        deletions += 1
                 except Exception:
                     continue
             if deletions:
@@ -948,8 +962,10 @@ class LongTermMemory:
                     if _is_missing_index_error(e):
                         await self._ensure_indexes()
                         if _RS_SERVER_TIMEOUT_MS > 0:
-                            try: q = q.timeout(_RS_SERVER_TIMEOUT_MS)
-                            except Exception: pass
+                            try:
+                                q = q.timeout(_RS_SERVER_TIMEOUT_MS)
+                            except Exception:
+                                pass
                         res = await asyncio.wait_for(self._redis.ft(self.PLANS_IX).search(q), timeout=_RS_TIMEOUT)
                     else:
                         return
@@ -967,9 +983,11 @@ class LongTermMemory:
                         continue
                     did = _as_str(getattr(d, "id", "")) or getattr(d, "id", "")
                     try:
-                        pipe.unlink(did); deletions += 1
+                        pipe.unlink(did)
+                        deletions += 1
                     except AttributeError:
-                        pipe.delete(did); deletions += 1
+                        pipe.delete(did)
+                        deletions += 1
                 except Exception:
                     continue
             if deletions:
@@ -1219,7 +1237,8 @@ class LongTermMemory:
                         conf_old = _as_float(getattr(doc, "confidence", 0.5), 0.5)
                         ls = _as_float(getattr(doc, "last_seen", 0.0), 0.0)
                         uc = _as_int(getattr(doc, "used_count", 0), 0)
-                        if uc >= _LTM_DEMOTE_USEDCOUNT_PROTECT: continue
+                        if uc >= _LTM_DEMOTE_USEDCOUNT_PROTECT:
+                            continue
                         if (_now_ts - ls) < _fresh_win:
                             continue
                         lu_ts = _as_float(getattr(doc, "last_used_ts", 0.0), 0.0)
@@ -1376,7 +1395,8 @@ class LongTermMemory:
                         continue
                     ls = _as_float(getattr(d, "last_seen", 0.0), 0.0)
                     uc = _as_int(getattr(d, "used_count", 0), 0)
-                    if uc >= _LTM_DEMOTE_USEDCOUNT_PROTECT: continue
+                    if uc >= _LTM_DEMOTE_USEDCOUNT_PROTECT:
+                        continue
                     lu = _as_float(getattr(d, "last_used_ts", 0.0), 0.0)
                     if (_now_ts - ls) < _fresh_win:
                         continue
@@ -1473,9 +1493,9 @@ class LongTermMemory:
                     raw = raw[nl + 1 :]
                 raw = raw.rstrip("`").strip()
             raw = raw.lstrip("\ufeff").replace("\u2028","").replace("\u2029","")
-            l, r = raw.find("{"), raw.rfind("}")
-            if l != -1 and r != -1 and r > l:
-                raw = raw[l : r + 1]
+            left_idx, right_idx = raw.find("{"), raw.rfind("}")
+            if left_idx != -1 and right_idx != -1 and right_idx > left_idx:
+                raw = raw[left_idx : right_idx + 1]
         except Exception as e:
             logger.warning(
                 "openai.timing: responses.create model=%s input_chars=%d error=%s duration=%.3fs",
@@ -1556,7 +1576,8 @@ class LongTermMemory:
                         wtxt = p["window_text"]
                         dt = dp_parse(wtxt, settings=_prefs)
                         if dt:
-                            if dt.tzinfo is None: dt = dt.replace(tzinfo=UTC)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=UTC)
                             due_ts = dt.astimezone(UTC).timestamp()
                         m = None
                         m_between = re.search(r"\bbetween\s+(.+?)\s+\band\b\s+(.+)", wtxt, flags=re.I|re.S)
@@ -1568,8 +1589,10 @@ class LongTermMemory:
                             s = dp_parse(_strip_start_prep(m[0]), settings=_prefs)
                             e = dp_parse(_strip_start_prep(m[1]), settings=_prefs)
                             if s and e:
-                                if s.tzinfo is None: s=s.replace(tzinfo=UTC)
-                                if e.tzinfo is None: e=e.replace(tzinfo=UTC)
+                                if s.tzinfo is None:
+                                    s = s.replace(tzinfo=UTC)
+                                if e.tzinfo is None:
+                                    e = e.replace(tzinfo=UTC)
                                 ws = s.astimezone(UTC).timestamp()
                                 we = e.astimezone(UTC).timestamp()
                                 if we < ws:
@@ -1677,7 +1700,8 @@ class LongTermMemory:
 
                         def _extract_tag(filter_s: str, field: str) -> Optional[str]:
                             m = re.search(rf"@{field}:\{{([^}}]+)\}}", filter_s)
-                            if not m: return None
+                            if not m:
+                                return None
                             v = m.group(1).strip()
                             if v.startswith('"') and v.endswith('"'):
                                 v = v[1:-1]
@@ -1704,7 +1728,7 @@ class LongTermMemory:
                     except Exception:
                         return None
                 return None
-        except Exception as e1:
+        except Exception:
             try:
                 res = await asyncio.wait_for(self._redis.ft(ix_name).search(q, query_params=qp), timeout=_RS_TIMEOUT*2)
                 return res.docs
@@ -1931,7 +1955,8 @@ class LongTermMemory:
             for comp, key, val, conf, docid, lu_ts, lu_turn in ranked:
                 if (now_ts - lu_ts) < self._cool_secs or (turn_id - lu_turn) <= self._cool_turns:
                     continue
-                chosen = (key, val, conf, docid); break
+                chosen = (key, val, conf, docid)
+                break
             if chosen:
                 key, val, conf, docid = chosen
                 logger.debug("ltm.snippet.boundary picked key=%s conf=%.2f", key, conf)
@@ -1985,8 +2010,10 @@ class LongTermMemory:
                     f'(@uid:{{{uid_tag}}} @key:{{{_tag_literal(k)}}})'
                 ).return_fields("value").paging(0, 50)
                 if _RS_SERVER_TIMEOUT_MS > 0:
-                    try: q = q.timeout(_RS_SERVER_TIMEOUT_MS)
-                    except Exception: pass
+                    try:
+                        q = q.timeout(_RS_SERVER_TIMEOUT_MS)
+                    except Exception:
+                        pass
                 try:
                     res = await asyncio.wait_for(
                         self._redis.ft(self.FACTS_IX).search(q),
@@ -2029,12 +2056,17 @@ class LongTermMemory:
         except Exception:
             pass
         try:
-            q = Query(f'(@uid:{{{_tag_literal(str(uid))}}} @confidence:[{min_conf} 1])') \
-                    .return_fields("key","value","confidence","last_seen","used_count") \
-                    .sort_by("last_seen", asc=False).paging(0, max_items)
+            q = (
+                Query(f'(@uid:{{{_tag_literal(str(uid))}}} @confidence:[{min_conf} 1])')
+                .return_fields("key", "value", "confidence", "last_seen", "used_count")
+                .sort_by("last_seen", asc=False)
+                .paging(0, max_items)
+            )
             if _RS_SERVER_TIMEOUT_MS > 0:
-                try: q = q.timeout(_RS_SERVER_TIMEOUT_MS)
-                except Exception: pass
+                try:
+                    q = q.timeout(_RS_SERVER_TIMEOUT_MS)
+                except Exception:
+                    pass
             res = await asyncio.wait_for(self._redis.ft(self.FACTS_IX).search(q), timeout=_RS_TIMEOUT)
         except ResponseError as e:
             if _is_missing_index_error(e):
@@ -2092,6 +2124,7 @@ class LongTermMemory:
         return [(k, v, c) for (k, v, c, _score) in result[:max_items]]
 
     async def relevant_profile(
+        self,
         *,
         uid: int,
         context: str,

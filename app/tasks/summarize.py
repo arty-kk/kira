@@ -173,7 +173,8 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                         )
                         partials.append((_get_output_text(r) or "").strip())
                         buf, acc = [], 0
-                    buf.append(ln); acc += t
+                    buf.append(ln)
+                    acc += t
                 if buf:
                     r = await asyncio.wait_for(
                         _call_openai_with_retry(

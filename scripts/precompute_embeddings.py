@@ -11,7 +11,7 @@ import tiktoken
 import numpy as np
 
 from pathlib import Path
-from typing import List, Tuple, Dict, Set
+from typing import List, Dict, Set
 from dotenv import load_dotenv
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor

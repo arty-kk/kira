@@ -132,10 +132,14 @@ async def generate_and_post_tweet() -> None:
         dynamic_temperature *= (1.0 + 0.10 * float(mods["valence_mod"]))
     except Exception:
         pass
-    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
-    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
-    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+    if dynamic_temperature < 0.55:
+        dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70:
+        dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85:
+        dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98:
+        dynamic_top_p = 0.98
 
     try:
         logger.info(

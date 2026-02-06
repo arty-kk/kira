@@ -1,6 +1,6 @@
 #app/emo_engine/persona/constants/labels.py
 from typing import Dict
-from .tone_map import Tone, TONE_MAP
+from .tone_map import TONE_MAP
 
 EMO_LABEL_MAP: Dict[str, str] = {}
 

@@ -322,8 +322,10 @@ def _dist_to_sim(d: float) -> float:
         sim = 1.0 - v
     else:
         sim = 1.0 - (v / 2.0)
-    if sim < 0.0: sim = 0.0
-    if sim > 1.0: sim = 1.0
+    if sim < 0.0:
+        sim = 0.0
+    if sim > 1.0:
+        sim = 1.0
     return sim
 
 def _build_index_fields(initial_cap: int, dim: Optional[int] = None, use_initial_cap: bool = True):
@@ -667,13 +669,17 @@ class _EmbedBatcher:
                                 await rds.delete(key_order[i])
                             except Exception:
                                 pass
-                            miss_keys.append(key_order[i]); miss_texts.append(uniq_list[i]); continue
+                            miss_keys.append(key_order[i])
+                            miss_texts.append(uniq_list[i])
+                            continue
                     except Exception:
                         try:
                             await rds.delete(key_order[i])
                         except Exception:
                             pass
-                        miss_keys.append(key_order[i]); miss_texts.append(uniq_list[i]); continue
+                        miss_keys.append(key_order[i])
+                        miss_texts.append(uniq_list[i])
+                        continue
                     for fut in uniq_map[key_order[i]]["futs"]:
                         if not fut.done():
                             fut.set_result(raw)
@@ -1129,8 +1135,9 @@ class PersonaMemory:
                 flags = await pipe.execute()
                 pipe = self._redis.pipeline(transaction=True)
                 for did, ok in zip(doc_ids, flags):
-                    if ok: 
-                        pipe.hincrby(did, "use_count", 1); pipe.hset(did, mapping={"last_used_ts": ts})
+                    if ok:
+                        pipe.hincrby(did, "use_count", 1)
+                        pipe.hset(did, mapping={"last_used_ts": ts})
                 await pipe.execute()
             except Exception:
                 logger.debug("reinforcement fallback failed", exc_info=True)
@@ -1377,8 +1384,11 @@ class PersonaMemory:
                 docs = _filter_knn_docs(getattr(res_all, "docs", []),
                                         want_chat=want_chat,
                                         want_uid=want_uid)
-                class _Res: pass
-                res = _Res(); res.docs = docs
+                class _Res:
+                    pass
+
+                res = _Res()
+                res.docs = docs
             except Exception as e3:
                 logger.warning("record: forced KNN-only failed (%s), skipping dedup", e3)
                 res = None
@@ -1456,8 +1466,11 @@ class PersonaMemory:
                                 docs = _filter_knn_docs(getattr(res_all, "docs", []),
                                                         want_chat=want_chat,
                                                         want_uid=want_uid)
-                                class _Res: pass
-                                res = _Res(); res.docs = docs
+                                class _Res:
+                                    pass
+
+                                res = _Res()
+                                res.docs = docs
                                 logger.debug("record: used KNN-only fallback, kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                             except Exception as e3:
                                 logger.warning("record: KNN-only fallback failed (%s), skipping", e3)
@@ -1502,8 +1515,11 @@ class PersonaMemory:
                             docs = _filter_knn_docs(getattr(res_all, "docs", []),
                                                     want_chat=want_chat,
                                                     want_uid=want_uid)
-                            class _Res: pass
-                            res = _Res(); res.docs = docs
+                            class _Res:
+                                pass
+
+                            res = _Res()
+                            res.docs = docs
                             logger.debug("record: used KNN-only fallback (outer), kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                         except Exception as e3:
                             logger.warning("record: KNN-only outer fallback failed (%s), skipping deduplication", e3)
@@ -1687,9 +1703,12 @@ class PersonaMemory:
                     if dt_iso.tzinfo is None:
                         dt_iso = dt_iso.replace(tzinfo=UTC)
                     new_time = dt_iso.astimezone(UTC).timestamp()
-                    if new_time < time.time() - 60: new_type = "past"
-                    elif new_time > time.time() + 60: new_type = "future"
-                    else: new_type = "present"
+                    if new_time < time.time() - 60:
+                        new_type = "past"
+                    elif new_time > time.time() + 60:
+                        new_type = "future"
+                    else:
+                        new_type = "present"
             except Exception:
                 pass
             try:
@@ -1858,10 +1877,14 @@ class PersonaMemory:
                                         want_chat=want_chat,
                                         want_uid=want_uid,
                                         topic_hint=topic_hint)
-                class _Res: pass
-                res = _Res(); res.docs = docs
+                class _Res:
+                    pass
+
+                res = _Res()
+                res.docs = docs
             except Exception as e3:
-                logger.warning("query: forced KNN-only failed (%s)", e3); return []
+                logger.warning("query: forced KNN-only failed (%s)", e3)
+                return []
         else:
             q = (
                 Query(f"{qbase}=>{knn_clause}")
@@ -1935,8 +1958,11 @@ class PersonaMemory:
                                                         want_chat=want_chat,
                                                         want_uid=want_uid,
                                                         topic_hint=topic_hint)
-                                class _Res: pass
-                                res = _Res(); res.docs = docs
+                                class _Res:
+                                    pass
+
+                                res = _Res()
+                                res.docs = docs
                                 logger.debug("query: used KNN-only fallback, kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                             except Exception as e3:
                                 logger.warning("PersonaMemory.query KNN-only fallback failed (%s)", e3)
@@ -1982,8 +2008,11 @@ class PersonaMemory:
                                                     want_chat=want_chat,
                                                     want_uid=want_uid,
                                                     topic_hint=topic_hint)
-                            class _Res: pass
-                            res = _Res(); res.docs = docs
+                            class _Res:
+                                pass
+
+                            res = _Res()
+                            res.docs = docs
                             logger.debug("query: used KNN-only fallback (outer), kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                         except Exception as e3:
                             logger.warning("PersonaMemory.query KNN-only outer fallback failed (%s)", e3)
@@ -2319,10 +2348,14 @@ class PersonaMemory:
                                         want_chat=want_chat,
                                         want_uid=want_uid,
                                         want_event_type=event_type)
-                class _Res: pass
-                res = _Res(); res.docs = docs
+                class _Res:
+                    pass
+
+                res = _Res()
+                res.docs = docs
             except Exception as e3:
-                logger.warning("query_time: forced KNN-only failed (%s)", e3); return []
+                logger.warning("query_time: forced KNN-only failed (%s)", e3)
+                return []
         else:
             filters = [f'@chat:{{{_tag_literal(self.chat)}}}', f'@event_type:{{{val}}}']
             if uid is not None:
@@ -2400,8 +2433,11 @@ class PersonaMemory:
                                                         want_chat=want_chat,
                                                         want_uid=want_uid,
                                                         want_event_type=event_type)
-                                class _Res: pass
-                                res = _Res(); res.docs = docs
+                                class _Res:
+                                    pass
+
+                                res = _Res()
+                                res.docs = docs
                                 logger.debug("query_time: used KNN-only fallback, kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                             except Exception as e3:
                                 logger.warning("PersonaMemory.query_time KNN-only fallback failed (%s)", e3)
@@ -2450,8 +2486,11 @@ class PersonaMemory:
                                                     want_chat=want_chat,
                                                     want_uid=want_uid,
                                                     want_event_type=event_type)
-                            class _Res: pass
-                            res = _Res(); res.docs = docs
+                            class _Res:
+                                pass
+
+                            res = _Res()
+                            res.docs = docs
                             logger.debug("query_time: used KNN-only fallback (outer), kept %d/%d docs", len(docs), len(getattr(res_all, "docs", [])))
                         except Exception as e3:
                             logger.warning("PersonaMemory.query_time KNN-only outer fallback failed (%s)", e3)
@@ -2572,7 +2611,8 @@ class PersonaMemory:
         for e in (head_ids + rand_ids):
             k = _b2s(e, str(e))
             if k not in seen:
-                seen.add(k); ids.append(k.encode() if isinstance(e, (bytes, bytearray)) else k)
+                seen.add(k)
+                ids.append(k.encode() if isinstance(e, (bytes, bytearray)) else k)
         logger.debug("_forget_if_needed: sampled %d ids (head=%d, rand=%d, total=%d)", len(ids), len(head_ids), len(rand_ids), total)
         
         scores = []
