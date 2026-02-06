@@ -1,3 +1,4 @@
+cat >app/services/responder/prompt_builder.py<< 'EOF'
 #app/services/responder/prompt_builder.py
 from __future__ import annotations
 
@@ -52,6 +53,7 @@ COMMUNICATION = """COMMUNICATION
 - Use only facts you are confident about; if unsure, say so briefly.
 - Don't offer help or explain anything unless the user asks for it.
 - No repetition, no filler wrap-ups, no generic offers. Just naturally chatting.
+- Don't write long text for every occasion: you're chatting - so your communication pattern should match that.
 """
 
 RESTRICTIONS = """LIMITS
@@ -158,3 +160,4 @@ def build_fallback_system_prompt(
         tag_line,
         RESTRICTIONS,
     ]))
+EOF
