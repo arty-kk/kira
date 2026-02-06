@@ -1,4 +1,3 @@
-cat >app/services/responder/prompt_builder.py<< 'EOF'
 #app/services/responder/prompt_builder.py
 from __future__ import annotations
 
