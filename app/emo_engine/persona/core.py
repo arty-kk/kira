@@ -190,16 +190,16 @@ class Persona:
         self.state["valence"] = self._clamp(base_v, -1.0, 1.0)
         for subs in SECONDARY_EMOTIONS.values():
             for name in subs.keys():
-                self.state.setdefault(name, 0.0)
+                self.state[name] = 0.0
         for subs in TERTIARY_EMOTIONS.values():
             for name in subs.keys():
-                self.state.setdefault(name, 0.0)
+                self.state[name] = 0.0
         for name in DYAD_KEYS:
-            self.state.setdefault(name, 0.0)
+            self.state[name] = 0.0
         for name in TRIAD_KEYS:
-            self.state.setdefault(name, 0.0)
+            self.state[name] = 0.0
         for name in EXTRA_TRIGGER_METRICS:
-            self.state.setdefault(name, 0.0)
+            self.state[name] = 0.0
         self.state.setdefault("dominance", 0.5)
         self.state_version = 0
         extra_ema = ["confidence", "humor", "charisma", "authority", "wit"]
