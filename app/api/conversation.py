@@ -29,6 +29,7 @@ from app.emo_engine.persona.constants.user_prefs import normalize_prefs, merge_p
 router = APIRouter(prefix="/api/v1", tags=["conversation"])
 
 _API_QUEUE_KEY = getattr(settings, "API_QUEUE_KEY", "queue:api")
+logger = logging.getLogger(__name__)
 
 class PersonaConfig(BaseModel):
     name: Optional[constr(min_length=1, max_length=64)] = None
@@ -158,9 +159,16 @@ class ConversationRequest(BaseModel):
         return self
 
 
+class LatencyBreakdown(BaseModel):
+    queue_latency_ms: Optional[int] = None
+    worker_latency_ms: Optional[int] = None
+    total_latency_ms: int
+
+
 class ConversationResponse(BaseModel):
     reply: str
     latency_ms: int
+    latency_breakdown: Optional[LatencyBreakdown] = None
     request_id: str
 
 
@@ -422,6 +430,7 @@ async def conversation_endpoint(
         "result_key": result_key,
         "msg_id": msg_id,
         "allow_web": bool(billing_tier == "paid"),
+        "enqueued_at": time.time(),
     }
 
     start = time.perf_counter()
@@ -479,9 +488,42 @@ async def conversation_endpoint(
         )
 
     reply = (result.get("reply") or "").strip()
-    worker_latency_ms = int(result.get("latency_ms") or 0)
     total_latency_ms = int((time.perf_counter() - start) * 1000)
+
+    def _coerce_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    raw_breakdown = result.get("latency_breakdown")
+    latency_breakdown_data = raw_breakdown if isinstance(raw_breakdown, dict) else {}
+    queue_latency_ms = _coerce_int(latency_breakdown_data.get("queue_latency_ms"))
+    worker_latency_ms = _coerce_int(latency_breakdown_data.get("worker_latency_ms"))
+    if worker_latency_ms is None:
+        worker_latency_ms = int(result.get("latency_ms") or 0)
+
     latency_ms = worker_latency_ms or total_latency_ms
+    latency_breakdown = None
+    if queue_latency_ms is not None or worker_latency_ms is not None:
+        latency_breakdown = LatencyBreakdown(
+            queue_latency_ms=queue_latency_ms,
+            worker_latency_ms=worker_latency_ms,
+            total_latency_ms=total_latency_ms,
+        )
+
+    logger.info(
+        "API /conversation completed",
+        extra={
+            "request_id": request_id,
+            "queue_latency_ms": queue_latency_ms,
+            "worker_latency_ms": worker_latency_ms,
+            "total_latency_ms": total_latency_ms,
+            "billing_tier": billing_tier,
+        },
+    )
 
     try:
         async with session_scope(
@@ -494,6 +536,7 @@ async def conversation_endpoint(
     return ConversationResponse(
         reply=reply,
         latency_ms=latency_ms,
+        latency_breakdown=latency_breakdown,
         request_id=request_id,
     )
 
