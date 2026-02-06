@@ -172,6 +172,15 @@ def _serialize_entities(ents: List[types.MessageEntity]) -> List[dict]:
                 item["url"] = e.url
         except Exception:
             pass
+        try:
+            if str(etype).lower() == "text_mention" and getattr(e, "user", None):
+                user = e.user
+                item["user"] = {
+                    "id": getattr(user, "id", None),
+                    "is_bot": getattr(user, "is_bot", None),
+                }
+        except Exception:
+            pass
         out.append(item)
     return out
 

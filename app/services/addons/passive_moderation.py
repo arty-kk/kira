@@ -12,9 +12,11 @@ from urllib.parse import urlparse
 from typing import Literal, List, Optional
 
 from redis.exceptions import RedisError
+from aiogram.enums import ChatType
 
 from app.core.memory import load_context, get_redis
 from app.config import settings
+from app.clients.telegram_client import get_bot
 from app.clients.openai_client import get_openai
 
 logger = logging.getLogger(__name__)
@@ -228,6 +230,54 @@ def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
     return list(dict.fromkeys(urls))[:MAX_URLS]
 
 
+async def extract_external_mentions(
+    chat_id: int,
+    text: str,
+    entities: List[dict] | None = None,
+) -> List[str]:
+    """Return @usernames that resolve to external channels/bots or unknown chats."""
+    if not text or not entities:
+        return []
+
+    def _norm_uname(u: str) -> str:
+        return (u or "").lstrip("@").strip().lower()
+
+    redis = get_redis()
+    bot = get_bot()
+    external = []
+
+    for ent in entities:
+        t = str(ent.get("type") or "").lower()
+        if t == "text_mention":
+            continue
+        if t != "mention":
+            continue
+        off = int(ent.get("offset", -1))
+        ln = int(ent.get("length", 0))
+        if off < 0 or ln <= 0:
+            continue
+        uname = _norm_uname(text[off:off + ln])
+        if not uname:
+            continue
+        try:
+            cached = await redis.hget(f"user_map:{chat_id}", uname)
+        except RedisError:
+            logger.warning("extract_external_mentions: Redis error for chat %s", chat_id)
+            cached = None
+        if cached:
+            continue
+        try:
+            chat = await bot.get_chat(f"@{uname}")
+            if not chat:
+                external.append(uname)
+            elif getattr(chat, "type", None) in (ChatType.CHANNEL, ChatType.BOT):
+                external.append(uname)
+        except Exception:
+            external.append(uname)
+
+    return external
+
+
 def contains_any_link_obfuscated(text: str) -> bool:
 
     if not text:
@@ -387,6 +437,11 @@ async def check_light(
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
+
+    external_mentions = await extract_external_mentions(chat_id, text or "", entities)
+    if external_mentions:
+        logger.debug("check_light: external_mentions=%r", external_mentions)
+        return "link_violation"
 
     if any(is_telegram_link(u) for u in urls) or contains_telegram_obfuscated(text or ""):
         return "link_violation"
