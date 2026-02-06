@@ -892,7 +892,15 @@ async def _process_interaction_unlocked(
                 continue
             readings.setdefault(m, self.state.get(m, 0.0))
 
-    readings["energy"] = self._clamp(len(text)/200 + excl*0.02 + ques*0.01)
+    heuristic_energy = self._clamp(len(text) / 200 + excl * 0.02 + ques * 0.01)
+    energy_missing = "energy" in readings.get("_analysis_missing", [])
+    if energy_missing:
+        readings["energy"] = heuristic_energy  # эвристика как fallback
+    else:
+        readings["energy"] = self._clamp(
+            0.6 * float(readings.get("energy", heuristic_energy)) + 0.4 * heuristic_energy
+        )  # сглаживание + fallback
+    readings.pop("_analysis_missing", None)
     if signals_llm:
         readings["_signals_now"] = dict(signals_llm)
 
