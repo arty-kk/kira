@@ -240,19 +240,52 @@ async def _handle_job(raw: str, redis_queue) -> None:
         return
 
     voice_in = False
-    
+
     job_key = JOB_KEY_PREFIX + request_id
 
     try:
-        ok = await redis_queue.set(job_key, "inflight", ex=JOB_TTL_SEC, nx=True)
+        inflight_value = f"inflight:{int(time.time())}"
+        ok = await redis_queue.set(job_key, inflight_value, ex=JOB_TTL_SEC, nx=True)
     except Exception as e:
         logger.warning("api_worker: inflight set failed %s: %s", job_key, e)
         ok = False
 
     if not ok:
-        with suppress(Exception):
-            await redis_queue.lrem(PROCESSING_KEY, 1, raw)
-        return
+        try:
+            existing_value = await redis_queue.get(job_key)
+        except Exception:
+            existing_value = None
+
+        if isinstance(existing_value, (bytes, bytearray)):
+            existing_value = existing_value.decode("utf-8", "ignore")
+
+        inflight_ts = None
+        if isinstance(existing_value, str) and existing_value.startswith("inflight:"):
+            try:
+                inflight_ts = int(existing_value.split(":", 1)[1])
+            except (TypeError, ValueError):
+                inflight_ts = None
+
+        now = int(time.time())
+        inflight_age = None if inflight_ts is None else now - inflight_ts
+
+        if inflight_age is None or inflight_age > RESPOND_TIMEOUT:
+            try:
+                await redis_queue.set(job_key, f"inflight:{now}", ex=JOB_TTL_SEC)
+            except Exception as e:
+                logger.warning("api_worker: inflight overwrite failed %s: %s", job_key, e)
+                with suppress(Exception):
+                    await redis_queue.lrem(PROCESSING_KEY, 1, raw)
+                return
+        else:
+            await _send_struct_error(
+                409,
+                "duplicate_request",
+                "Request is already in progress",
+            )
+            with suppress(Exception):
+                await redis_queue.lrem(PROCESSING_KEY, 1, raw)
+            return
 
     start = time.perf_counter()
     error: Dict[str, Any] | None = None
@@ -452,6 +485,9 @@ async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
                     val = await redis_queue.get(job_key)
                 except Exception:
                     val = None
+
+                if isinstance(val, (bytes, bytearray)):
+                    val = val.decode("utf-8", "ignore")
 
                 if not val:
                     # Маркера нет — считаем застрявшей задачей, возвращаем в очередь
