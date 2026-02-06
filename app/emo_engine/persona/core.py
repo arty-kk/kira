@@ -220,6 +220,10 @@ class Persona:
         self._brain_top_tones = []
         self.brain = PersonaBrain(state=self.state.copy())
         self.brain.state = self.state
+        try:
+            self.brain.parent = weakref.proxy(self)
+        except Exception:
+            self.brain.parent = self
         self.enhanced_memory = PersonaMemory(chat_id=self.chat_id)
         try:
             self.enhanced_memory.parent = weakref.proxy(self)
@@ -437,6 +441,12 @@ class Persona:
             0.0,
             1.0,
         )
+
+    def register_metric(self, name: str, *, center: float | None = None, neutral: float = 0.5) -> None:
+        default_center = settings.EMO_INITIAL_CENTER if center is None else center
+        self.state.setdefault(name, default_center)
+        self.ema.setdefault(name, neutral)
+        self._recompute_rates()
 
     async def to_prompt(self, guidelines: List[str]) -> str:
 

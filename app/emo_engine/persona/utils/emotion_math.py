@@ -80,7 +80,7 @@ for _m in ALL_METRICS:
 for _m in NON_DYNAMIC_METRICS:
     EMO_DT_BASE[_m] = 0.0
 
-DYNAMIC_METRICS: List[str] = list(ALL_METRICS)
+DYNAMIC_METRICS: List[str] = [m for m in ALL_METRICS if m not in NON_DYNAMIC_METRICS]
 
 EMO_MATRIX_A: List[List[float]] | None = None
 EMO_MATRIX_B: List[List[float]] | None = None
@@ -138,6 +138,47 @@ def _init_matrices() -> None:
             TRIAD_MATRIX[idx][j] = bx * px + by * py
 
 _init_matrices()
+
+def refresh_dynamic_metrics() -> None:
+    global _N, EMO_MATRIX_A, EMO_MATRIX_B, DYAD_MATRIX, TRIAD_MATRIX
+
+    DYNAMIC_METRICS[:] = [m for m in ALL_METRICS if m not in NON_DYNAMIC_METRICS]
+    EMO_DT_BASE.clear()
+    for _m in ALL_METRICS:
+        EMO_DT_BASE[_m] = (
+            _EMO_DT_PRIMARY.get(_m)
+            or _EMO_DT_SECONDARY.get(_m)
+            or _EMO_DT_TERTIARY.get(_m)
+            or _EMO_DT_STYLE.get(_m)
+            or _EMO_DT_DRIVE_SOCIAL.get(_m)
+            or EMO_DT_DEFAULT
+        )
+    for _m in NON_DYNAMIC_METRICS:
+        EMO_DT_BASE[_m] = 0.0
+
+    _N = len(DYNAMIC_METRICS)
+
+    old_a, old_b = EMO_MATRIX_A, EMO_MATRIX_B
+    old_dyad, old_triad = DYAD_MATRIX, TRIAD_MATRIX
+    EMO_MATRIX_A = None
+    EMO_MATRIX_B = None
+    DYAD_MATRIX = None
+    TRIAD_MATRIX = None
+    _init_matrices.cache_clear()
+    _init_matrices()
+
+    if old_a is not None and EMO_MATRIX_A is not None:
+        old_a[:] = [row[:] for row in EMO_MATRIX_A]
+        EMO_MATRIX_A = old_a
+    if old_b is not None and EMO_MATRIX_B is not None:
+        old_b[:] = [row[:] for row in EMO_MATRIX_B]
+        EMO_MATRIX_B = old_b
+    if old_dyad is not None and DYAD_MATRIX is not None:
+        old_dyad[:] = [row[:] for row in DYAD_MATRIX]
+        DYAD_MATRIX = old_dyad
+    if old_triad is not None and TRIAD_MATRIX is not None:
+        old_triad[:] = [row[:] for row in TRIAD_MATRIX]
+        TRIAD_MATRIX = old_triad
 
 def _sigmoid(x: float, k: float = 10, mid: float = 0.5) -> float:
 
