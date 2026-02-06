@@ -27,7 +27,8 @@ from .utils.emotion_math import(
 )
 from .utils.emotion_math import EMO_MATRIX_A as A, EMO_MATRIX_B as B
 from .constants.emotions import (
-    ALL_METRICS, PRIMARY_EMOTIONS, PRIMARY_ORDER, ANALYSIS_METRICS, FAT_CLAMP,
+    ALL_METRICS, PRIMARY_EMOTIONS, PRIMARY_ORDER, CORE_PRIMARY_EMOTIONS,
+    ANALYSIS_METRICS, FAT_CLAMP,
 )
 
 
@@ -174,7 +175,7 @@ def _blend_metric(self, metric: str, target: float, weight: float) -> None:
 
     base_blend = settings.PERSONA_BLEND_FACTOR
     fatigue_penalty = 1.0 - float(self.state.get("fatigue", 0.0))
-    influence = base_blend * fatigue_penalty * (1.5 if metric in PRIMARY_EMOTIONS else 1.0)
+    influence = base_blend * fatigue_penalty * (1.5 if metric in CORE_PRIMARY_EMOTIONS else 1.0)
     influence *= max(0.0, float(weight))
     influence = min(1.0, influence)
 
@@ -698,7 +699,7 @@ async def _process_interaction_unlocked(
             else:
                 self.state[k] = self._clamp(defaults.get(k, self.state.get(k, 0.0)))
         try:
-            for e in PRIMARY_EMOTIONS:
+            for e in CORE_PRIMARY_EMOTIONS:
                 self.ema[e] = self.state.get(e, self.ema.get(e, 0.5))
             for e in ("arousal","energy","fatigue"):
                 self.ema[e] = self.state.get(e, self.ema.get(e, 0.5))
@@ -1060,7 +1061,7 @@ async def _process_interaction_unlocked(
         self._dirty_metrics.add("dominance")
 
     base_alpha = settings.EMO_EMA_ALPHA
-    for e in PRIMARY_EMOTIONS + ["arousal", "energy", "fatigue"]:
+    for e in CORE_PRIMARY_EMOTIONS + ["arousal", "energy", "fatigue"]:
         self.ema.setdefault(e, 0.5)
         val_e = readings.get(e, self.ema[e])
         delta = abs(val_e - self.ema[e])
