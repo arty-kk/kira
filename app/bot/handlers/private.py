@@ -38,6 +38,7 @@ from app.bot.handlers.payments import (
     clear_payment_runtime_keys,
     clear_payment_ui,
     cmd_buy,
+    cmd_buy_reqs,
     send_transient_notice,
     show_pending_invoice_stub,
 )
@@ -308,6 +309,7 @@ async def build_quick_links_kb(user_id: int) -> ReplyKeyboardMarkup | None:
             buttons.append(KeyboardButton(text=f"__i18n__:{key}::{default}"))
 
     add("SHOW_SHOP_BUTTON", "menu.shop", "🛒 Shop")
+    add("SHOW_SHOP_BUTTON", "menu.requests", "⚡ Requests")
     add("SHOW_CHANNEL_BUTTON", "menu.link", "📢 Channel")
     add("SHOW_PERSONA_BUTTON", "menu.persona", "🧬 Persona")
     add("SHOW_MEMORY_CLEAR_BUTTON", "menu.memory_clear", "🧹 Clear memory")
@@ -720,7 +722,8 @@ async def set_gender(cb: CallbackQuery) -> None:
 # Menu routing in private chat
 # ---------------------------
 async def _build_menu_mapping(uid: int) -> dict[str, str]:
-    req_label = await tr(uid, "menu.shop", "🛒 Shop")
+    shop_label = await tr(uid, "menu.shop", "🛒 Shop")
+    reqs_label = await tr(uid, "menu.requests", "")
     channel_label = await tr(uid, "menu.link", "📢 Channel")
     persona_label = await tr(uid, "menu.persona", "🧬 Persona")
     api_label = await tr(uid, "menu.api", "🔑 API")
@@ -728,14 +731,18 @@ async def _build_menu_mapping(uid: int) -> dict[str, str]:
 
     mapping = {
         _norm_btn(channel_label): "channel",
-        _norm_btn(req_label): "req",
+        _norm_btn(shop_label): "shop_home",
         _norm_btn(persona_label): "persona",
         _norm_btn(api_label): "api",
         _norm_btn(mem_clear_label): "mem_clear",
     }
-    menu_requests = await tr(uid, "menu.requests", "")
-    if menu_requests.strip():
-        mapping[_norm_btn(menu_requests)] = "req"
+    reqs_norm = _norm_btn(reqs_label)
+    shop_norm = _norm_btn(shop_label)
+    if reqs_norm and reqs_norm != shop_norm:
+        mapping[reqs_norm] = "reqs"
+    else:
+        # Fallback for legacy keyboards where requests label matches shop label.
+        mapping[shop_norm] = "shop_home"
     return mapping
 
 
@@ -802,8 +809,10 @@ async def on_private_message(message: Message) -> None:
         kind = mapping[text_n]
         if kind == "channel":
             await _send_channel_link(user_id, chat_id)
-        elif kind == "req":
+        elif kind == "shop_home":
             await cmd_buy(message)
+        elif kind == "reqs":
+            await cmd_buy_reqs(message)
         elif kind == "persona":
             await start_persona_wizard(message)
         elif kind == "api":

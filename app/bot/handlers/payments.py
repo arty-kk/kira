@@ -783,6 +783,19 @@ async def cmd_buy(message: Message) -> None:
     await _show_shop(message, tab="home")
 
 
+async def cmd_buy_reqs(message: Message) -> None:
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    await _delete_prev_shop_menu(user_id, chat_id)
+
+    if await redis_client.exists(RedisKeys.pending(user_id)):
+        if await show_pending_invoice_stub(chat_id, user_id):
+            return
+
+    await _show_shop(message, tab="reqs")
+
+
 @dp.message(Command("shop"), F.chat.type == ChatType.PRIVATE)
 async def cmd_shop(message: Message) -> None:
     await cmd_buy(message)

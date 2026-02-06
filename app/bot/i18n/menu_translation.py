@@ -55,7 +55,7 @@ _EN: Dict[str, str] = {
     # Menu
     "menu.main": "🏠 Main menu",
     "menu.shop": "🛒 Shop",
-    "menu.requests": "🛒 Shop",
+    "menu.requests": "⚡ Requests",
     "menu.link": "📢 Channel",
     "menu.persona": "🧬 Persona",
     "menu.token": "🪙 Token",
@@ -281,7 +281,7 @@ _RU: Dict[str, str] = {
     # Menu
     "menu.main": "🏠 Главное меню",
     "menu.shop": "🛒 Магазин",
-    "menu.requests": "🛒 Магазин",
+    "menu.requests": "⚡ Запросы",
     "menu.link": "📢 Канал",
     "menu.persona": "🧬 Персона",
     "menu.token": "🪙 Токен",
