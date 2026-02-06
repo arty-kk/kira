@@ -33,7 +33,7 @@ from app.services.addons.voice_generator import (
     maybe_tts_and_send, shutdown_tts,
     will_speak, is_tts_eligible_short
 )
-from app.services.addons.passive_moderation import sanitize_for_context
+from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 
@@ -65,7 +65,6 @@ INTERJECTION_SPLIT_RE = re.compile(
 
 
 ENABLE_RICH_HTML = bool(getattr(settings, "ENABLE_RICH_HTML", True))
-_SANITIZE_CONTEXT = bool(getattr(settings, "MODERATION_SANITIZE_CONTEXT_ALWAYS", True))
 _IS_MENTION_RE = re.compile(r'(?<!\S)@\w+\b')
 
 TG_TEXT_LIMIT: int = int(getattr(settings, "TG_TEXT_LIMIT", 4096))
@@ -1163,9 +1162,9 @@ async def handle_job(raw, processing_key: str) -> None:
                         ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
                     )
 
-            if isinstance(text, str) and _SANITIZE_CONTEXT:
+            if isinstance(text, str):
                 try:
-                    text = sanitize_for_context(text, entities)
+                    text, _ = split_context_text(text, entities, allow_web=allow_web)
                 except Exception:
                     pass
 

@@ -1004,7 +1004,6 @@ async def _handle_image_payload(message: Message, caption: str, jpeg_bytes: byte
     cap_raw = (caption or "")
     urls = _extract_urls_from_entities(cap_raw, getattr(message, "caption_entities", None))
     cap = _augment_text_with_urls(cap_raw, urls)
-    text_for_llm = cap
     memo = "[Image]" + (f" {cap}" if cap else "")
 
     await _store_context(chat_id, message.message_id, memo, speaker_id=user_id)
@@ -1015,7 +1014,7 @@ async def _handle_image_payload(message: Message, caption: str, jpeg_bytes: byte
 
     payload = {
         "chat_id": chat_id,
-        "text": text_for_llm,
+        "text": cap,
         "user_id": user_id,
         "reply_to": reply_to_mid,
         "tg_reply_to": tg_reply_to,

@@ -36,7 +36,7 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.memory import MEMORY_TTL, append_group_recent, inc_msg_count, push_group_stm, record_activity
 from app.services.addons.analytics import record_user_message
-from app.services.addons.passive_moderation import sanitize_for_context
+from app.services.addons.passive_moderation import split_context_text
 from app.services.addons import group_battle as battle_service
 from app.tasks.moderation import passive_moderate
 
@@ -57,8 +57,6 @@ except AttributeError:
 # ---------------------------
 # Settings / constants
 # ---------------------------
-_SANITIZE_CONTEXT = bool(getattr(settings, "MODERATION_SANITIZE_CONTEXT_ALWAYS", True))
-
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_SIDE = 2048
 ALLOWED_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}
@@ -449,7 +447,12 @@ def _analytics_best_effort(
         logger.debug("analytics(record_user_message) failed", exc_info=True)
 
 
-async def _maybe_log_channel_post(cid: int, message: Message, raw_text: str, ents: List[dict]) -> bool:
+async def _maybe_log_channel_post(
+    cid: int,
+    message: Message,
+    raw_text: str,
+    ents: List[dict],
+) -> bool:
     # returns False if must stop (not linked), True otherwise
     try:
         if not await is_from_linked_channel(message):
@@ -459,8 +462,9 @@ async def _maybe_log_channel_post(cid: int, message: Message, raw_text: str, ent
         return False
 
     try:
+        _, log_text = split_context_text(raw_text, ents, allow_web=False)
         channel_log = {
-            "text": sanitize_for_context(raw_text, ents) if _SANITIZE_CONTEXT else raw_text,
+            "text": log_text,
             "message_id": message.message_id,
             "timestamp": time_module.time(),
             "local": f"{_now_local_str()} {_tz_name()}",
@@ -853,7 +857,7 @@ async def on_group_message(message: Message) -> None:
 
         raw_text = (message.text or message.caption or "").strip()
         ents = _extract_entities(message)
-        ctx_text = sanitize_for_context(raw_text, ents) if _SANITIZE_CONTEXT else raw_text
+        model_text, log_text = split_context_text(raw_text, ents, allow_web=False)
 
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
@@ -884,7 +888,7 @@ async def on_group_message(message: Message) -> None:
             return
 
         if trigger in ("mention", "check_on_topic") and not is_channel:
-            if _is_effectively_empty(ctx_text):
+            if _is_effectively_empty(model_text):
                 return
 
         if not await _ensure_daily_limit(cid, message.message_id):
@@ -904,7 +908,7 @@ async def on_group_message(message: Message) -> None:
         await _store_context(
             cid,
             message.message_id,
-            ctx_text,
+            log_text,
             role="user",
             speaker_id=user_id_val,
             source=("channel" if is_channel else "user"),
@@ -918,7 +922,7 @@ async def on_group_message(message: Message) -> None:
 
         payload = {
             "chat_id": cid,
-            "text": ctx_text,
+            "text": model_text,
             "user_id": user_id_val,
             "reply_to": reply_to_id,
             "is_group": True,
@@ -940,8 +944,8 @@ async def on_group_message(message: Message) -> None:
             trigger=trigger,
             is_channel=is_channel,
             user_id_val=user_id_val,
-            text_for_stm=(ctx_text or "").strip(),
-            text_for_recent=(ctx_text or "").strip(),
+            text_for_stm=(log_text or "").strip(),
+            text_for_recent=(log_text or "").strip(),
         )
 
         has_link = any((e.get("type", "").lower() in ("url", "text_link")) for e in ents)
@@ -958,7 +962,7 @@ async def on_group_message(message: Message) -> None:
         _dispatch_passive_moderation(
             message,
             payload,
-            text=ctx_text,
+            text=log_text,
             ents=ents,
             is_channel=is_channel,
             user_id_val=user_id_val,
@@ -1130,7 +1134,7 @@ async def _handle_group_image_message_common(
 
     caption = (message.caption or "").strip()
     ents = _extract_entities(message)
-    ctx_caption = sanitize_for_context(caption, ents) if _SANITIZE_CONTEXT else caption
+    model_caption, log_caption = split_context_text(caption, ents, allow_web=False)
 
     mentioned = _is_mention(message)
     mentions_other = _mentions_other_user(message)
@@ -1168,11 +1172,10 @@ async def _handle_group_image_message_common(
                 bot_sid = int(getattr(consts, "BOT_ID", None) or 0) or None
             await _store_quote_context(cid, reply_to_id, quoted, role="assistant", speaker_id=bot_sid)
 
-    memo = "[Image]" + (f" {ctx_caption}" if ctx_caption else "")
     await _store_context(
         cid,
         message.message_id,
-        memo,
+        "[Image]" + (f" {log_caption}" if log_caption else ""),
         role="user",
         speaker_id=user_id_val,
         source=("channel" if is_channel else "user"),
@@ -1182,7 +1185,7 @@ async def _handle_group_image_message_common(
 
     payload = {
         "chat_id": cid,
-        "text": ctx_caption,
+        "text": model_caption,
         "user_id": user_id_val,
         "reply_to": reply_to_id,
         "is_group": True,
@@ -1201,8 +1204,8 @@ async def _handle_group_image_message_common(
         with contextlib.suppress(Exception):
             await redis_client.sadd(f"all_users:{cid}", message.from_user.id)
 
-    text_for_stm = (ctx_caption or "").strip() or "[Image]"
-    text_for_recent = (ctx_caption or "[Image]").strip()
+    text_for_stm = (log_caption or "").strip() or "[Image]"
+    text_for_recent = (log_caption or "[Image]").strip()
 
     await _push_group_stm_and_recent(
         cid,
@@ -1227,7 +1230,7 @@ async def _handle_group_image_message_common(
     _dispatch_passive_moderation(
         message,
         payload,
-        text=ctx_caption,
+        text=log_caption,
         ents=ents,
         is_channel=is_channel,
         user_id_val=user_id_val,

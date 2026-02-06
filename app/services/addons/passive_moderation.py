@@ -85,13 +85,18 @@ def contains_telegram_obfuscated(text: str) -> bool:
     pat = re.compile(rf"(?<![a-z0-9])(?:{tg_domain}|{tg_proto})(?![a-z0-9])", re.IGNORECASE)
     return bool(pat.search(s))
 
-def sanitize_for_context(text: str, entities: List[dict] | None = None) -> str:
+def sanitize_for_context(
+    text: str,
+    entities: List[dict] | None = None,
+    *,
+    replace_links: bool = True,
+) -> str:
     if not text:
         return text
     s = text
 
     try:
-        if entities:
+        if entities and replace_links:
             spans = []
             for ent in entities:
                 t = str(ent.get("type") or "").lower()
@@ -112,22 +117,38 @@ def sanitize_for_context(text: str, entities: List[dict] | None = None) -> str:
 
     s = _strip_zero_width(s)
 
-    sep = r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*"
-    tg_pat = re.compile(rf"(?i)(?:tg{sep}:{sep}//|t{sep}\.{sep}me|telegram{sep}\.{sep}(?:me|dog))")
-    s = tg_pat.sub(SANITIZE_REPLACE_TG_LINK, s)
+    if replace_links:
+        sep = r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*"
+        tg_pat = re.compile(rf"(?i)(?:tg{sep}:{sep}//|t{sep}\.{sep}me|telegram{sep}\.{sep}(?:me|dog))")
+        s = tg_pat.sub(SANITIZE_REPLACE_TG_LINK, s)
 
-    url_pat = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>'\"]+")
-    s = url_pat.sub(SANITIZE_REPLACE_ANY_LINK, s)
+        url_pat = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>'\"]+")
+        s = url_pat.sub(SANITIZE_REPLACE_ANY_LINK, s)
 
     try:
-        found = extract_urls(text, entities)
-        for u in found:
-            repl = SANITIZE_REPLACE_TG_LINK if is_telegram_link(u) else SANITIZE_REPLACE_ANY_LINK
-            s = s.replace(u, repl)
+        if replace_links:
+            found = extract_urls(text, entities)
+            for u in found:
+                repl = SANITIZE_REPLACE_TG_LINK if is_telegram_link(u) else SANITIZE_REPLACE_ANY_LINK
+                s = s.replace(u, repl)
     except Exception:
         pass
 
     return s
+
+
+def split_context_text(
+    raw_text: str,
+    entities: List[dict] | None,
+    *,
+    allow_web: bool,
+) -> tuple[str, str]:
+    log_text = sanitize_for_context(raw_text, entities)
+    sanitize_for_model = bool(getattr(settings, "MODERATION_SANITIZE_CONTEXT_FOR_MODEL", False))
+    if not sanitize_for_model:
+        return raw_text, log_text
+    model_text = sanitize_for_context(raw_text, entities, replace_links=not allow_web)
+    return model_text, log_text
 
 
 async def is_flooding(chat_id: int, user_id: int) -> bool:
