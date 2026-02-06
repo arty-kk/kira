@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import random
 import asyncio
 import time
 
@@ -144,10 +143,14 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
     except Exception:
         pass
 
-    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
-    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
-    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+    if dynamic_temperature < 0.55:
+        dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70:
+        dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85:
+        dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98:
+        dynamic_top_p = 0.98
 
     try:
         logger.info(
@@ -287,10 +290,14 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
         dynamic_temperature *= (1.0 + 0.10 * float(mods["valence_mod"]))
     except Exception:
         pass
-    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
-    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
-    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+    if dynamic_temperature < 0.55:
+        dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70:
+        dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85:
+        dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98:
+        dynamic_top_p = 0.98
     max_tokens = 250
 
     try:

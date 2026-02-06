@@ -7,14 +7,6 @@ import httpx
 from typing import Any, Optional
 from asyncio import Semaphore
 from openai import AsyncOpenAI, APIStatusError
-
-RETRYABLE_EXC_TYPES = tuple()
-try:
-    from openai import RateLimitError, APIConnectionError, APITimeoutError
-    RETRYABLE_EXC_TYPES = (RateLimitError, APIConnectionError, APITimeoutError)
-except Exception:
-    pass
-
 from tenacity import (
     AsyncRetrying,
     stop_after_attempt,
@@ -22,7 +14,15 @@ from tenacity import (
     wait_exponential,
     retry_if_exception,
 )
+
 from app.config import settings
+
+RETRYABLE_EXC_TYPES = tuple()
+try:
+    from openai import RateLimitError, APIConnectionError, APITimeoutError
+    RETRYABLE_EXC_TYPES = (RateLimitError, APIConnectionError, APITimeoutError)
+except Exception:
+    pass
 
 logger = logging.getLogger(__name__)
 

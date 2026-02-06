@@ -11,7 +11,7 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from math import sqrt, atan2, pi
-from typing import Dict, List
+from typing import Dict
 from collections import Counter
 
 from app.config import settings
@@ -120,7 +120,8 @@ def _update_weight(self, uid: int, v_opt: float | None = None, imp_opt: float | 
     if v_opt is None or imp_opt is None:
         delta = 0.0
     else:
-        v = float(v_opt); imp = float(imp_opt)
+        v = float(v_opt)
+        imp = float(imp_opt)
         if v > 0.07 and imp >= 0.12:
             delta = step * (0.6 + 0.4 * imp)
         elif v < -0.07 and imp >= 0.12:
@@ -145,7 +146,10 @@ def _effective_person_weight(self, uid: int, base_weight: float) -> float:
         rupt = int(rec.get("rupture", 0))
         rup_until = float(rec.get("rupture_until", 0.0))
     except Exception:
-        att = 0.0; trust = 0.5; rupt = 0; rup_until = 0.0
+        att = 0.0
+        trust = 0.5
+        rupt = 0
+        rup_until = 0.0
 
     mult = 1.0
     if rupt > 0 and time.time() < rup_until:
@@ -259,11 +263,12 @@ def _apply_attachment_influence(self, uid: int, eff_weight: float) -> None:
     try:
         rec = self.attachments.get(uid) or {}
         att = float(rec.get("value", 0.0))
-        trust = float(rec.get("trust_ema", 0.5))
         rupt = int(rec.get("rupture", 0))
         rup_until = float(rec.get("rupture_until", 0.0))
     except Exception:
-        att = 0.0; trust = 0.5; rupt = 0; rup_until = 0.0
+        att = 0.0
+        rupt = 0
+        rup_until = 0.0
 
     w = max(0.0, min(1.0, eff_weight)) * float(getattr(settings, "ATTACHMENT_BEHAVIOR_GAIN", 1.0))
     if w <= 1e-6:
@@ -945,9 +950,12 @@ async def _process_interaction_unlocked(
         sig["samples"] = int(sig.get("samples", 0)) + 1
         sig["q"] = int(sig.get("q", 0)) + ques
 
-        if signals_llm.get("apology"):  sig["apol"] = int(sig.get("apol", 0)) + 1
-        if signals_llm.get("clingy"):   sig["clingy"] = int(sig.get("clingy", 0)) + 1
-        if signals_llm.get("boundary"): sig["boundary"] = int(sig.get("boundary", 0)) + 1
+        if signals_llm.get("apology"):
+            sig["apol"] = int(sig.get("apol", 0)) + 1
+        if signals_llm.get("clingy"):
+            sig["clingy"] = int(sig.get("clingy", 0)) + 1
+        if signals_llm.get("boundary"):
+            sig["boundary"] = int(sig.get("boundary", 0)) + 1
         rec["signals"] = sig
         self.attachments[uid] = rec
         try:

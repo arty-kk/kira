@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, MutableMapping, Iterable, Tuple, Optional
+from typing import Dict, Mapping, Iterable, Tuple, Optional
 
 from .constants.emotions import (
     PRIMARY_EMOTIONS, SECONDARY_EMOTIONS,

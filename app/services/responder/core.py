@@ -23,7 +23,7 @@ from app.core.memory import (
 )
 from app.emo_engine import get_persona
 from app.core.db import session_scope
-from app.core.models import User, GiftPurchase
+from app.core.models import User
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
@@ -878,10 +878,14 @@ async def respond_to_user(
         dynamic_temperature *= (1.0 + 0.10 * float(mods.get("valence_mod", 0.0)))
     except Exception:
         pass
-    if dynamic_temperature < 0.55: dynamic_temperature = 0.55
-    if dynamic_temperature > 0.70: dynamic_temperature = 0.70
-    if dynamic_top_p < 0.85: dynamic_top_p = 0.85
-    if dynamic_top_p > 0.98: dynamic_top_p = 0.98
+    if dynamic_temperature < 0.55:
+        dynamic_temperature = 0.55
+    if dynamic_temperature > 0.70:
+        dynamic_temperature = 0.70
+    if dynamic_top_p < 0.85:
+        dynamic_top_p = 0.85
+    if dynamic_top_p > 0.98:
+        dynamic_top_p = 0.98
 
     # Build initial history from STM only
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
@@ -1438,9 +1442,12 @@ async def respond_to_user(
                 ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
                     ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
                 )
-                if isinstance(ltm_frags, Exception): ltm_frags = []
-                if isinstance(ltm_text,  Exception): ltm_text  = ""
-                if isinstance(mtm_lines,  Exception): mtm_lines = []
+                if isinstance(ltm_frags, Exception):
+                    ltm_frags = []
+                if isinstance(ltm_text, Exception):
+                    ltm_text = ""
+                if isinstance(mtm_lines, Exception):
+                    mtm_lines = []
                 logger.info("Retrieval[LTM]: available_fragments=%d", len(ltm_frags) if ltm_frags else 0)
 
                 ltm_snip_t = None

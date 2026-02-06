@@ -2,9 +2,7 @@
 import asyncio
 import logging
 import contextlib
-import re
 import os
-import html
 import time as time_module
 
 from aiogram import F

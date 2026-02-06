@@ -15,7 +15,7 @@ import tempfile
 import time as time_module
 
 from datetime import datetime, timedelta, time, timezone
-from typing import Any, List, Optional
+from typing import Any, List
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageOps, UnidentifiedImageError

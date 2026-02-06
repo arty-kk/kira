@@ -919,7 +919,7 @@ async def handle_job(raw, processing_key: str) -> None:
         try:
             raw = raw.decode("utf-8")
         except Exception:
-            logger.error("Invalid queue payload (bytes)"); 
+            logger.error("Invalid queue payload (bytes)") 
             with suppress(Exception):
                 await REDIS_QUEUE.lrem(processing_key, 1, raw)
             return
@@ -1548,7 +1548,8 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
                     else:
                         await asyncio.sleep(0.2)
                 raw = await REDIS_QUEUE.brpoplpush(queue_key, processing_key, timeout=1)
-                if stop_evt.is_set(): break
+                if stop_evt.is_set():
+                    break
                 if not raw:
                     continue
 

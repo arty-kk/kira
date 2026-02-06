@@ -76,10 +76,10 @@ def _b2s(x) -> str:
     return x if isinstance(x, str) else str(x)
 
 def _lang_fallback_label(ui_lang: str) -> str:
-    l = (ui_lang or "").strip().lower()
-    if l in ("ru", "rus", "russian"):
+    lang_code = (ui_lang or "").strip().lower()
+    if lang_code in ("ru", "rus", "russian"):
         return "Russian"
-    if l in ("en", "eng", "english"):
+    if lang_code in ("en", "eng", "english"):
         return "English"
     return "English"
 
@@ -257,8 +257,8 @@ def _ok_reply(reply: str, gift_label: str) -> bool:
 
 def _fallback_reply(gift_label: str, ui_lang: str) -> str:
     gl = (gift_label or "").strip()
-    l = (ui_lang or "").strip().lower()
-    if l in ("ru", "rus", "russian"):
+    lang_code = (ui_lang or "").strip().lower()
+    if lang_code in ("ru", "rus", "russian"):
         opts = [
             f"{gl} — это неожиданно приятно.",
             f"От {gl} у меня прям тихая улыбка.",

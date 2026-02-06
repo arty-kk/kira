@@ -1,6 +1,5 @@
 #alembic/versions/0b0b7a4b9a1c_add_users_persona_prefs.py
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0b0b7a4b9a1c"
 down_revision = "4b9a1c0b0b7a"

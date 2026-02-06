@@ -25,8 +25,8 @@ def _disable_celery_autologger(**_kwargs):
 broker_url = settings.CELERY_BROKER_URL or os.getenv("CELERY_BROKER_URL")
 if not broker_url:
     raise RuntimeError("Environment variable CELERY_BROKER_URL is required")
-if not broker_url.startswith("redis://"):
-    raise RuntimeError("CELERY_BROKER_URL must start with redis://")
+if not broker_url.startswith(("redis://", "rediss://")):
+    raise RuntimeError("CELERY_BROKER_URL must start with redis:// or rediss://")
 
 
 celery = Celery(

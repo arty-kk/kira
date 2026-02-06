@@ -133,7 +133,6 @@ def _compute_style_modifiers_sync(
     fear     = state.get("fear", 0.0)
     anxiety  = state.get("anxiety", 0.0)
     surprise = state.get("surprise", 0.0)
-    sadness  = state.get("sadness", 0.0)
     humility = state.get("humility", 0.0)
     conf     = state.get("confidence", 0.5)
     stress   = state.get("stress", 0.0)

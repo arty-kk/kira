@@ -87,7 +87,8 @@ except Exception:
     slow_ms = 0
 
 if slow_ms > 0:
-    import time, logging
+    import time
+    import logging
     log = logging.getLogger(__name__)
 
     @event.listens_for(engine.sync_engine, "before_cursor_execute")

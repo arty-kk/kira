@@ -69,7 +69,8 @@ def prices_post_task():
             except TelegramRetryAfter as e:
                 delay = max(1, int(getattr(e, "retry_after", 5)))
                 logger.warning("TelegramRetryAfter: sleeping %ss (attempt %d)", delay, attempt)
-                await asyncio.sleep(delay); attempt += 1
+                await asyncio.sleep(delay)
+                attempt += 1
             except TelegramBadRequest as e:
                 logger.warning("Telegram BadRequest: %s", e)
                 return
@@ -77,7 +78,8 @@ def prices_post_task():
                 if attempt >= 3:
                     logger.exception("send_message failed after %d attempts: %s", attempt, e)
                     return
-                await asyncio.sleep(1.5 * attempt); attempt += 1
+                await asyncio.sleep(1.5 * attempt)
+                attempt += 1
 
     async def _inner():
         try:

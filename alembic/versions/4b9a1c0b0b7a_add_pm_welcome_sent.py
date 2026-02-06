@@ -1,6 +1,5 @@
 #alembic/versions/4b9a1c0b0b7a_add_pm_welcome_sent.py
 from alembic import op
-import sqlalchemy as sa
 
 revision = "4b9a1c0b0b7a"
 down_revision = "3a6f7b8c6a9e"

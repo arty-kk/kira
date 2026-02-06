@@ -181,8 +181,8 @@ _CB_DISABLE_UNTIL_KEY = "tts:cb:disable_until:{chat_id}"
 _CB_FAILCOUNT_KEY     = "tts:cb:failcount:{chat_id}"
 
 def l10n(lang: str) -> dict[str,str]:
-    l = (lang or "en").split("-")[0].lower()
-    return _I18N_TOKENS.get(l, _I18N_TOKENS["en"])
+    lang_code = (lang or "en").split("-")[0].lower()
+    return _I18N_TOKENS.get(lang_code, _I18N_TOKENS["en"])
 
 async def _get_el_client() -> ElevenLabsClient:
     global _EL_CLIENT
@@ -318,31 +318,31 @@ def is_tts_eligible_short(text: str) -> bool:
     return (len(t_norm) <= MAX_TTS_CHARS_STRICT) and (s_cnt <= MAX_TTS_SENTENCES)
 
 def maybe_expand_abbr(t: str, lang: str) -> str:
-    l = (lang or "en").split("-")[0].lower()
+    lang_code = (lang or "en").split("-")[0].lower()
     tables = {"en":_ABBR_EN,"es":_ABBR_ES,"pt":_ABBR_PT,"fr":_ABBR_FR,"de":_ABBR_DE,"it":_ABBR_IT,"pl":_ABBR_PL,"ru":_RU_ABBR}
-    for rx_tbl in tables.get(l, []):
+    for rx_tbl in tables.get(lang_code, []):
         t = re.sub(rx_tbl[0], rx_tbl[1], t, flags=re.IGNORECASE)
     return t
 
 def insert_soft_pauses(t: str, lang: str) -> str:
 
     s = t
-    l = (lang or "en").split("-")[0].lower()
-    if l in ("ru","uk","be"):
+    lang_code = (lang or "en").split("-")[0].lower()
+    if lang_code in ("ru","uk","be"):
         s = _CLAUSE_BREAK_RU.sub(lambda m: (", " if m.start() > 0 else "") + m.group(1), s)
-    elif l == "es":
+    elif lang_code == "es":
         s = _CLAUSE_BREAK_ES.sub(lambda m: ", " + m.group(1), s)
-    elif l == "pt":
+    elif lang_code == "pt":
         s = _CLAUSE_BREAK_PT.sub(lambda m: ", " + m.group(1), s)
-    elif l == "fr":
+    elif lang_code == "fr":
         s = _CLAUSE_BREAK_FR.sub(lambda m: ", " + m.group(1), s)
-    elif l == "de":
+    elif lang_code == "de":
         s = _CLAUSE_BREAK_DE.sub(lambda m: ", " + m.group(1), s)
-    elif l == "it":
+    elif lang_code == "it":
         s = _CLAUSE_BREAK_IT.sub(lambda m: ", " + m.group(1), s)
-    elif l == "tr":
+    elif lang_code == "tr":
         s = _CLAUSE_BREAK_TR.sub(lambda m: ", " + m.group(1), s)
-    elif l == "pl":
+    elif lang_code == "pl":
         s = _CLAUSE_BREAK_PL.sub(lambda m: ", " + m.group(1), s)
     else:
         s = _CLAUSE_BREAK_EN.sub(lambda m: ", " + m.group(1), s)
@@ -368,8 +368,8 @@ def trim_for_tts(text: str) -> str:
 
 def break_dur_ms(ch: str, lang: str) -> int:
     
-    l = (lang or "en").split("-")[0].lower()
-    is_cjk = l in ("zh","ja","ko")
+    lang_code = (lang or "en").split("-")[0].lower()
+    is_cjk = lang_code in ("zh","ja","ko")
 
     if is_cjk:
         if ch in _CJK_HARD:
@@ -418,9 +418,12 @@ def inject_ssml_breaks(plain: str, lang: str, emo: Optional[Dict[str,float]]) ->
         return plain
 
     def xml_escape_char(ch: str) -> str:
-        if ch == "&": return "&amp;"
-        if ch == "<": return "&lt;"
-        if ch == ">": return "&gt;"
+        if ch == "&":
+            return "&amp;"
+        if ch == "<":
+            return "&lt;"
+        if ch == ">":
+            return "&gt;"
         return ch
 
     MAX_BREAKS = 16
@@ -551,28 +554,28 @@ def map_emojis(text: str, lang: str) -> str:
         for e, w in _EMOJI_MAP_RU.items():
             text = text.replace(e, f" {w} ")
         return text
-    l = (lang or "en").split("-")[0].lower()
-    if l in ("en",):
+    lang_code = (lang or "en").split("-")[0].lower()
+    if lang_code in ("en",):
         for e, w in _EMOJI_MAP_EN.items():
             text = text.replace(e, f" {w} ")
         return text
-    if l == "es":
+    if lang_code == "es":
         for e, w in _EMOJI_MAP_ES.items():
             text = text.replace(e, f" {w} ")
         return text
-    if l == "pt":
+    if lang_code == "pt":
         for e, w in _EMOJI_MAP_PT.items():
             text = text.replace(e, f" {w} ")
         return text
-    if l == "fr":
+    if lang_code == "fr":
         for e, w in _EMOJI_MAP_FR.items():
             text = text.replace(e, f" {w} ")
         return text
-    if l == "de":
+    if lang_code == "de":
         for e, w in _EMOJI_MAP_DE.items():
             text = text.replace(e, f" {w} ")
         return text
-    if l == "it":
+    if lang_code == "it":
         for e, w in _EMOJI_MAP_IT.items():
             text = text.replace(e, f" {w} ")
         return text
@@ -589,8 +592,8 @@ def normalize_punct(t: str, lang: str) -> str:
     s = re.sub(r"!{3,}", "!!", s)
     s = re.sub(r"\?{3,}", "??", s)
     s = s.replace("...", "…")
-    l = (lang or "en").split("-")[0].lower()
-    if l in ("ru","uk","be"):
+    lang_code = (lang or "en").split("-")[0].lower()
+    if lang_code in ("ru","uk","be"):
         s = re.sub(_INTERJ_RU, lambda m: m.group(0).capitalize() + ",", s)
         s = re.sub(r'(^|[\s(])"([^"]+)"', r'\1«\2»', s)
         s = s.replace("'", "’")
@@ -642,15 +645,15 @@ def calibrate_voice_settings(vs: Dict[str, Any], lang: str) -> Dict[str, Any]:
     s  = clamp(float(vs.get("stability", 0.70)), 0.65, 0.93)
     st = clamp(float(vs.get("style",     0.25)), 0.14, 0.42)
     sim= clamp(float(vs.get("similarity_boost", 0.62)), 0.50, 0.80)
-    l = (lang or "en").split("-")[0].lower()
-    if l in ("ru","uk","be","pl"):
+    lang_code = (lang or "en").split("-")[0].lower()
+    if lang_code in ("ru","uk","be","pl"):
         s = clamp(s + 0.01, 0.65, 0.93)
-    if l in ("zh","ja","ko","vi"):
+    if lang_code in ("zh","ja","ko","vi"):
         st = clamp(st - 0.02, 0.14, 0.42)
         s  = clamp(s + 0.02,  0.65, 0.93)
-    if l in ("ar","he"):
+    if lang_code in ("ar","he"):
         s = clamp(s + 0.01,  0.65, 0.93)
-    if l in ("es","pt","fr","it","de","tr"):
+    if lang_code in ("es","pt","fr","it","de","tr"):
         s  = clamp(s + 0.01,  0.65, 0.93)
         st = clamp(st - 0.01,  0.14, 0.42)
     return {"stability": round(s,3), "style": round(st,3), "similarity_boost": round(sim,3), "use_speaker_boost": bool(vs.get("use_speaker_boost", True))}
@@ -678,7 +681,7 @@ def infer_style_from_emotions(text: str, emo: Optional[Dict[str, float]]) -> Dic
     stress   = clamp01(emo.get("stress", 0.0))
     anxiety  = clamp01(emo.get("anxiety", 0.0))
     anger    = clamp01(emo.get("anger", 0.0))
-    sadness  = clamp01(emo.get("sadness", 0.0))
+    clamp01(emo.get("sadness", 0.0))
 
     excite_emo = clamp01(0.60*arousal + 0.40*energy)
     tension    = max(stress, anxiety, anger)
@@ -821,14 +824,12 @@ async def generate_voice_for_reply(
     user_text_hint: Optional[str] = None,
     ) -> Optional[str]:
 
-    persona = None
     emo_snapshot: Optional[Dict[str, float]] = None
     if TTS_USE_EMOTIONS:
         try:
             p = await get_persona(chat_id=chat_id, user_id=user_id)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(p.ready(0.50), timeout=0.60)
-            persona = p
             emo_snapshot = {
                 "arousal":  float(getattr(p, "ema", {}).get("arousal", p.state.get("arousal", 0.5))),
                 "energy":   float(getattr(p, "ema", {}).get("energy",  p.state.get("energy",  0.5))),
@@ -839,7 +840,6 @@ async def generate_voice_for_reply(
                 "sadness":  float(p.state.get("sadness",  0.0)),
             }
         except Exception:
-            persona = None
             emo_snapshot = None
 
     if not TTS_ENABLED:
@@ -922,10 +922,10 @@ async def generate_voice_for_reply(
             voice_settings["stability"] = min(0.95, float(voice_settings.get("stability", 0.75)) + 0.04)
 
         tail = trimmed_plain.strip()[-1:] if trimmed_plain.strip() else "."
-        l = (lang or "en").split("-")[0].lower()
+        lang_code = (lang or "en").split("-")[0].lower()
         if tail == "?":
-            dq = -0.02 if l in ("ru","uk","be") else -0.04
-            sq = +0.02 if l in ("ru","uk","be") else +0.03
+            dq = -0.02 if lang_code in ("ru","uk","be") else -0.04
+            sq = +0.02 if lang_code in ("ru","uk","be") else +0.03
             voice_settings["stability"] = max(0.65, float(voice_settings.get("stability", 0.75)) + dq)
             voice_settings["style"]     = min(0.40, float(voice_settings.get("style", 0.25)) + sq)
         elif tail == "!":
@@ -954,8 +954,8 @@ async def generate_voice_for_reply(
         if ssml_text:
             apply_norm = "auto"
         else:
-            l = (lang or "en").split("-")[0].lower()
-            if l in ("ru","uk","be") or needs_strict_normalization(plain_for_norm) or expressive_line:
+            lang_code = (lang or "en").split("-")[0].lower()
+            if lang_code in ("ru","uk","be") or needs_strict_normalization(plain_for_norm) or expressive_line:
                 apply_norm = "on"
             else:
                 apply_norm = apply_norm_cfg

@@ -18,4 +18,3 @@ else:
 bot = get_bot()
 dp = Dispatcher(storage=dp_storage, bot=bot)
 
-import app.bot.handlers

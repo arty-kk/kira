@@ -1,5 +1,4 @@
 #app/bot/i18n/__init__.py
-from typing import Optional
 from app.bot.i18n.menu_translation import MESSAGES
 from app.bot.components.constants import redis_client
 from app.config import settings

@@ -7,7 +7,7 @@ import logging
 
 from collections import OrderedDict
 from contextlib import suppress
-from typing import Dict, Tuple, List, Set
+from typing import Dict, Tuple
 
 from .persona.core import Persona
 from app.core.db import session_scope

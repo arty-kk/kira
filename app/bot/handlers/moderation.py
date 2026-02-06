@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 import asyncio
 import time
+import html
+from typing import List
 
 from aiogram import types, F
 from aiogram.enums import ChatType
@@ -15,13 +17,25 @@ from app.bot.components.constants import redis_client
 import app.bot.components.constants as consts
 from app.config import settings
 from app.services.addons.passive_moderation import (
-    extract_urls, is_telegram_link, contains_telegram_obfuscated,
-    contains_any_link_obfuscated
+    extract_urls,
+    is_telegram_link,
+    contains_telegram_obfuscated,
+    contains_any_link_obfuscated,
+    check_light,
+    check_deep,
 )
+from app.services.addons.analytics import record_moderation as analytics_record_moderation
 
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
+
+def get_targets() -> list[int]:
+    targets = {int(x) for x in (getattr(settings, "MODERATOR_IDS", []) or []) if str(x).strip()}
+    notify_chat_id = int(getattr(settings, "MODERATOR_NOTIFICATION_CHAT_ID", 0) or 0)
+    if notify_chat_id:
+        targets.add(notify_chat_id)
+    return sorted(targets)
 
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
