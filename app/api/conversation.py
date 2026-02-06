@@ -1,5 +1,6 @@
 #app/api/conversation.py
 import asyncio
+import base64
 import hashlib
 import time
 import logging
@@ -13,6 +14,12 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.core.db import session_scope
+from app.core.media_limits import (
+    ALLOWED_IMAGE_MIMES,
+    ALLOWED_VOICE_MIMES,
+    API_MAX_IMAGE_BYTES,
+    API_MAX_VOICE_BYTES,
+)
 from app.core.memory import get_redis, get_redis_queue, register_api_memory_uid
 from app.core.models import User, ApiKey
 from app.api.api_keys import authenticate_key, inc_stats
@@ -82,20 +89,71 @@ class ConversationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_content(self):
+        def _payload_error(message: str) -> None:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "invalid_payload", "message": message},
+            )
+
+        def _approx_b64_size(b64_value: str) -> tuple[str, int]:
+            cleaned = "".join((b64_value or "").split())
+            padding = len(cleaned) - len(cleaned.rstrip("="))
+            approx = (len(cleaned) * 3) // 4 - padding
+            return cleaned, max(approx, 0)
+
         msg = (self.message or "").strip()
         has_img = bool(self.image_b64)
         has_voice = bool(self.voice_b64)
 
         if not (msg or has_img or has_voice):
-            raise ValueError(
-                "At least one of message, image_b64 or voice_b64 must be provided."
-            )
+            _payload_error("At least one of message, image_b64 or voice_b64 must be provided.")
 
         img_mime = (self.image_mime or "").strip()
         if self.image_b64 and not img_mime:
-            raise ValueError("image_mime is required when image_b64 is provided.")
+            _payload_error("image_mime is required when image_b64 is provided.")
         if img_mime and not self.image_b64:
-            raise ValueError("image_b64 must be provided when image_mime is set.")
+            _payload_error("image_b64 must be provided when image_mime is set.")
+        if img_mime:
+            normalized_img_mime = img_mime.lower()
+            if normalized_img_mime not in ALLOWED_IMAGE_MIMES:
+                _payload_error(
+                    "image_mime must be one of: image/jpeg, image/jpg, image/png, image/webp."
+                )
+            self.image_mime = normalized_img_mime
+
+        voice_mime = (self.voice_mime or "").strip()
+        if voice_mime:
+            normalized_voice_mime = voice_mime.lower()
+            if normalized_voice_mime not in ALLOWED_VOICE_MIMES:
+                _payload_error(
+                    "voice_mime must be one of: audio/ogg, audio/opus, audio/mpeg, "
+                    "audio/mp3, audio/wav, audio/x-wav, audio/webm, audio/mp4, "
+                    "audio/m4a, audio/aac."
+                )
+            self.voice_mime = normalized_voice_mime
+
+        strict_validation = bool(getattr(settings, "API_STRICT_BASE64_VALIDATION", False))
+        if self.image_b64:
+            img_b64_clean, img_size = _approx_b64_size(self.image_b64)
+            if img_size > API_MAX_IMAGE_BYTES:
+                _payload_error(f"image_b64 exceeds {API_MAX_IMAGE_BYTES} bytes after decoding.")
+            if strict_validation:
+                try:
+                    base64.b64decode(img_b64_clean, validate=True)
+                except Exception:
+                    _payload_error("image_b64 must be valid base64.")
+            self.image_b64 = img_b64_clean
+
+        if self.voice_b64:
+            voice_b64_clean, voice_size = _approx_b64_size(self.voice_b64)
+            if voice_size > API_MAX_VOICE_BYTES:
+                _payload_error(f"voice_b64 exceeds {API_MAX_VOICE_BYTES} bytes after decoding.")
+            if strict_validation:
+                try:
+                    base64.b64decode(voice_b64_clean, validate=True)
+                except Exception:
+                    _payload_error("voice_b64 must be valid base64.")
+            self.voice_b64 = voice_b64_clean
 
         return self
 

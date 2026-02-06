@@ -14,6 +14,12 @@ from typing import Any, Dict, Set
 
 from app.config import settings
 from app.clients.openai_client import get_openai
+from app.core.media_limits import (
+    ALLOWED_IMAGE_MIMES,
+    ALLOWED_VOICE_MIMES,
+    API_MAX_IMAGE_BYTES,
+    API_MAX_VOICE_BYTES,
+)
 from app.core.memory import get_redis_queue, close_redis_pools
 from app.services.responder import respond_to_user
 
@@ -33,15 +39,6 @@ RESPOND_TIMEOUT = int(
 )
 
 PROCESSING_TASKS: Set[asyncio.Task] = set()
-
-MAX_IMAGE_BYTES = int(getattr(settings, "API_MAX_IMAGE_BYTES", 5 * 1024 * 1024))
-ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
-MAX_VOICE_BYTES = int(getattr(settings, "API_MAX_VOICE_BYTES", 25 * 1024 * 1024))
-ALLOWED_VOICE_MIMES = {
-    "audio/ogg", "audio/opus", "audio/mpeg", "audio/mp3",
-    "audio/wav", "audio/x-wav", "audio/webm",
-    "audio/mp4", "audio/m4a", "audio/aac",
-}
 
 VOICE_TRANSCRIPTION_MODEL = getattr(
     settings,
@@ -78,11 +75,11 @@ async def _transcribe_voice_b64(voice_b64: str, mime: str | None) -> str:
     if not audio:
         return ""
 
-    if len(audio) > MAX_VOICE_BYTES:
+    if len(audio) > API_MAX_VOICE_BYTES:
         logger.warning(
             "api_worker: voice payload too large: %d bytes > %d",
             len(audio),
-            MAX_VOICE_BYTES,
+            API_MAX_VOICE_BYTES,
         )
         return ""
 
@@ -306,11 +303,11 @@ async def _handle_job(raw: str, redis_queue) -> None:
                             "code": "invalid_image_b64",
                             "message": "image_b64 must be valid base64.",
                         }
-                    elif len(img_bytes) > MAX_IMAGE_BYTES:
+                    elif len(img_bytes) > API_MAX_IMAGE_BYTES:
                         error = {
                             "status": 400,
                             "code": "image_too_large",
-                            "message": f"Image is larger than {MAX_IMAGE_BYTES} bytes after decoding.",
+                            "message": f"Image is larger than {API_MAX_IMAGE_BYTES} bytes after decoding.",
                         }
 
             if not error:
