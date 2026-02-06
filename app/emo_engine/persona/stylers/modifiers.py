@@ -12,7 +12,7 @@ from app.config import settings
 from ..executor import EXECUTOR, MAX_WORKERS
 from ..utils.emotion_math import _clamp, _sigmoid
 from ..constants.emotions import (
-    PRIMARY_EMOTIONS, SECONDARY_EMOTIONS,
+    PRIMARY_EMOTIONS, CORE_PRIMARY_EMOTIONS, SECONDARY_EMOTIONS,
     TERTIARY_EMOTIONS, DRIVE_METRICS,
     SOCIAL_METRICS, COGNITIVE_METRICS,
     STYLE_METRICS, VALID_DYADS, VALID_TRIADS,
@@ -147,7 +147,7 @@ def _compute_style_modifiers_sync(
     fearish  = 0.6 * fear  + 0.4 * anxiety
 
     # Primary emotions
-    for emo in PRIMARY_EMOTIONS:
+    for emo in CORE_PRIMARY_EMOTIONS:
         if emo in derived_names or emo in SKIP_PRIMARY:
             continue
         key = f"{emo}_mod"

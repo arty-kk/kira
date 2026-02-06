@@ -53,12 +53,15 @@ PRIMARY_COORDS: Dict[str, tuple[float, float]] = {
     "warmth":       (0.9,  0.3),
 }
 
+# PRIMARY_EMOTIONS — расширенный набор координат.
 PRIMARY_EMOTIONS: List[str] = list(PRIMARY_COORDS.keys())
 
 PRIMARY_ORDER: List[str] = [
     "joy", "trust", "fear", "surprise",
     "sadness", "disgust", "anger", "anticipation",
 ]
+# CORE_PRIMARY_EMOTIONS — базовая восьмёрка.
+CORE_PRIMARY_EMOTIONS: List[str] = list(PRIMARY_ORDER)
 
 VALID_DYADS: Dict[tuple[str,str], str] = {}
 for i, e1 in enumerate(PRIMARY_ORDER):
