@@ -397,11 +397,9 @@ async def _build_pending_stub(user_id: int) -> Tuple[str, InlineKeyboardMarkup]:
         or (await tr(user_id, "payments.cancel_button", ""))
         or "❌ Cancel"
     )
-    close_label = (await tr(user_id, "ui.close", "✖️ Close")) or "✖️ Close"
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=cancel_label, callback_data="payments:cancel")],
-            [InlineKeyboardButton(text=close_label, callback_data="ui:close")],
         ]
     )
 
