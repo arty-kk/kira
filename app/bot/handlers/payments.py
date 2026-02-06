@@ -885,6 +885,24 @@ async def on_pre_checkout(pre: PreCheckoutQuery) -> None:
     except Exception:
         ok = False
 
+    if not ok:
+        user_id = pre.from_user.id
+        chat_id = pre.from_user.id
+        had_pending = False
+        with suppress(Exception):
+            had_pending = bool(await redis_client.exists(RedisKeys.pending(user_id)))
+
+        await clear_payment_ui(user_id, chat_id)
+        await clear_payment_runtime_keys(user_id)
+
+        notice_key = "payments.pending_expired" if had_pending else "payments.error"
+        notice_text = await tr(
+            user_id,
+            notice_key,
+            "⏳ Invoice expired. Please try again." if had_pending else "Payment error, please try again.",
+        )
+        await send_transient_notice(chat_id, notice_text, parse_mode="HTML")
+
     error_msg = (await tr(pre.from_user.id, "payments.error", "Payment error, please try again."))
     try:
         await bot.answer_pre_checkout_query(pre.id, ok=ok, error_message=None if ok else error_msg)
