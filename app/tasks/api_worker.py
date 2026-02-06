@@ -153,6 +153,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
     voice_b64 = job.get("voice_b64")
     voice_mime = (job.get("voice_mime") or "").lower() or None
     allow_web = bool(job.get("allow_web") or False)
+    enqueued_at = job.get("enqueued_at")
+    if isinstance(enqueued_at, (bytes, bytearray)):
+        enqueued_at = enqueued_at.decode("utf-8", "ignore")
+    try:
+        enqueued_at = float(enqueued_at) if enqueued_at is not None else None
+    except (TypeError, ValueError):
+        enqueued_at = None
 
     if not request_id or not isinstance(result_key, str):
         logger.error("api_worker: missing ids in job: %r", job)
@@ -359,6 +366,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
                     }
     finally:
         latency_ms = int((time.perf_counter() - start) * 1000)
+        latency_breakdown = None
+        if enqueued_at is not None:
+            queue_latency_ms = max(0, int((time.time() - enqueued_at) * 1000))
+            latency_breakdown = {
+                "queue_latency_ms": queue_latency_ms,
+                "worker_latency_ms": latency_ms,
+            }
 
         if error:
             payload = {
@@ -374,6 +388,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
                 "latency_ms": latency_ms,
                 "request_id": request_id,
             }
+        if latency_breakdown is not None:
+            payload["latency_breakdown"] = latency_breakdown
 
         try:
             data = json.dumps(payload, ensure_ascii=False)
