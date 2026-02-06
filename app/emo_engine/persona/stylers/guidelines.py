@@ -265,8 +265,30 @@ async def style_guidelines(
 
     try:
         if last_msg and (not _low_info(last_msg)):
-            emb = getattr(self, "_last_msg_emb", None)
-            if not emb:
+            emb = None
+            cached_emb = getattr(self, "_last_msg_emb", None)
+            cached_text = getattr(self, "_last_msg_emb_text", None)
+            if cached_emb is not None and last_msg == cached_text:
+                emb = cached_emb
+            if emb is None:
+                emb_task = getattr(self, "_emb_inflight", None)
+                emb_task_text = getattr(self, "_emb_inflight_text", None)
+                if emb_task is not None and emb_task_text == last_msg:
+                    if emb_task.done():
+                        try:
+                            if not emb_task.cancelled() and emb_task.exception() is None:
+                                emb = emb_task.result()
+                        except Exception:
+                            emb = None
+                    if emb is None:
+                        try:
+                            emb = await asyncio.wait_for(asyncio.shield(emb_task), timeout=0.4)
+                        except Exception:
+                            emb = None
+                    if emb:
+                        self._last_msg_emb = emb
+                        self._last_msg_emb_text = last_msg
+            if emb is None:
                 _t1 = time.perf_counter()
                 try:
                     emb = await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
