@@ -27,6 +27,7 @@ SCAN_COUNT: int = int(getattr(settings, "CLEANUP_REDIS_SCAN_COUNT", 1000))
 _redis_global: Dict[int, Dict[str, "SafeRedis"]] = {}
 _redis_lock = threading.Lock()
 _local_spam: Dict[tuple[int, int], tuple[int, float]] = {}
+_local_spam_lock = threading.Lock()
 
 def _get_default_tz():
     try:
@@ -589,11 +590,30 @@ async def is_spam(chat_id: int, user_id: int) -> bool:
         logger.exception("is_spam error for chat %s (fallback to local counter)", chat_id)
         now = time_module.time()
         k = (chat_id, user_id)
-        c, ts = _local_spam.get(k, (0, now))
-        if now - ts > window:
-            c, ts = 0, now
-        c += 1
-        _local_spam[k] = (c, ts)
+        local_ttl = max(1, window * 2)
+        try:
+            local_max_size = int(getattr(settings, "LOCAL_SPAM_MAX_SIZE", 5000))
+        except Exception:
+            local_max_size = 5000
+        # Fallback-only counter; consider moving TTL/size limits to settings (e.g. LOCAL_SPAM_MAX_SIZE).
+        with _local_spam_lock:
+            if _local_spam:
+                expired = [
+                    key for key, (_, ts) in _local_spam.items()
+                    if now - ts > local_ttl
+                ]
+                for key in expired:
+                    _local_spam.pop(key, None)
+            c, ts = _local_spam.get(k, (0, now))
+            if now - ts > window:
+                c, ts = 0, now
+            c += 1
+            _local_spam[k] = (c, ts)
+            if local_max_size > 0 and len(_local_spam) > local_max_size:
+                overflow = len(_local_spam) - local_max_size
+                oldest = sorted(_local_spam.items(), key=lambda item: item[1][1])[:overflow]
+                for key, _ in oldest:
+                    _local_spam.pop(key, None)
         return c > limit
 
 async def inc_msg_count(chat_id: int) -> None:
