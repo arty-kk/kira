@@ -155,7 +155,9 @@ class TextAnalyzer:
                 if m == "valence":
                     return max(-1.0, min(1.0, base + delta))
                 return self._clamp(base + delta)
-            return {m: jitter(m) for m in ANALYSIS_METRICS}
+            fallback = {m: jitter(m) for m in ANALYSIS_METRICS}
+            fallback["_analysis_missing"] = list(ANALYSIS_METRICS)  # служебный ключ
+            return fallback
 
         parsed: dict | None = None
         if content:
@@ -179,7 +181,9 @@ class TextAnalyzer:
                 if m == "valence":
                     return max(-1.0, min(1.0, base + delta))
                 return self._clamp(base + delta)
-            return {m: jitter(m) for m in ANALYSIS_METRICS}
+            fallback = {m: jitter(m) for m in ANALYSIS_METRICS}
+            fallback["_analysis_missing"] = list(ANALYSIS_METRICS)  # служебный ключ
+            return fallback
 
         full: Dict[str, float] = {}
         for k, v in parsed.items():
@@ -194,7 +198,9 @@ class TextAnalyzer:
                         full[k] = self._clamp(val)
                 except (TypeError, ValueError):
                     continue
-        if len(full) != len(ANALYSIS_METRICS):
+        missing = [m for m in ANALYSIS_METRICS if m not in full]
+        full["_analysis_missing"] = missing  # служебный ключ
+        if missing:
             def jitter(m):
                 base = self.ema.get(m, _neutral_baseline(m))
                 delta = self._rng.uniform(-0.02, 0.02)
