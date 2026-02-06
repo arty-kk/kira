@@ -185,6 +185,13 @@ class Settings:
     ENABLE_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_MODERATION", "false").lower() == "true")
     MODERATION_TIMEOUT: int = field(default_factory=lambda: _get_env("MODERATION_TIMEOUT", "30", conv=int))
     ENABLE_AI_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_AI_MODERATION", "true", conv=lambda v: str(v).lower() in ("1","true","yes","on")))
+    MODERATION_SANITIZE_CONTEXT_FOR_MODEL: bool = field(
+        default_factory=lambda: _get_env(
+            "MODERATION_SANITIZE_CONTEXT_FOR_MODEL",
+            "false",
+            conv=lambda v: str(v).lower() in ("1", "true", "yes", "on"),
+        )
+    )
     MODERATOR_IDS: List[int] = field(
         default_factory=lambda: [
             *(
