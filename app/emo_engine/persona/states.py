@@ -809,11 +809,25 @@ async def _process_interaction_unlocked(
             self._emb_inflight = asyncio.create_task(
                 _do_embed(text), name="persona-last-msg-emb"
             )
+            self._emb_inflight_text = text
+            def _on_emb_done(task: asyncio.Task, msg: str = text) -> None:
+                try:
+                    if task.cancelled():
+                        return
+                    if task.exception() is not None:
+                        return
+                    result = task.result()
+                    if result:
+                        self._last_msg_emb = result
+                        self._last_msg_emb_text = msg
+                except Exception:
+                    pass
+            self._emb_inflight.add_done_callback(_on_emb_done)
 
         emb_task = self._emb_inflight
         self._last_msg_emb = (
             emb_task.result()
-            if emb_task.done() and not emb_task.cancelled()
+            if emb_task.done() and not emb_task.cancelled() and emb_task.exception() is None
             else None
         )
     except Exception:
