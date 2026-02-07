@@ -257,16 +257,38 @@ async def user_zoneinfo(user_id: int) -> ZoneInfo:
     except Exception:
         return ZoneInfo("UTC")
 
-async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optional[str]) -> EmotionContext:
+def _build_transcript(
+    personal_msgs: list[dict],
+    summary: Optional[str],
+    *,
+    user_label: str,
+    assistant_label: str,
+    empty_fallback: str,
+    normalize_newlines: bool = True,
+) -> str:
     blocks = []
     if summary:
         blocks.append(f"Summary: {summary}")
     for m in (personal_msgs or [])[-20:]:
-        author = "User" if (m.get("user_id") and m.get("role") != "assistant") else "Assistant"
-        text = (m.get("content") or "").replace("\n", " ").strip()
-        if text:
-            blocks.append(f"{author}: {text}")
-    transcript = "\n".join(blocks) if blocks else "(no messages)"
+        author = user_label if (m.get("user_id") and m.get("role") != "assistant") else assistant_label
+        text = m.get("content") or ""
+        if normalize_newlines:
+            text = str(text).replace("\n", " ").strip()
+            if not text:
+                continue
+        else:
+            text = str(text)
+        blocks.append(f"{author}: {text}")
+    return "\n".join(blocks) if blocks else empty_fallback
+
+async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optional[str]) -> EmotionContext:
+    transcript = _build_transcript(
+        personal_msgs,
+        summary,
+        user_label="User",
+        assistant_label="Assistant",
+        empty_fallback="(no messages)",
+    )
 
     taxo = ",".join(sorted(MOTIVES.keys()))
     system_msg = (
@@ -533,16 +555,13 @@ async def top_active_hours(user_id: int, k: int) -> list[int]:
     return [h for v, h in counts[:max(1,k)] if v > 0]
 
 async def classify_signals_llm(personal_msgs: list[dict], summary: Optional[str]) -> tuple[bool, bool, bool]:
-
-    blocks = []
-    if summary:
-        blocks.append(f"Summary: {summary}")
-    for m in (personal_msgs or [])[-20:]:
-        author = "User" if (m.get("user_id") and m.get("role") != "assistant") else "Assistant"
-        text = (m.get("content") or "").replace("\n", " ").strip()
-        if text:
-            blocks.append(f"{author}: {text}")
-    transcript = "\n".join(blocks) if blocks else "(no messages)"
+    transcript = _build_transcript(
+        personal_msgs,
+        summary,
+        user_label="User",
+        assistant_label="Assistant",
+        empty_fallback="(no messages)",
+    )
 
     system_msg = (
         "You are a fast, multilingual conversation signal classifier. "
@@ -1280,15 +1299,14 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
                 personal_msgs.append(m)
             elif r == "user" and m.get("user_id") == user_id:
                 personal_msgs.append(m)
-        personal_msgs = personal_msgs[-PERSONAL_WINDOW:]
-
-        blocks: list[str] = []
-        if summary:
-            blocks.append(f"Summary: {summary}")
-        for m in personal_msgs:
-            author = "You" if m.get("role") == "user" else "Me"
-            blocks.append(f"{author}: {m.get('content','')}")
-        mem_ctx = "\n".join(blocks)
+        mem_ctx = _build_transcript(
+            personal_msgs,
+            summary,
+            user_label="You",
+            assistant_label="Me",
+            empty_fallback="",
+            normalize_newlines=False,
+        )
     except Exception:
         logger.exception("load_context failed for chat_id=%s", chat_id)
         mem_ctx = ""
