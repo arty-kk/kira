@@ -131,6 +131,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./certs:/certs:ro
       - ./dialogs:/data/dialogs
@@ -141,8 +143,7 @@ services:
       nofile:
         soft: 262144
         hard: 262144
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
-    command: ["main.py"]
+    command: ["python", "-u", "main.py"]
     healthcheck:
       test: ["CMD", "pgrep", "-f", "main.py"]
       interval: 30s
@@ -180,6 +181,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -190,14 +193,25 @@ services:
       nofile:
         soft: 262144
         hard: 262144
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
-    command: ["main.py"]
+    command: ["python", "-u", "main.py"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/healthz >/dev/null 2>&1"]
       interval: 30s
       timeout: 5s
       start_period: 30s
       retries: 5
+
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    init: true
+    environment:
+      DB_APP_NAME: "migrations"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
 
   worker-tasks:
     build: .
@@ -224,7 +238,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
-    entrypoint: ["/usr/local/bin/docker-entrypoint.sh"]
+      migrate:
+        condition: service_completed_successfully
     command:
       - celery
       - "-A"
@@ -270,6 +285,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.queue_worker"]
     ulimits:
       nofile:
@@ -314,6 +331,8 @@ services:
         condition: service_healthy
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.api_worker"]
     ulimits:
       nofile:
