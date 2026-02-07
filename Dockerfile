@@ -25,9 +25,6 @@ WORKDIR /app
 COPY . .
 COPY alembic/alembic.ini /app/alembic.ini
 
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
 RUN adduser --disabled-password --gecos '' appuser && \
     mkdir -p /app/data/embeddings && \
     chown -R appuser:appuser /app /opt/venv && \
@@ -41,5 +38,4 @@ RUN EMBEDDING_MODEL=text-embedding-3-large \
       --out-file data/embeddings/knowledge_embedded_text-embedding-3-large.json
 
 EXPOSE 8443
-ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
-CMD ["main.py"]
+CMD ["python", "-u", "main.py"]
