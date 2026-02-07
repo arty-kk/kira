@@ -123,7 +123,7 @@ services:
       RUN_API: "false"
       RUN_BOT: "true"
       WEBHOOK_HOST: "0.0.0.0"
-      WEBHOOK_PORT: "8443"
+      WEBHOOK_PORT: "8443" # If running API and webhook together, use different ports.
     depends_on:
       redis_kv:
         condition: service_healthy
@@ -173,7 +173,7 @@ services:
       DIALOGS_DIR: "/data/dialogs"
       DB_APP_NAME: "api"
       API_HOST: "0.0.0.0"
-      API_PORT: "8000"
+      API_PORT: "8000" # If running API and webhook together, use different ports.
     depends_on:
       redis_kv:
         condition: service_healthy
