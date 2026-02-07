@@ -270,7 +270,9 @@ async def extract_external_mentions(
             chat = await bot.get_chat(f"@{uname}")
             if not chat:
                 external.append(uname)
-            elif getattr(chat, "type", None) in (ChatType.CHANNEL, ChatType.BOT):
+            elif getattr(chat, "type", None) == ChatType.CHANNEL:
+                external.append(uname)
+            elif getattr(chat, "is_bot", False):
                 external.append(uname)
         except Exception:
             external.append(uname)
