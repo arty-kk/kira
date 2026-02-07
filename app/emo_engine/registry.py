@@ -7,7 +7,7 @@ import logging
 
 from collections import OrderedDict
 from contextlib import suppress
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Hashable
 
 from .persona.core import Persona
 from app.core.db import session_scope
@@ -16,7 +16,7 @@ from app.config import settings
 
 _TTL = getattr(settings, "PERSONA_CACHE_TTL", 3600)
 _MAX = getattr(settings, "PERSONA_CACHE_MAX", 300)
-_Key = Tuple[int, int, int]
+_Key = Tuple[int, int, int, Hashable]
 _cache: "OrderedDict[_Key, tuple[Persona, float]]" = OrderedDict()
 _inflight: Dict[_Key, asyncio.Future[Persona]] = {}
 _lock  = asyncio.Lock()
@@ -65,9 +65,16 @@ def _schedule_closes(personas: list[Persona]) -> None:
         except Exception:
             logger.exception("schedule_closes failed", exc_info=True)
 
-async def get_persona(chat_id: int, user_id: int | None = None, *, group_mode: bool = False) -> Persona:
+async def get_persona(
+    chat_id: int,
+    user_id: int | None = None,
+    *,
+    group_mode: bool = False,
+    profile_id: str | int | None = None,
+) -> Persona:
     t0 = _now()
-    key: _Key = (chat_id, user_id or 0, 1 if group_mode else 0)
+    profile_key: Hashable = str(profile_id) if profile_id is not None else ""
+    key: _Key = (chat_id, user_id or 0, 1 if group_mode else 0, profile_key)
     closers: list[Persona] = []
     persona_hit: Persona | None = None
     fut: asyncio.Future[Persona] | None = None
@@ -203,7 +210,7 @@ async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
     async with _lock:
         now = _now()
         for key, (persona, ts) in list(_cache.items()):
-            chat_id, uid, group_flag = key
+            chat_id, uid, group_flag, profile_key = key
             if uid == owner_id:
                 try:
                     persona.apply_overrides(prefs)

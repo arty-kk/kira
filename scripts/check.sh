@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export OPENAI_API_KEY="${OPENAI_API_KEY:-test}"
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-123456:ABCdef1234567890}"
+export TELEGRAM_BOT_USERNAME="${TELEGRAM_BOT_USERNAME:-testbot}"
+export TELEGRAM_BOT_ID="${TELEGRAM_BOT_ID:-1}"
+export WEBHOOK_URL="${WEBHOOK_URL:-https://example.invalid}"
+export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://user:pass@localhost/db}"
+export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+export REDIS_URL_QUEUE="${REDIS_URL_QUEUE:-redis://localhost:6379/1}"
+export REDIS_URL_VECTOR="${REDIS_URL_VECTOR:-redis://localhost:6379/2}"
+export TWITTER_API_KEY="${TWITTER_API_KEY:-test}"
+export TWITTER_API_SECRET="${TWITTER_API_SECRET:-test}"
+export TWITTER_ACCESS_TOKEN="${TWITTER_ACCESS_TOKEN:-test}"
+export TWITTER_ACCESS_TOKEN_SECRET="${TWITTER_ACCESS_TOKEN_SECRET:-test}"
+export TWITTER_BEARER_TOKEN="${TWITTER_BEARER_TOKEN:-test}"
+
+python -m unittest discover -s tests
+python -m compileall app

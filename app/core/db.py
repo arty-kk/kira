@@ -30,7 +30,7 @@ if app_name:
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args=connect_args or None,
+    connect_args=connect_args,
     **pool_kwargs,
 )
 
