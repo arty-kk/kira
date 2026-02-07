@@ -12,6 +12,7 @@ import unicodedata
 import threading
 import time as time_module
 import atexit
+import weakref
 
 from typing import Any, Dict, List, Optional, Union
 from redis.asyncio import Redis, from_url
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 SCAN_COUNT: int = int(getattr(settings, "CLEANUP_REDIS_SCAN_COUNT", 1000))
 
-_redis_global: Dict[int, Dict[str, "SafeRedis"]] = {}
+_redis_by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, "SafeRedis"]] = weakref.WeakKeyDictionary()
+_redis_by_thread: threading.local = threading.local()  # safer than id-based keys (no id reuse); cleanup happens in close_redis_pools()
 _redis_lock = threading.Lock()
 _local_spam: Dict[tuple[int, int], tuple[int, float]] = {}
 # Async lock avoids blocking the event loop; cleanup is deque-based with time/size eviction.
@@ -176,15 +178,24 @@ class SafeRedis:
         return SafePipeline(raw_pipe, self._attempts)
 
 def get_redis(name: str = "default") -> SafeRedis:
-
     try:
-        loop_id = id(asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
+        loop_closed = loop.is_closed()
     except RuntimeError:
-        logger.debug("get_redis: no running loop; using thread id as key")
-        loop_id = threading.get_ident()
+        loop = None
+        loop_closed = False
 
     with _redis_lock:
-        per_loop = _redis_global.setdefault(loop_id, {})
+        if loop is not None:
+            if loop_closed:
+                _redis_by_loop.pop(loop, None)
+            per_loop = _redis_by_loop.setdefault(loop, {})
+        else:
+            clients = getattr(_redis_by_thread, "clients", None)
+            if clients is None:
+                clients = {}
+                _redis_by_thread.clients = clients
+            per_loop = clients
         client = per_loop.get(name)
         if client is None:
             client = SafeRedis(_create_client(name))
@@ -199,10 +210,13 @@ def get_redis_vector() -> SafeRedis:
 
 async def close_redis_pools() -> None:
     with _redis_lock:
-        mapping = dict(_redis_global)
-        _redis_global.clear()
+        loop_mapping = list(_redis_by_loop.items())
+        _redis_by_loop.clear()
+        thread_clients = getattr(_redis_by_thread, "clients", None)
+        thread_mapping = dict(thread_clients) if thread_clients else {}
 
-    for per_loop in mapping.values():
+    for loop, per_loop in loop_mapping:
+        loop_closed = loop.is_closed()
         for client in per_loop.values():
             raw: Redis = getattr(client, "_client", client)
             try:
@@ -211,6 +225,8 @@ async def close_redis_pools() -> None:
                     disc = getattr(pool, "disconnect", None)
                     try:
                         if inspect.iscoroutinefunction(disc):
+                            if loop_closed:
+                                continue
                             await disc()
                         elif callable(disc):
                             try:
@@ -226,6 +242,8 @@ async def close_redis_pools() -> None:
                 if close is not None:
                     try:
                         if inspect.iscoroutinefunction(close):
+                            if loop_closed:
+                                continue
                             await close()
                         elif callable(close):
                             close()
@@ -233,6 +251,42 @@ async def close_redis_pools() -> None:
                         logger.debug("close_redis_pools: client.close() failed", exc_info=True)
             except Exception as exc:
                 logger.warning("Failed to close Redis pool: %s", exc)
+
+    for client in thread_mapping.values():
+        raw: Redis = getattr(client, "_client", client)
+        try:
+            pool = getattr(raw, "connection_pool", None)
+            if pool is not None:
+                disc = getattr(pool, "disconnect", None)
+                try:
+                    if inspect.iscoroutinefunction(disc):
+                        await disc()
+                    elif callable(disc):
+                        try:
+                            disc()
+                        except TypeError:
+                            try:
+                                disc(inuse_connections=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.debug("close_redis_pools: pool.disconnect() failed", exc_info=True)
+            close = getattr(raw, "close", None)
+            if close is not None:
+                try:
+                    if inspect.iscoroutinefunction(close):
+                        await close()
+                    elif callable(close):
+                        close()
+                except Exception:
+                    logger.debug("close_redis_pools: client.close() failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("Failed to close Redis pool: %s", exc)
+
+    if thread_clients is not None:
+        with _redis_lock:
+            if hasattr(_redis_by_thread, "clients"):
+                delattr(_redis_by_thread, "clients")
 
 def _graceful_close(*_a):
     try:
