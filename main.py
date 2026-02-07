@@ -30,7 +30,7 @@ async def start_api_server() -> None:
     app = create_app()
 
     host = _get_env("API_HOST", _get_env("WEBHOOK_HOST", "0.0.0.0"))
-    port = int(_get_env("API_PORT", _get_env("WEBHOOK_PORT", "8000")))
+    port = int(_get_env("API_PORT", "8000"))
 
     ssl_certfile = None
     ssl_keyfile = None
