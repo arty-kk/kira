@@ -120,20 +120,7 @@ async def cleanup_nonbuyers() -> None:
                     continue
                 async with r.pipeline(transaction=False) as p:
                     for uid in sweep:
-                        mid = str(uid)
-                        p.zrem("personal_ping_schedule", mid)
-                        p.unlink(f"personal_enrolled:{uid}")
-                        p.unlink(f"last_private_ts:{uid}")
-                        p.unlink(f"private_idle_list:{uid}")
-                        p.unlink(f"personal_ping_streak:{uid}")
-                        p.unlink(f"pending_ping:{uid}")
-                        p.unlink(f"ping_arm_stats:{uid}")
-                        p.unlink(f"private_hod_hist:{uid}")
-                        p.unlink(f"personal_reanimate_last_ts:{uid}")
-                        p.unlink(f"last_ping:pm:{uid}")
-                        p.unlink(f"lang:{uid}")
-                        p.unlink(f"lang_ui:{uid}")
-                        p.unlink(f"persona:wizard:{uid}")
+                        p.zrem("personal_ping_schedule", str(uid))
                     resp = await p.execute()
                 try:
                     total_swept_keys += sum(int(x or 0) for x in resp if isinstance(x, int))
@@ -156,7 +143,7 @@ async def cleanup_nonbuyers() -> None:
                 except Exception:
                     return 0
 
-            tasks = [_deep_delete(uid) for uid in user_ids]
+            tasks = [_deep_delete(uid) for uid in sweep]
             if tasks:
                 try:
                     for res in await asyncio.gather(*tasks, return_exceptions=True):

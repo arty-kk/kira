@@ -323,13 +323,57 @@ def _days(name: str, fallback_days: int) -> int:
 
 _ttl_stm_mtm_days = _days("MEMORY_TTL_DAYS_STM_MTM", _days("MEMORY_TTL_DAYS", 30))
 _ttl_ltm_days = _days("MEMORY_TTL_DAYS_LTM", 365)
+_memtxt_ttl_days = getattr(settings, "MEMTXT_TTL_DAYS", None)
+try:
+    if _memtxt_ttl_days is None:
+        _memtxt_ttl_days = _days("MEMORY_TTL_DAYS", 7)
+    else:
+        _memtxt_ttl_days = int(_memtxt_ttl_days)
+except Exception:
+    _memtxt_ttl_days = _days("MEMORY_TTL_DAYS", 7)
+try:
+    _memtxt_seen_ttl = int(getattr(settings, "MEMTXT_SEEN_TTL", 86_400))
+except Exception:
+    _memtxt_seen_ttl = 86_400
 
 MEMORY_TTL_STM_MTM: int = max(1, _ttl_stm_mtm_days) * 86_400
 MEMORY_TTL_LTM: int = max(1, _ttl_ltm_days) * 86_400
 MEMORY_TTL: int = MEMORY_TTL_STM_MTM
+MEMTXT_TTL_DAYS: int = max(0, int(_memtxt_ttl_days))
+MEMTXT_SEEN_TTL: int = max(1, int(_memtxt_seen_ttl))
+USER_KEYS_REGISTRY_TTL: int = max(
+    MEMORY_TTL_STM_MTM,
+    MEMORY_TTL_LTM,
+    MEMTXT_TTL_DAYS * 86_400,
+    MEMTXT_SEEN_TTL,
+)
 
 def _ns_prefix(namespace: str) -> str:
     return "api:" if namespace == "api" else ""
+
+def _user_keys_registry(user_id: int, namespace: str | None = None) -> str:
+    prefix = _ns_prefix(namespace) if namespace else ""
+    return f"{prefix}user:keys:{user_id}"
+
+async def _register_user_key(redis: SafeRedis, user_id: int, key: str, ttl_sec: int) -> None:
+    """
+    Registry for per-user keys (used by delete_user_redis_data). Keys recorded here include:
+    - mem:stm:*, mem:mtm:*, mem:mtm_tokens:*, mem:mtm_recent:*, mem:mtm_recent_tokens:*
+    - mem:ltm:*, mem:ltm_slices:*
+    - user_gender_counts:{user_id}, last_user_ts:{user_id}, last_private_ts:{user_id}
+    - memory:ids:{chat}:{uid}, memtxt:ids:{chat}:{uid}, memtxt:seen:{chat}:{uid}
+    Registry TTL is fixed to USER_KEYS_REGISTRY_TTL (max of TTLs for registered keys) so it
+    won't expire before any long-lived per-user keys.
+    """
+    ttl = max(1, int(ttl_sec))
+    registry_key = _user_keys_registry(
+        user_id,
+        "api" if str(key).startswith("api:") else None,
+    )
+    async with redis.pipeline(transaction=False) as pipe:
+        pipe.sadd(registry_key, key)
+        pipe.expire(registry_key, ttl)
+        await pipe.execute()
 
 def _k_stm(chat_id: int, user_id: int, namespace: str = "default") -> str:
     prefix = _ns_prefix(namespace)
@@ -708,6 +752,13 @@ async def record_activity(chat_id: int, user_id: int) -> None:
             await pipe.execute()
     except Exception:
         logger.exception("record_activity error chat=%s user=%s", chat_id, user_id)
+        return
+    try:
+        await _register_user_key(redis, user_id, f"last_user_ts:{user_id}", USER_KEYS_REGISTRY_TTL)
+        if chat_id == user_id:
+            await _register_user_key(redis, user_id, f"last_private_ts:{user_id}", USER_KEYS_REGISTRY_TTL)
+    except Exception:
+        logger.debug("record_activity: register user ts failed chat=%s user=%s", chat_id, user_id, exc_info=True)
 
 async def get_cached_gender(user_id: int) -> Optional[str]:
     redis = get_redis()
@@ -732,6 +783,11 @@ async def cache_gender(user_id: int, value: str) -> None:
         await redis.expire(f"user_gender_counts:{user_id}", MEMORY_TTL)
     except Exception:
         logger.exception("cache_gender failed user=%s", user_id)
+        return
+    try:
+        await _register_user_key(redis, user_id, f"user_gender_counts:{user_id}", USER_KEYS_REGISTRY_TTL)
+    except Exception:
+        logger.debug("cache_gender: register key failed user=%s", user_id, exc_info=True)
 
 async def push_message(
     chat_id: int,
@@ -768,6 +824,10 @@ async def push_message(
     except Exception:
         logger.exception("push_message STM write error for chat %s", chat_id)
         return
+    try:
+        await _register_user_key(redis, user_id, key_stm, USER_KEYS_REGISTRY_TTL)
+    except Exception:
+        logger.debug("push_message: register STM key failed chat=%s user=%s", chat_id, user_id, exc_info=True)
 
     try:
         asyncio.create_task(_enforce_stm_and_promote_to_mtm(chat_id, user_id, namespace=namespace))
@@ -905,6 +965,7 @@ async def _enforce_stm_and_promote_to_mtm(chat_id: int, user_id: int, namespace:
 
     try:
         await redis.expire(key_mtm, MEMORY_TTL_STM_MTM)
+        await _register_user_key(redis, user_id, key_mtm, USER_KEYS_REGISTRY_TTL)
     except Exception:
         pass
 
@@ -918,6 +979,7 @@ async def _enforce_stm_and_promote_to_mtm(chat_id: int, user_id: int, namespace:
         key_tok = _k_mtm_tokens(chat_id, user_id, namespace)
         await redis.incrby(key_tok, int(delta))
         await redis.expire(key_tok, MEMORY_TTL_STM_MTM)
+        await _register_user_key(redis, user_id, key_tok, USER_KEYS_REGISTRY_TTL)
     except Exception:
         pass
 
@@ -953,6 +1015,11 @@ async def _enforce_stm_and_promote_to_mtm(chat_id: int, user_id: int, namespace:
                 try:
                     await redis.expire(key_win, MEMORY_TTL_STM_MTM)
                     await redis.expire(key_win_tok, MEMORY_TTL_STM_MTM)
+                except Exception:
+                    pass
+                try:
+                    await _register_user_key(redis, user_id, key_win, USER_KEYS_REGISTRY_TTL)
+                    await _register_user_key(redis, user_id, key_win_tok, USER_KEYS_REGISTRY_TTL)
                 except Exception:
                     pass
         except Exception:
@@ -1066,6 +1133,10 @@ async def push_ltm_slice(
             ttl = MEMORY_TTL_LTM
         p.expire(key, ttl)
         await p.execute()
+    try:
+        await _register_user_key(redis, user_id, key, USER_KEYS_REGISTRY_TTL)
+    except Exception:
+        logger.debug("push_ltm_slice: register key failed chat=%s user=%s", chat_id, user_id, exc_info=True)
 
 async def get_ltm_slices(
     chat_id: int,
@@ -1246,59 +1317,6 @@ async def delete_user_redis_data(user_id: int) -> int:
     redis = get_redis()
     vredis = get_redis_vector()
 
-    patterns_hard_delete = [
-        f"mem:stm:p:{user_id}",
-        f"mem:mtm:p:{user_id}",
-        f"mem:mtm_tokens:p:{user_id}",
-        f"mem:mtm_recent:p:{user_id}",
-        f"mem:mtm_recent_tokens:p:{user_id}",
-        f"mem:ltm:p:{user_id}",
-        f"mem:ltm_slices:p:{user_id}",
-        f"api:mem:stm:p:{user_id}",
-        f"api:mem:mtm:p:{user_id}",
-        f"api:mem:mtm_tokens:p:{user_id}",
-        f"api:mem:mtm_recent:p:{user_id}",
-        f"api:mem:mtm_recent_tokens:p:{user_id}",
-        f"api:mem:ltm:p:{user_id}",
-        f"api:mem:ltm_slices:p:{user_id}",
-        f"personal_enrolled:{user_id}",
-        f"last_user_ts:{user_id}",
-        f"last_private_ts:{user_id}",
-        f"private_idle_list:{user_id}",
-        f"personal_ping_streak:{user_id}",
-        f"pending_ping:{user_id}",
-        f"ping_arm_stats:{user_id}",
-        f"private_hod_hist:{user_id}",
-        f"personal_reanimate_last_ts:{user_id}",
-        f"mem:stm:g:*:u:{user_id}",
-        f"mem:mtm:g:*:u:{user_id}",
-        f"mem:mtm_tokens:g:*:u:{user_id}",
-        f"mem:mtm_recent:g:*:u:{user_id}",
-        f"mem:mtm_recent_tokens:g:*:u:{user_id}",
-        f"mem:ltm:g:*:u:{user_id}",
-        f"mem:ltm_slices:g:*:u:{user_id}",
-        f"api:mem:stm:g:*:u:{user_id}",
-        f"api:mem:mtm:g:*:u:{user_id}",
-        f"api:mem:mtm_tokens:g:*:u:{user_id}",
-        f"api:mem:mtm_recent:g:*:u:{user_id}",
-        f"api:mem:mtm_recent_tokens:g:*:u:{user_id}",
-        f"api:mem:ltm:g:*:u:{user_id}",
-        f"api:mem:ltm_slices:g:*:u:{user_id}",
-        f"user_gender_counts:{user_id}",
-        f"last_ping:pm:{user_id}",
-        f"msg:{user_id}:*",
-        f"msg_count:{user_id}",
-        f"last_message_ts:{user_id}",
-        f"lang:{user_id}",
-        f"lang_ui:{user_id}",
-        f"ltm_rollup_last:*:{user_id}",
-        f"ltm_rollup_guard:*:{user_id}",
-        f"seen:{user_id}:*",
-        f"on_topic_daily:{user_id}:*",
-        f"api:stm_promote_guard:*:{user_id}",
-        f"api:ltm_rollup_guard:*:{user_id}",
-    ]
-
     async def _iter_keys(match_pat: str):
         async for key in redis.scan_iter(match=match_pat, count=SCAN_COUNT):
             yield key
@@ -1323,10 +1341,120 @@ async def delete_user_redis_data(user_id: int) -> int:
         except Exception:
             return int(await r.delete(*keys))
 
-    deleted_keys = 0
-    batch: list = []
+    async def _cleanup_memory_uid_zset(zname: str) -> None:
+        zname = _b2s(zname, str(zname))
+        parts = zname.split(":")
+        chat = parts[2] if len(parts) >= 4 else None
+        if not chat:
+            return
+        eids = await redis.zrange(zname, 0, -1)
+        if eids:
+            async with redis.pipeline(transaction=True) as p:
+                for eid in eids:
+                    s = _b2s(eid, str(eid))
+                    p.delete(f"memory:{chat}:{s}")
+                    p.zrem(f"memory:ids:{chat}", s)
+                p.delete(zname)
+                p.srem(f"memory:uidsets:{chat}", zname)
+                await p.execute()
 
-    for pat in patterns_hard_delete:
+    async def _cleanup_memtxt_uid_zset(zname: str) -> None:
+        zname = _b2s(zname, str(zname))
+        parts = zname.split(":")
+        chat = parts[2] if len(parts) >= 4 else None
+        if not chat:
+            return
+        doc_keys = await redis.zrange(zname, 0, -1)
+        if doc_keys:
+            async with redis.pipeline(transaction=True) as p:
+                for dk in doc_keys:
+                    k = _b2s(dk, str(dk))
+                    p.delete(k)
+                    p.zrem(f"memtxt:ids:{chat}", k)
+                p.delete(zname)
+                await p.execute()
+
+    deleted_keys = 0
+    registry_deleted = 0
+
+    # Per-user keys are removed through the registry; shared indexes are cleaned separately.
+    for registry_key in (_user_keys_registry(user_id), _user_keys_registry(user_id, "api")):
+        try:
+            raw_keys = await redis.smembers(registry_key)
+        except Exception:
+            raw_keys = []
+        if not raw_keys:
+            try:
+                await redis.delete(registry_key)
+            except Exception:
+                pass
+            continue
+        registry_deleted += len(raw_keys)
+        keys_to_delete: list[str] = []
+        memtxt_seen_keys: list[str] = []
+        memory_uid_zsets: list[str] = []
+        memtxt_uid_zsets: list[str] = []
+        for raw_key in raw_keys:
+            key = _b2s(raw_key, str(raw_key))
+            if key.startswith("memory:ids:") and key.endswith(f":{user_id}"):
+                memory_uid_zsets.append(key)
+                continue
+            if key.startswith("memtxt:ids:") and key.endswith(f":{user_id}"):
+                memtxt_uid_zsets.append(key)
+                continue
+            if key.startswith("memtxt:seen:") and key.endswith(f":{user_id}"):
+                memtxt_seen_keys.append(key)
+                continue
+            keys_to_delete.append(key)
+
+        for zname in memory_uid_zsets:
+            await _cleanup_memory_uid_zset(zname)
+        for zname in memtxt_uid_zsets:
+            await _cleanup_memtxt_uid_zset(zname)
+        keys_to_delete.extend(memtxt_seen_keys)
+
+        batch: list = []
+        for k in keys_to_delete:
+            batch.append(k)
+            if len(batch) >= SCAN_COUNT:
+                deleted_keys += await _unlink_batch(batch)
+                batch.clear()
+        if batch:
+            deleted_keys += await _unlink_batch(batch)
+            batch.clear()
+
+        try:
+            await redis.delete(registry_key)
+        except Exception:
+            pass
+
+    direct_keys = [
+        f"personal_enrolled:{user_id}",
+        f"private_idle_list:{user_id}",
+        f"personal_ping_streak:{user_id}",
+        f"pending_ping:{user_id}",
+        f"ping_arm_stats:{user_id}",
+        f"private_hod_hist:{user_id}",
+        f"personal_reanimate_last_ts:{user_id}",
+        f"last_ping:pm:{user_id}",
+        f"msg_count:{user_id}",
+        f"last_message_ts:{user_id}",
+        f"lang:{user_id}",
+        f"lang_ui:{user_id}",
+        f"persona:wizard:{user_id}",
+        f"pending_invoice:{user_id}",
+        f"pending_invoice_tier:{user_id}",
+        f"pending_invoice_msg:{user_id}",
+        f"buy_menu_msg:{user_id}",
+        f"buy_info_msg:{user_id}",
+        f"cb_rate:{user_id}",
+        f"tts:pref:{user_id}",
+        f"vmsg:disabled:chat:{user_id}",
+    ]
+    deleted_keys += await _unlink_batch(direct_keys)
+
+    batch = []
+    for pat in (f"msg:{user_id}:*", f"seen:{user_id}:*", f"on_topic_daily:{user_id}:*"):
         async for k in _iter_keys(pat):
             batch.append(k)
             if len(batch) >= SCAN_COUNT:
@@ -1382,6 +1510,7 @@ async def delete_user_redis_data(user_id: int) -> int:
                 p.hdel(k, uid_field)
             await p.execute()
 
+    batch = []
     for pat in (f"facts:{user_id}:*", f"plans:{user_id}:*", f"bounds:{user_id}:*"):
         async for k in _iter_keys(pat):
             batch.append(k)
@@ -1412,23 +1541,6 @@ async def delete_user_redis_data(user_id: int) -> int:
         except Exception:
             pass
 
-    async for z in _iter_keys(f"memory:ids:*:{user_id}"):
-        zname = _b2s(z, str(z))
-        parts = zname.split(":")
-        chat = parts[2] if len(parts) >= 4 else None
-        if not chat:
-            continue
-        eids = await redis.zrange(zname, 0, -1)
-        if eids:
-            async with redis.pipeline(transaction=True) as p:
-                for eid in eids:
-                    s = _b2s(eid, str(eid))
-                    p.delete(f"memory:{chat}:{s}")
-                    p.zrem(f"memory:ids:{chat}", s)
-                p.delete(zname)
-                p.srem(f"memory:uidsets:{chat}", zname)
-                await p.execute()
-
     try:
         z_main = f"memory:ids:{user_id}"
         eids = await redis.zrange(z_main, 0, -1)
@@ -1451,34 +1563,6 @@ async def delete_user_redis_data(user_id: int) -> int:
     except Exception:
         logger.debug("private vector memory cleanup failed", exc_info=True)
 
-    try:
-        async for z in _iter_keys(f"memtxt:ids:*:{user_id}"):
-            zname = _b2s(z, str(z))
-            parts = zname.split(":")
-            chat = parts[2] if len(parts) >= 4 else None
-            if not chat:
-                continue
-            doc_keys = await redis.zrange(zname, 0, -1)
-            if doc_keys:
-                async with redis.pipeline(transaction=True) as p:
-                    for dk in doc_keys:
-                        k = _b2s(dk, str(dk))
-                        p.delete(k)
-                        p.zrem(f"memtxt:ids:{chat}", k)
-                    p.delete(zname)
-                    await p.execute()
-    except Exception:
-        logger.debug("memtxt per-uid cleanup failed", exc_info=True)
-
-    try:
-        async for k in _iter_keys(f"memtxt:seen:*:{user_id}"):
-            try:
-                await redis.delete(k)
-            except Exception:
-                pass
-    except Exception:
-        logger.debug("memtxt seen cleanup failed", exc_info=True)
-
     for pat in (f"memtxt:ids:{user_id}", f"memtxt:ids:{user_id}:{user_id}",
                 f"memtxt:seen:{user_id}", f"memtxt:seen:{user_id}:{user_id}"):
         try:
@@ -1486,7 +1570,12 @@ async def delete_user_redis_data(user_id: int) -> int:
         except Exception:
             pass
 
-    logger.info("delete_user_redis_data: user_id=%s, deleted_keys=%s (extended)", user_id, deleted_keys)
+    logger.info(
+        "delete_user_redis_data: user_id=%s, deleted_keys=%s, registry_deleted=%s (extended)",
+        user_id,
+        deleted_keys,
+        registry_deleted,
+    )
     return deleted_keys
 
 
