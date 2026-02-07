@@ -364,12 +364,17 @@ def gifts_react(
             try:
                 ok = _run(redis_client.set(lock_key, int(time.time()), nx=True, ex=5 * 60))
                 if not ok:
+                    logger.info(
+                        "redis lock failed; aborting gift reaction",
+                        extra={"charge_id": charge_id, "lock_key": lock_key},
+                    )
                     lock_key = None
                     return
                 lock_acquired = True
             except Exception:
                 logger.debug("gift react lock redis failed", exc_info=True)
                 lock_key = None
+                return
 
         ui_lang = "en"
         try:
