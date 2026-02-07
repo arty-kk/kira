@@ -1,4 +1,4 @@
-#app/services/responder/coref/resolve_coref.py
+# app/services/responder/coref/resolve_coref.py
 import logging
 import asyncio
 import json
@@ -19,6 +19,9 @@ MIN_CONFIDENCE = 0.80
 MAX_ANT_LENGTH = 200
 MAX_OUTPUT_MULT = 4
 
+SNIPPET_MAX_MESSAGES = 8  # можно уменьшить до 8, если хотите ещё дешевле
+
+
 def _parse_json(s: str) -> Dict[str, Any]:
     raw = s.strip()
     if raw.startswith("```"):
@@ -33,25 +36,114 @@ def _trim_span(query: str, start: int, end: int) -> tuple[int, int]:
 
     while s < e and query[s].isspace():
         s += 1
-    while e > s and query[e-1].isspace():
+    while e > s and query[e - 1].isspace():
         e -= 1
     while s < e and query[s] in OPEN:
         s += 1
-    while e > s and query[e-1] in CLOSE:
+    while e > s and query[e - 1] in CLOSE:
         e -= 1
     return s, e
 
+def _next_word(query: str, i: int) -> str:
+    n = len(query)
+    while i < n and query[i].isspace():
+        i += 1
+    j = i
+    while j < n and (query[j].isalpha() or query[j] in ("'", "’")):
+        j += 1
+    return query[i:j].lower()
+
 def _looks_like_determiner(query: str, start: int, end: int) -> bool:
+    """
+    Более аккуратная версия:
+    пытаемся отличать pronominal demonstrative ("this was ...", "это было ...")
+    от determiner ("this book", "эта книга").
+    """
     i = end
     n = len(query)
+
     saw_space = False
     while i < n and query[i].isspace():
         saw_space = True
         i += 1
     if not saw_space or i >= n:
         return False
+
+    nxt = _next_word(query, i)
+
+    # Частые связки/вспомогательные глаголы → это НЕ determiner перед существительным
+    en_non_noun = {
+        "is", "are", "was", "were", "be", "been", "being",
+        "do", "does", "did",
+        "have", "has", "had",
+        "can", "could", "may", "might", "must",
+        "will", "would", "shall", "should",
+    }
+    ru_non_noun = {
+        "был", "была", "были", "было",
+        "будет", "будут",
+        "есть", "значит",
+    }
+    if nxt in en_non_noun or nxt in ru_non_noun:
+        return False
+
+    # Иначе — считаем determiner-подобным (консервативно)
     cat = unicodedata.category(query[i])
     return cat[0] in ("L", "N")
+
+def _looks_like_existential_there(query: str, start: int, end: int) -> bool:
+    tok = query[start:end].strip().lower()
+    if tok in ("there's", "there’s"):
+        return True
+    if tok != "there":
+        return False
+
+    i = end
+    n = len(query)
+    while i < n and query[i].isspace():
+        i += 1
+    j = i
+    while j < n and (query[j].isalpha() or query[j] in ("'", "’")):
+        j += 1
+    nxt = query[i:j].lower()
+    return nxt in ("is", "are", "was", "were", "'s", "’s")
+
+def _deictic_is_anchored(query: str, start: int, end: int) -> bool:
+    """
+    Улучшено: пропускаем пунктуацию между деиктиком и предлогом.
+    Примеры, которые должны резаться:
+      EN: "here, in Amsterdam", "there — at the office"
+      RU: "там, в офисе", "здесь — на улице"
+    """
+    i = end
+    n = len(query)
+
+    while i < n:
+        ch = query[i]
+        if ch.isspace():
+            i += 1
+            continue
+        # пропускаем пунктуацию/кавычки/тире и т.п.
+        if unicodedata.category(ch).startswith("P") or ch in ("—", "–", "-", "…"):
+            i += 1
+            continue
+        break
+
+    if i >= n:
+        return False
+
+    nxt = _next_word(query, i)
+
+    en_preps = {
+        "in", "at", "on", "near", "from", "to", "into", "onto", "over", "under", "between",
+        "around", "inside", "outside", "within", "by", "of"
+    }
+    ru_preps = {
+        "в", "во", "на", "у", "около", "возле", "рядом", "с", "со", "из", "от", "до", "к", "ко",
+        "по", "под", "над", "между", "перед", "за"
+    }
+    return nxt in en_preps or nxt in ru_preps
+
 
 _RX_12P = [
     re.compile(r"\b(I|me|my|mine|we|us|our|ours|you|your|yours)\b", re.IGNORECASE),
@@ -71,15 +163,10 @@ _RX_12P = [
     re.compile(r"\b(ja|mnie|mi|mój|moja|moje|my|nas|nam|nasz|nasza|nasze|ty|ciebie|ci|twój|twoja|twoje|wy|was|wam|wasz|wasza|wasze)\b", re.IGNORECASE),
 ]
 _SUBSTR_12P = (
-    # CJK
     ["我", "我们", "你", "你们", "您", "私", "僕", "俺", "あなた", "君", "나", "저", "너", "당신", "우리", "너희"]
-    # Arabic
     + ["أنا", "نحن", "أنت", "أنتِ", "أنتما", "أنتم", "أنتن"]
-    # Hebrew
     + ["אני", "אתה", "את", "אתם", "אתן", "אנחנו"]
-    # Persian
     + ["من", "ما", "تو", "شما"]
-    # Hindi (деон. формы без падежей)
     + ["मैं", "हम", "तुम", "आप", "तू"]
 )
 
@@ -102,57 +189,75 @@ def _apply_links(query: str, links: List[Dict[str, Any]]) -> str:
         out = out[:s] + ant + out[e:]
     return out
 
-_EXTRACT_PROMPT = """You are a multilingual coreference/deixis extractor.
-
-INPUT:
-We provide:
-  (1) SNIPPET = a JSON array of recent messages, each object has fields:
-      {"i": <int>, "role": "user"|"assistant", "content": "<string>"}
-      Antecedent offsets MUST be measured **inside the 'content' string** of the object with the given "i".
-  (2) QUERY = the latest user message (a raw string).
-Your job is to identify ONLY pronouns in QUERY that should be resolved, and point to their antecedents inside SNIPPET[*].content.
-
-RESOLVE ONLY:
-- third-person pronouns (stand-alone forms) in ANY language.
-- pronominal demonstratives in ANY language (used ALONE, not before a noun). Examples of such demonstratives:
-  EN: this, that, these, those
-  RU: это, то, тот, та, те
-  (Other languages: provide the correct local form if and only if it is used pronominally/stand-alone.)
-
-NEVER RESOLVE:
-- ANY first- or second-person forms (including possessives) in ANY language.
-- demonstratives used as determiners before a noun (e.g., "that book"; RU: "эта/этот/эти + NOUN").
-- complementizers/relative markers (e.g., EN "that" as conjunction; RU "что" as conjunction).
-- anything ambiguous or with low confidence.
-
-OUTPUT STRICT JSON ONLY with this schema:
-
-{
-  "links": [
-    {
-      "pronoun_text": "<exact substring from QUERY>",
-      "start": <int start index in QUERY>,
-      "end": <int end index in QUERY>,
-      "person": "third" | "unknown",
-      "pos": "pronoun" | "demonstrative" | "determiner" | "complementizer" | "relative" | "other",
-      "standalone": true | false,
-      "language": "<bcp47 or iso639 guess, e.g., 'ru', 'en', 'es', 'zh', 'ja', 'tr', 'ar'>",
-      "confidence": <float 0..1>,
-      "antecedent_text": "<exact substring from SNIPPET[i].content>",
-      "msg_index": <int 'i' of the SNIPPET object>,
-      "antecedent_start": <int start index inside SNIPPET[i].content>,
-      "antecedent_end": <int end index inside SNIPPET[i].content>
+def _looks_like_first_or_second(pronoun: str) -> bool:
+    s = re.sub(r"^\W+|\W+$", "", pronoun, flags=re.UNICODE).lower().strip()
+    if not s:
+        return False
+    en = {"i", "me", "my", "mine", "we", "us", "our", "ours", "you", "your", "yours"}
+    if re.fullmatch(r"(я|мы|ты|вы)", s):
+        return True
+    if re.fullmatch(r"(мой|моя|мо[её]|мои|твой|твоя|тво[её]|твои|наш|ваш|свой)", s):
+        return True
+    lat = {
+        "yo", "me", "mi", "mio", "mia", "nosotros", "nosotras", "nos", "nuestro", "nuestra",
+        "tú", "tu", "te", "ti", "tuyo", "tuya", "vos", "usted", "ustedes", "vosotros", "vosotras",
+        "eu", "meu", "minha", "nós", "nos", "nosso", "nossa", "tu", "te", "voce", "você", "vocês", "voces",
+        "je", "moi", "mon", "ma", "mes", "nous", "notre", "nos", "tu", "toi", "ton", "ta", "tes", "vous", "votre", "vos",
+        "ich", "mich", "mir", "wir", "uns", "du", "dich", "dir", "ihr", "euch", "dein", "euer",
+        "io", "me", "mio", "mia", "noi", "nostro", "nostra", "tu", "te", "tuo", "tua", "voi", "vostro", "vostra",
+        "ik", "mij", "mijn", "wij", "we", "ons", "onze", "jij", "je", "jou", "jouw", "u", "jullie",
+        "ben", "bana", "beni", "biz", "bize", "bizi", "sen", "sana", "seni", "siz", "size", "sizi"
     }
-  ]
-}
+    cjk = {"我", "我们", "你", "你们", "您", "私", "僕", "俺", "あなた", "君", "貴方", "나", "저", "너", "당신", "우리", "너희"}
+    ar = {"أنا", "نحن", "أنت", "أنتِ", "أنتما", "أنتم", "أنتن"}
+    return s in en or s in lat or s in cjk or s in ar
 
-CONSTRAINTS:
-- Include ONLY items that are CLEAR and UNAMBIGUOUS and meet the "RESOLVE ONLY" criteria.
-- "antecedent_text" MUST exactly equal SNIPPET[msg_index].content[antecedent_start:antecedent_end].
-- "standalone" MUST be true for demonstratives; otherwise treat as determiner and exclude.
-- If nothing to resolve, return {"links": []}.
-- JSON only. No comments. No markdown fences unless using a json code block.
+
+_EXTRACT_PROMPT = """You extract coreference/deixis links between the latest user QUERY and prior chat SNIPPET.
+
+SNIPPET is a JSON array of objects: {"i":int, "r":"u"|"a", "c":string}
+Antecedent offsets MUST be measured inside SNIPPET[msg_index].c.
+
+Return links ONLY when HIGH confidence and UNAMBIGUOUS:
+- third-person pronouns (stand-alone forms),
+- pronominal demonstratives (stand-alone; not determiner),
+- discourse deictic adverbs (here/there/now/then; здесь/там/сейчас/тогда etc) ONLY if SNIPPET contains a concrete antecedent span.
+
+Exclude:
+- any 1st/2nd person forms,
+- demonstratives used as determiners before a noun,
+- complementizer/conjunction "that"/"что",
+- EN existential "there is/are/was/were" / "there's",
+- anchored deictics like "here in X" or "там в Y".
+
+Output must match the given JSON schema. JSON only, no extra text.
 """
+
+_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "integer"},
+                    "end": {"type": "integer"},
+                    "pos": {"type": "string", "enum": ["pronoun", "demonstrative", "deictic"]},
+                    "standalone": {"type": "boolean"},
+                    "confidence": {"type": "number"},
+                    "msg_index": {"type": "integer"},
+                    "antecedent_start": {"type": "integer"},
+                    "antecedent_end": {"type": "integer"},
+                },
+                "required": ["start", "end", "pos", "standalone", "confidence", "msg_index", "antecedent_start", "antecedent_end"],
+                "additionalProperties": False
+            }
+        }
+    },
+    "required": ["links"],
+    "additionalProperties": False
+}
 
 def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -> List[Dict[str, Any]]:
     links = obj.get("links") if isinstance(obj, dict) else None
@@ -163,6 +268,7 @@ def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -
     out: List[Dict[str, Any]] = []
     used = []
 
+    # сортируем по confidence desc, потом start asc
     try:
         iter_links = sorted(
             links,
@@ -173,15 +279,11 @@ def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -
 
     for item in iter_links:
         try:
-            ptxt = str(item["pronoun_text"])
             start = int(item["start"])
             end = int(item["end"])
-            person = str(item.get("person", "unknown")).strip().lower()
             pos = str(item.get("pos", "other")).strip().lower()
             standalone = bool(item.get("standalone", False))
-            lang = str(item.get("language", "und")).strip().lower()
             conf = float(item.get("confidence", 0.0))
-            ant = str(item["antecedent_text"])
             mi = int(item["msg_index"])
             a_s = int(item["antecedent_start"])
             a_e = int(item["antecedent_end"])
@@ -192,63 +294,65 @@ def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -
             continue
         if not (0 <= mi < len(snippet_texts)):
             continue
+
         snip = snippet_texts[mi]
         if not (0 <= a_s < a_e <= len(snip)):
             continue
 
+        # нормализуем границы по пунктуации/скобкам
         t_start, t_end = _trim_span(query, start, end)
         if not (0 <= t_start < t_end <= n):
             continue
-        if (t_start, t_end) != (start, end):
-            start, end = t_start, t_end
-        slice_query = query[start:end]
-        if slice_query != ptxt:
-            ptxt = slice_query
+        start, end = t_start, t_end
 
+        ptxt = query[start:end]
         if not ptxt or "\n" in ptxt or len(ptxt) > 24:
             continue
-
         if _looks_like_first_or_second(ptxt):
             continue
 
-        slice_ante = snip[a_s:a_e]
-        if slice_ante != ant:
-            ant = slice_ante
-
+        ant = snip[a_s:a_e]
         if len(ant.strip()) == 0 or len(ant) > MAX_ANT_LENGTH:
             continue
-
         if ant.strip().lower() == ptxt.strip().lower():
             continue
 
-        is_third = (person == "third" and pos in ("pronoun", "other"))
-        is_demo = (pos == "demonstrative" and bool(standalone) is True)
-        if not (is_third or is_demo):
-            continue
+        if pos == "demonstrative":
+            if not standalone:
+                continue
+            if _looks_like_determiner(query, start, end):
+                continue
 
-        if is_demo and _looks_like_determiner(query, start, end):
+        elif pos == "deictic":
+            if _looks_like_existential_there(query, start, end):
+                continue
+            if _deictic_is_anchored(query, start, end):
+                continue
+
+        elif pos == "pronoun":
+            # доп. фильтров нет; первые/вторые уже отсеяны
+            pass
+        else:
             continue
 
         if conf < MIN_CONFIDENCE:
             continue
 
+        # не даём перекрывающиеся замены
         if any(not (end <= s or start >= e) for s, e in used):
             continue
 
         used.append((start, end))
         out.append({
-            "pronoun_text": ptxt,
             "start": start,
             "end": end,
-            "person": person,
             "pos": pos,
             "standalone": standalone,
-            "language": lang,
             "confidence": conf,
-            "antecedent_text": ant,
             "msg_index": mi,
             "antecedent_start": a_s,
             "antecedent_end": a_e,
+            "antecedent_text": ant,
         })
 
     out.sort(key=lambda x: x["start"], reverse=True)
@@ -256,49 +360,34 @@ def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -
         out = out[:MAX_LINKS]
     return out
 
-def _looks_like_first_or_second(pronoun: str) -> bool:
-    s = re.sub(r"^\W+|\W+$", "", pronoun, flags=re.UNICODE).lower().strip()
-    if not s:
-        return False
-    en = {"i","me","my","mine","we","us","our","ours","you","your","yours"}
-    if re.fullmatch(r"(я|мы|ты|вы)", s): 
-        return True
-    if re.fullmatch(r"(мой|моя|мо[её]|мои|твой|твоя|тво[её]|твои|наш|ваш|свой)", s):
-        return True
-    lat = {
-        # ES
-        "yo","me","mi","mio","mia","nosotros","nosotras","nos","nuestro","nuestra",
-        "tú","tu","te","ti","tuyo","tuya","vos","usted","ustedes","vosotros","vosotras",
-        # PT
-        "eu","meu","minha","nós","nos","nosso","nossa","tu","te","voce","você","vocês","voces",
-        # FR
-        "je","moi","mon","ma","mes","nous","notre","nos","tu","toi","ton","ta","tes","vous","votre","vos",
-        # DE
-        "ich","mich","mir","wir","uns","du","dich","dir","ihr","euch","dein","euer",
-        # IT
-        "io","me","mio","mia","noi","nostro","nostra","tu","te","tuo","tua","voi","vostro","vostra",
-        # NL
-        "ik","mij","mijn","wij","we","ons","onze","jij","je","jou","jouw","u","jullie",
-        # TR
-        "ben","bana","beni","biz","bize","bizi","sen","sana","seni","siz","size","sizi"
-    }
-    cjk = {"我","我们","你","你们","您","私","僕","俺","あなた","君","貴方","나","저","너","당신","우리","너희"}
-    ar = {"أنا","نحن","أنت","أنتِ","أنتما","أنتم","أنتن"}
-    return s in en or s in lat or s in cjk or s in ar
 
 async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
+    if text is None:
+        return ""
 
-    snippet = [m for m in (history or []) if m.get("role") in ("user", "assistant")][-10:]
+    query = str(text)
+
+    snippet = [m for m in (history or []) if m.get("role") in ("user", "assistant")][-SNIPPET_MAX_MESSAGES:]
+    if not snippet:
+        return query
+
     snippet_texts = [str(m.get("content", "")) for m in snippet]
+    if not any(s.strip() for s in snippet_texts):
+        return query
 
-    snippet_items = [{"i": i, "role": m.get("role","user"), "content": str(m.get("content",""))}
-                     for i, m in enumerate(snippet)]
+    # компактный формат для модели → меньше токенов
+    snippet_items = []
+    for i, m in enumerate(snippet):
+        role = m.get("role", "user")
+        r = "u" if role == "user" else "a"
+        c = str(m.get("content", ""))
+        snippet_items.append({"i": i, "r": r, "c": c})
+
     snippet_blob = _json_for_prompt.dumps(snippet_items, ensure_ascii=False)
 
     prompt_user = (
-        f"SNIPPET (JSON array):\n{snippet_blob}\n\n"
-        f"QUERY:\n{text}\n\n"
-        f"Return STRICT JSON now."
+        f"SNIPPET:\n{snippet_blob}\n\n"
+        f"QUERY:\n{query}\n"
     )
 
     msgs = [
@@ -306,46 +395,59 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
         _msg("user", prompt_user),
     ]
 
-    raw = None
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.REASONING_MODEL,
                 input=msgs,
-                max_output_tokens=900,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "coref_links",
+                        "strict": True,
+                        "schema": _EXTRACT_SCHEMA,
+                    }
+                },
+                max_output_tokens=512,  # теперь достаточно, т.к. формат компактный
                 temperature=0,
             ),
-            timeout=settings.REASONING_MODEL_TIMEOUT, 
+            timeout=settings.REASONING_MODEL_TIMEOUT,
         )
         raw = (_get_output_text(resp) or "").strip()
     except asyncio.TimeoutError:
         logger.warning("coref extract timed out after %.1fs", settings.REASONING_MODEL_TIMEOUT)
+        return query
     except Exception:
         logger.exception("coref extract failed", exc_info=True)
+        return query
 
     if not raw:
-        return text
+        return query
 
+    # json_schema должен гарантировать валидный JSON, но оставим fallback на всякий
     try:
-        obj = _parse_json(raw)
+        obj = json.loads(raw)
     except Exception:
-        logger.warning("coref extract returned non-JSON; keeping original")
-        return text
+        try:
+            obj = _parse_json(raw)
+        except Exception:
+            logger.warning("coref extract returned non-JSON; keeping original")
+            return query
 
-    links = _validate_links(obj, text, snippet_texts)
+    links = _validate_links(obj, query, snippet_texts)
     if not links:
-        return text
+        return query
 
-    rewritten = _apply_links(text, links)
+    rewritten = _apply_links(query, links)
 
     try:
-        if _has_12p_disappearance(text, rewritten):
-            return text
+        if _has_12p_disappearance(query, rewritten):
+            return query
     except Exception:
         pass
 
-    if len(rewritten) > MAX_OUTPUT_MULT * max(10, len(text)):
-        return text
+    if len(rewritten) > MAX_OUTPUT_MULT * max(10, len(query)):
+        return query
 
     return rewritten
