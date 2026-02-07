@@ -581,7 +581,11 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
     except RedisError:
         logger.debug("Failed to sync group_ping zset", exc_info=True)
 
-    lock = redis.lock(f"lock:group_ping:{chat_id}", timeout=1, blocking_timeout=0)
+    lock = redis.lock(
+        f"lock:group_ping:{chat_id}",
+        timeout=getattr(settings, "GROUP_PING_LOCK_TTL_SEC", 20),
+        blocking_timeout=0,
+    )
     acquired = await lock.acquire()
     if not acquired:
         return
