@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import hashlib
 import unicodedata
+from uuid import uuid4
 
 from app.config import settings
 from app.tasks.celery_app import celery, _run
@@ -349,6 +349,7 @@ def gifts_react(
 
     try:
         lock_key = None
+        lock_token = None
         lock_acquired = False
         sent_key = None
         if charge_id:
@@ -362,18 +363,21 @@ def gifts_react(
                 pass
 
             try:
-                ok = _run(redis_client.set(lock_key, int(time.time()), nx=True, ex=5 * 60))
+                lock_token = uuid4().hex
+                ok = _run(redis_client.set(lock_key, lock_token, nx=True, ex=5 * 60))
                 if not ok:
                     logger.info(
                         "redis lock failed; aborting gift reaction",
                         extra={"charge_id": charge_id, "lock_key": lock_key},
                     )
                     lock_key = None
+                    lock_token = None
                     return
                 lock_acquired = True
             except Exception:
                 logger.debug("gift react lock redis failed", exc_info=True)
                 lock_key = None
+                lock_token = None
                 return
 
         ui_lang = "en"
@@ -490,8 +494,15 @@ def gifts_react(
     except Exception:
         logger.exception("gifts.react failed uid=%s chat_id=%s", uid, chat_id)
     finally:
-        if charge_id and lock_key and lock_acquired:
+        if charge_id and lock_key and lock_token and lock_acquired:
             try:
-                _run(redis_client.delete(lock_key))
+                lua = """
+                if redis.call("GET", KEYS[1]) == ARGV[1] then
+                  return redis.call("DEL", KEYS[1])
+                else
+                  return 0
+                end
+                """
+                _run(redis_client.eval(lua, 1, lock_key, lock_token))
             except Exception:
                 pass
