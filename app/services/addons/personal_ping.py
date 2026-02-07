@@ -640,58 +640,8 @@ async def purge_user_state(user_id: int, reason: str) -> None:
     r = get_redis()
 
     try:
-        patterns = [
-            f"seen:{user_id}:*",
-            f"on_topic_daily:{user_id}:*",
-        ]
-        for pat in patterns:
-            async for key in r.scan_iter(match=pat, count=500):
-                try:
-                    await r.unlink(key)
-                except Exception:
-                    await r.delete(key)
-    except Exception:
-        logger.exception("Failed to purge seen/on_topic keys for %s user %s", reason, user_id)
-
-    try:
-        keys = [
-            f"pending_invoice:{user_id}",
-            f"pending_invoice_tier:{user_id}",
-            f"pending_invoice_msg:{user_id}",
-            f"buy_menu_msg:{user_id}",
-            f"buy_info_msg:{user_id}",
-            f"cb_rate:{user_id}",
-            f"tts:pref:{user_id}",
-            f"vmsg:disabled:chat:{user_id}",
-            f"lang:{user_id}",
-            f"lang_ui:{user_id}",
-            f"persona:wizard:{user_id}",
-        ]
-        try:
-            await r.unlink(*keys)
-        except Exception:
-            await r.delete(*keys)
-
-        async for key in r.scan_iter(match=f"msg:{user_id}:*", count=500):
-            try:
-                await r.unlink(key)
-            except Exception:
-                await r.delete(key)
-    except Exception:
-        logger.exception("Failed to purge payment runtime keys for %s user %s", reason, user_id)
-
-    try:
         async with r.pipeline(transaction=True) as pipe:
             pipe.zrem(PING_SCHEDULE_KEY, str(user_id))
-            pipe.delete(LAST_PRIVATE_TS_KEY.format(user_id))
-            pipe.delete(IDLE_LIST_KEY.format(user_id))
-            pipe.delete(PING_STREAK_KEY.format(user_id))
-            pipe.delete(PENDING_PING_KEY.format(user_id))
-            pipe.delete(ARM_STATS_KEY.format(user_id))
-            pipe.delete(HOD_HIST_KEY.format(user_id))
-            pipe.delete(REANIMATE_LAST_TS_KEY.format(user_id))
-            pipe.delete(ENROLLED_KEY.format(user_id))
-            pipe.delete(f"last_ping:pm:{user_id}")
             await pipe.execute()
     except RedisError:
         logger.exception("Failed to cleanup %s user %s", reason, user_id)

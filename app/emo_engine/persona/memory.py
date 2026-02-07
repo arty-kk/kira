@@ -40,7 +40,12 @@ except Exception:
     Draft7Validator = None
     class JSONSchemaError(Exception): ...
 
-from app.core.memory import get_redis, get_redis_vector
+from app.core.memory import (
+    USER_KEYS_REGISTRY_TTL,
+    _register_user_key,
+    get_redis,
+    get_redis_vector,
+)
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.config import settings
 
@@ -79,6 +84,12 @@ _RERANK_LAST_USED_TAU = float(getattr(settings, "RERANK_LAST_USED_TAU", 7*86400)
 _MEMTXT_PER_UID_CLEAN_MAXSETS = int(getattr(settings, "MEMTXT_PER_UID_CLEAN_MAXSETS", 200))
 _FT_TIMEOUT = float(getattr(settings, "REDISSEARCH_TIMEOUT", 3))
 _SIM_FROM_DIST = str(getattr(settings, "SIM_FROM_DIST", "one_minus_half")).lower()
+
+async def _register_persona_user_key(redis, uid: int, key: str) -> None:
+    """Register per-uid memory/memtxt keys for delete_user_redis_data cleanup."""
+    if uid is None:
+        return
+    await _register_user_key(redis, int(uid), key, USER_KEYS_REGISTRY_TTL)
 
 _REL_UNIT_SEC = {
     "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
@@ -1256,6 +1267,8 @@ class PersonaMemory:
                 added = await self._redis.sadd(seen_key, fp)
                 if _MEMTXT_SEEN_TTL > 0:
                     await self._redis.expire(seen_key, _MEMTXT_SEEN_TTL)
+                if _MEMTXT_SEEN_SCOPE == "uid" and uid is not None:
+                    await _register_persona_user_key(self._redis, uid, seen_key)
                 if not added:
                     return
             except Exception:
@@ -1273,6 +1286,8 @@ class PersonaMemory:
                 if uid is not None:
                     pipe_txt.zadd(f"memtxt:ids:{self.chat}:{uid_s}", {key_txt: event_time})
                 await pipe_txt.execute()
+                if uid is not None:
+                    await _register_persona_user_key(self._redis, uid, f"memtxt:ids:{self.chat}:{uid_s}")
                 try:
                     memtxt_ttl_days = getattr(settings, "MEMTXT_TTL_DAYS", None)
                     if memtxt_ttl_days is None:
@@ -1609,6 +1624,12 @@ class PersonaMemory:
                                 pz.zadd(f"memory:ids:{self.chat}:{uid_s}", {eid_s: event_time})
                                 pz.sadd(f"memory:uidsets:{self.chat}", f"memory:ids:{self.chat}:{uid_s}")
                             await pz.execute()
+                            if uid is not None:
+                                await _register_persona_user_key(
+                                    self._redis,
+                                    uid,
+                                    f"memory:ids:{self.chat}:{uid_s}",
+                                )
                 except Exception:
                     logger.debug("merge-duplicate: event_time update skipped", exc_info=True)
                 pipe.hincrby(matched_doc_id, "use_count", 1)
@@ -1733,6 +1754,10 @@ class PersonaMemory:
                 if uid_str:
                     with contextlib.suppress(Exception):
                         await self._redis.sadd(f"memory:uidsets:{self.chat}", f"memory:ids:{self.chat}:{uid_str}")
+                    try:
+                        await _register_persona_user_key(self._redis, int(uid_str), per_uid_zset)
+                    except Exception:
+                        pass
             except Exception:
                 logger.debug("event-frame update failed", exc_info=True)
 
@@ -1777,6 +1802,7 @@ class PersonaMemory:
                     await self._redis.sadd(f"memory:uidsets:{self.chat}", per_uid_zset)
                 except Exception:
                     pass
+                await _register_persona_user_key(self._redis, uid, per_uid_zset)
                 total_uid = await self._redis.zcard(f"memory:ids:{self.chat}:{uid_s}")
                 max_uid = int(getattr(settings, "MEMORY_MAX_PER_UID", 120))
                 if total_uid > max_uid:

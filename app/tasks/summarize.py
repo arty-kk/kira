@@ -11,6 +11,8 @@ from typing import List, Tuple
 from app.tasks.celery_app import celery, _run
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import (
+    USER_KEYS_REGISTRY_TTL,
+    _register_user_key,
     get_redis, _k_mtm, _k_mtm_tokens,
     _k_ltm, MEMORY_TTL_LTM, pack_summary_data,
     set_summary_if_newer, _b2s, approx_tokens,
@@ -270,6 +272,10 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
         try:
             payload = pack_summary_data(merged)
             await set_summary_if_newer(key_ltm, payload, MEMORY_TTL_LTM)
+            try:
+                await _register_user_key(redis, user_id, key_ltm, USER_KEYS_REGISTRY_TTL)
+            except Exception:
+                pass
             try:
                 try:
                     cpt = settings.APPROX_CHARS_PER_TOKEN
