@@ -112,8 +112,13 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
     try:
         got_lock = await redis.set(guard_key, "1", ex=lock_ttl, nx=True)
     except Exception:
-        logger.warning("LTM rollup: lock SET failed (proceeding without lock)", exc_info=True)
-        got_lock = True
+        logger.warning(
+            "LTM rollup: lock SET failed, skipping rollup chat=%s user=%s",
+            chat_id,
+            user_id,
+            exc_info=True,
+        )
+        return
     if not got_lock:
         logger.info("LTM rollup: skipped (already running) chat=%s user=%s", chat_id, user_id)
         return
