@@ -140,18 +140,12 @@ def _tg_window_today_to_utc() -> tuple[datetime, datetime]:
         tzinfo=LOCAL_TZ,
     )
 
+    if end_local <= start_local:
+        end_local += timedelta(days=1)
+
     if _now_local() >= end_local:
-        tomorrow = today_local + timedelta(days=1)
-        start_local = datetime.combine(
-            tomorrow,
-            time(settings.SCHED_TG_START_HOUR, 0),
-            tzinfo=LOCAL_TZ,
-        )
-        end_local = datetime.combine(
-            tomorrow,
-            time(settings.SCHED_TG_END_HOUR, 0),
-            tzinfo=LOCAL_TZ,
-        )
+        start_local += timedelta(days=1)
+        end_local += timedelta(days=1)
 
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
