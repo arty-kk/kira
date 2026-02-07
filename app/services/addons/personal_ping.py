@@ -1036,11 +1036,17 @@ async def personal_ping() -> None:
 
             async def safe_handle(uid: int):
                 success = False
+                rescheduled = False
                 try:
                     await asyncio.wait_for(handle_user_ping(uid, uid), timeout=75)
                     success = True
                 except asyncio.TimeoutError:
                     logger.warning("personal_ping: user %s timed out — rescheduling", uid)
+                    try:
+                        await schedule_next_ping(uid, time_module.time())
+                        rescheduled = True
+                    except Exception:
+                        logger.exception("personal_ping: reschedule failed after timeout for %s", uid)
                 except Exception:
                     logger.exception("personal_ping: error for user %s", uid)
                 finally:
@@ -1048,9 +1054,10 @@ async def personal_ping() -> None:
                         await redis.zrem(PING_SCHEDULE_INFLIGHT, str(uid))
                     except RedisError:
                         logger.debug(
-                            "personal_ping: failed to clear inflight uid=%s success=%s",
+                            "personal_ping: failed to clear inflight uid=%s success=%s rescheduled=%s",
                             uid,
                             success,
+                            rescheduled,
                             exc_info=True,
                         )
             tasks.append(safe_handle(user_id))
