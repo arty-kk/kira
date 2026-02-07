@@ -30,7 +30,6 @@ API_QUEUE_KEY = getattr(settings, "API_QUEUE_KEY", "queue:api")
 PROCESSING_KEY = f"{API_QUEUE_KEY}:processing"
 
 JOB_KEY_PREFIX = "api:job:"
-JOB_TTL_SEC = int(getattr(settings, "API_JOB_TTL_SEC", 180))
 RESULT_TTL_SEC = int(getattr(settings, "API_RESULT_TTL_SEC", 600))
 
 MAX_INFLIGHT_TASKS = int(getattr(settings, "API_WORKER_MAX_INFLIGHT", 64))
@@ -38,6 +37,7 @@ RESPOND_TIMEOUT = int(
     getattr(settings, "API_RESPOND_TIMEOUT_SEC",
             getattr(settings, "API_CALL_TIMEOUT_SEC", 60))
 )
+JOB_HEARTBEAT_INTERVAL_SEC = int(getattr(settings, "API_JOB_HEARTBEAT_INTERVAL_SEC", 10))
 
 PROCESSING_TASKS: Set[asyncio.Task] = set()
 
@@ -49,6 +49,13 @@ VOICE_TRANSCRIPTION_MODEL = getattr(
 VOICE_TRANSCRIPTION_TIMEOUT = int(
     getattr(settings, "API_VOICE_TRANSCRIPTION_TIMEOUT_SEC", 40)
 )
+
+JOB_TTL_BUFFER_SEC = 30
+JOB_TTL_SEC = max(
+    int(getattr(settings, "API_JOB_TTL_SEC", 180)),
+    RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT,
+)
+INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT
 
 
 def _guess_audio_suffix(mime: str | None) -> str:
@@ -112,6 +119,21 @@ async def _mark_done(redis, job_key: str) -> None:
     except Exception:
         with suppress(Exception):
             await redis.delete(job_key)
+
+
+async def _heartbeat_job(redis, job_key: str, stop_evt: asyncio.Event) -> None:
+    try:
+        while not stop_evt.is_set():
+            await asyncio.sleep(JOB_HEARTBEAT_INTERVAL_SEC)
+            if stop_evt.is_set():
+                return
+            try:
+                ts = int(time.time())
+                await redis.set(job_key, f"inflight:{ts}", ex=JOB_TTL_SEC)
+            except Exception as e:
+                logger.warning("api_worker: heartbeat failed %s: %s", job_key, e)
+    except asyncio.CancelledError:
+        pass
 
 
 async def _handle_job(raw: str, redis_queue) -> None:
@@ -281,6 +303,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             return
 
     start = time.perf_counter()
+    heartbeat_stop = asyncio.Event()
+    heartbeat_task = asyncio.create_task(_heartbeat_job(redis_queue, job_key, heartbeat_stop))
     error: Dict[str, Any] | None = None
     reply_text: str | None = None
 
@@ -412,6 +436,10 @@ async def _handle_job(raw: str, redis_queue) -> None:
                         "message": "Unexpected internal error in worker",
                     }
     finally:
+        heartbeat_stop.set()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+
         latency_ms = int((time.perf_counter() - start) * 1000)
         latency_breakdown = None
         if enqueued_at is not None:
@@ -512,6 +540,22 @@ async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
                 elif isinstance(val, str) and val.startswith("done"):
                     with suppress(Exception):
                         await redis_queue.lrem(PROCESSING_KEY, 1, raw)
+                elif isinstance(val, str) and val.startswith("inflight:"):
+                    inflight_ts = None
+                    try:
+                        inflight_ts = int(val.split(":", 1)[1])
+                    except (TypeError, ValueError):
+                        inflight_ts = None
+
+                    if inflight_ts is None:
+                        continue
+
+                    now = int(time.time())
+                    if now - inflight_ts > INFLIGHT_STALE_AFTER_SEC:
+                        with suppress(Exception):
+                            await redis_queue.lrem(PROCESSING_KEY, 1, raw)
+                        with suppress(Exception):
+                            await redis_queue.lpush(API_QUEUE_KEY, raw)
 
             await asyncio.sleep(5)
         except asyncio.CancelledError:
