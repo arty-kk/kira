@@ -81,6 +81,22 @@ async def cleanup_nonbuyers() -> None:
         delete_conc = 8
     sem = asyncio.Semaphore(max(1, delete_conc))
 
+    async def _deep_delete(uid: int) -> int:
+        try:
+            async with sem:
+                try:
+                    if await r.exists(f"personal_enrolled:{uid}") or await is_recently_active(uid, within_days=active_window_days):
+                        return 0
+                except Exception:
+                    return 0
+                try:
+                    return await delete_user_redis_data(uid)
+                except Exception:
+                    logger.exception("cleanup_nonbuyers: failed to delete redis data for user_id=%s", uid)
+                    return 0
+        except Exception:
+            return 0
+
     try:
         async for user_ids in _iter_nonbuyer_ids(cutoff, page_size=5000):
             processed += len(user_ids)
@@ -126,31 +142,14 @@ async def cleanup_nonbuyers() -> None:
                     total_swept_keys += sum(int(x or 0) for x in resp if isinstance(x, int))
                 except Exception:
                     pass
-
-            async def _deep_delete(uid: int) -> int:
-                try:
-                    async with sem:
-                        try:
-                            if await r.exists(f"personal_enrolled:{uid}") or await is_recently_active(uid, within_days=active_window_days):
-                                return 0
-                        except Exception:
-                            return 0
-                        try:
-                            return await delete_user_redis_data(uid)
-                        except Exception:
-                            logger.exception("cleanup_nonbuyers: failed to delete redis data for user_id=%s", uid)
-                            return 0
-                except Exception:
-                    return 0
-
-            tasks = [_deep_delete(uid) for uid in sweep]
-            if tasks:
-                try:
-                    for res in await asyncio.gather(*tasks, return_exceptions=True):
-                        if isinstance(res, int):
-                            total_deleted_keys += res
-                except Exception:
-                    logger.exception("cleanup_nonbuyers: deep delete gather failed")
+                tasks = [_deep_delete(uid) for uid in sweep]
+                if tasks:
+                    try:
+                        for res in await asyncio.gather(*tasks, return_exceptions=True):
+                            if isinstance(res, int):
+                                total_deleted_keys += res
+                    except Exception:
+                        logger.exception("cleanup_nonbuyers: deep delete gather failed")
 
         logger.info(
             "cleanup_nonbuyers: processed_users=%d, swept_keys=%d, deep_deleted_keys=%d (safe-skip active)",
