@@ -526,6 +526,7 @@ class Settings:
     GROUP_PING_MAX_VALENCE: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_VALENCE", "0.85", conv=float))
     GROUP_PING_MAX_AROUSAL: float = field(default_factory=lambda: _get_env("GROUP_PING_MAX_AROUSAL", "0.85", conv=float))
     GROUP_PING_SCAN_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_PING_SCAN_LIMIT", "100", conv=int))
+    GROUP_PING_LOCK_TTL_SEC: int = field(default_factory=lambda: _get_env("GROUP_PING_LOCK_TTL_SEC", "20", conv=int))
     #Personal Ping Settings
     PERSONAL_PING_INTERVAL_SEC: int = field(default_factory=lambda: _get_env("PERSONAL_PING_INTERVAL_SEC", "300", conv=int))
     PERSONAL_PING_HISTORY_COUNT: int = field(default_factory=lambda: _get_env("PERSONAL_PING_HISTORY_COUNT", "10", conv=int))
