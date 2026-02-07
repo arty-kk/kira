@@ -6,7 +6,6 @@ import json
 import logging
 import os
 import time
-import base64
 import tempfile
 
 from contextlib import suppress
@@ -19,6 +18,8 @@ from app.core.media_limits import (
     ALLOWED_VOICE_MIMES,
     API_MAX_IMAGE_BYTES,
     API_MAX_VOICE_BYTES,
+    clean_base64_payload,
+    decode_base64_payload,
 )
 from app.core.memory import get_redis_queue, close_redis_pools
 from app.services.responder import respond_to_user
@@ -50,13 +51,6 @@ VOICE_TRANSCRIPTION_TIMEOUT = int(
 )
 
 
-def _decode_b64(data: str) -> bytes:
-    try:
-        return base64.b64decode(data, validate=True)
-    except Exception:
-        return b""
-
-
 def _guess_audio_suffix(mime: str | None) -> str:
     if not mime:
         return ".ogg"
@@ -70,8 +64,7 @@ def _guess_audio_suffix(mime: str | None) -> str:
     return ".ogg"
 
 
-async def _transcribe_voice_b64(voice_b64: str, mime: str | None) -> str:
-    audio = _decode_b64(voice_b64)
+async def _transcribe_voice_bytes(audio: bytes, mime: str | None) -> str:
     if not audio:
         return ""
 
@@ -303,14 +296,35 @@ async def _handle_job(raw: str, redis_queue) -> None:
                 "message": "Provide message, image_b64 or voice_b64.",
             }
         else:
+            if has_voice:
+                voice_b64 = clean_base64_payload(voice_b64)
+            if has_image:
+                image_b64 = clean_base64_payload(image_b64)
+
             if has_voice and voice_mime and voice_mime not in ALLOWED_VOICE_MIMES:
                 error = {
                     "status": 400,
                     "code": "invalid_voice_mime",
                     "message": "voice_mime must be a supported audio format.",
                 }
+            voice_bytes = b""
+            if not error and has_voice:
+                voice_bytes = decode_base64_payload(voice_b64)
+                if not voice_bytes:
+                    error = {
+                        "status": 400,
+                        "code": "invalid_payload",
+                        "message": "voice_b64 must be valid base64.",
+                    }
+                elif len(voice_bytes) > API_MAX_VOICE_BYTES:
+                    error = {
+                        "status": 400,
+                        "code": "invalid_payload",
+                        "message": f"voice_b64 exceeds {API_MAX_VOICE_BYTES} bytes after decoding.",
+                    }
+
             if not error and has_voice and not has_text:
-                transcript = await _transcribe_voice_b64(voice_b64, voice_mime)
+                transcript = await _transcribe_voice_bytes(voice_bytes, voice_mime)
                 if transcript:
                     text = transcript
                     has_text = True
@@ -319,7 +333,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
                     error = {
                         "status": 400,
                         "code": "voice_transcription_failed",
-                        "message": "Failed to transcribe voice_b64 (invalid, too large or unsupported).",
+                        "message": "Failed to transcribe voice_b64.",
                     }
 
             if has_voice and has_text and not voice_in:
@@ -336,18 +350,18 @@ async def _handle_job(raw: str, redis_queue) -> None:
                         "message": "image_mime must be one of: image/jpeg, image/jpg, image/png, image/webp.",
                     }
                 else:
-                    img_bytes = _decode_b64(image_b64)
+                    img_bytes = decode_base64_payload(image_b64)
                     if not img_bytes:
                         error = {
                             "status": 400,
-                            "code": "invalid_image_b64",
+                            "code": "invalid_payload",
                             "message": "image_b64 must be valid base64.",
                         }
                     elif len(img_bytes) > API_MAX_IMAGE_BYTES:
                         error = {
                             "status": 400,
-                            "code": "image_too_large",
-                            "message": f"Image is larger than {API_MAX_IMAGE_BYTES} bytes after decoding.",
+                            "code": "invalid_payload",
+                            "message": f"image_b64 exceeds {API_MAX_IMAGE_BYTES} bytes after decoding.",
                         }
 
             if not error:

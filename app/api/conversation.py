@@ -1,6 +1,5 @@
 #app/api/conversation.py
 import asyncio
-import base64
 import hashlib
 import time
 import logging
@@ -19,6 +18,8 @@ from app.core.media_limits import (
     ALLOWED_VOICE_MIMES,
     API_MAX_IMAGE_BYTES,
     API_MAX_VOICE_BYTES,
+    clean_base64_payload,
+    decode_base64_payload,
 )
 from app.core.memory import get_redis, get_redis_queue, register_api_memory_uid
 from app.core.models import User, ApiKey
@@ -97,7 +98,7 @@ class ConversationRequest(BaseModel):
             )
 
         def _approx_b64_size(b64_value: str) -> tuple[str, int]:
-            cleaned = "".join((b64_value or "").split())
+            cleaned = clean_base64_payload(b64_value)
             padding = len(cleaned) - len(cleaned.rstrip("="))
             approx = (len(cleaned) * 3) // 4 - padding
             return cleaned, max(approx, 0)
@@ -139,9 +140,7 @@ class ConversationRequest(BaseModel):
             if img_size > API_MAX_IMAGE_BYTES:
                 _payload_error(f"image_b64 exceeds {API_MAX_IMAGE_BYTES} bytes after decoding.")
             if strict_validation:
-                try:
-                    base64.b64decode(img_b64_clean, validate=True)
-                except Exception:
+                if not decode_base64_payload(img_b64_clean):
                     _payload_error("image_b64 must be valid base64.")
             self.image_b64 = img_b64_clean
 
@@ -150,9 +149,7 @@ class ConversationRequest(BaseModel):
             if voice_size > API_MAX_VOICE_BYTES:
                 _payload_error(f"voice_b64 exceeds {API_MAX_VOICE_BYTES} bytes after decoding.")
             if strict_validation:
-                try:
-                    base64.b64decode(voice_b64_clean, validate=True)
-                except Exception:
+                if not decode_base64_payload(voice_b64_clean):
                     _payload_error("voice_b64 must be valid base64.")
             self.voice_b64 = voice_b64_clean
 
