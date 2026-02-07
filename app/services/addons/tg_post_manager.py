@@ -342,7 +342,7 @@ def _redis_to_str(value: Any) -> str | None:
 async def _acquire_redis_lock(redis, channel_id: int) -> tuple[str, str] | None:
 
     if not redis:
-        return ("", "")
+        return None
     key = f"{REDIS_KEY_PREFIX}:lock:{int(channel_id)}"
     ttl = _coerce_int(getattr(settings, "TG_POST_REDIS_LOCK_TTL_SEC", None), DEFAULT_REDIS_LOCK_TTL_SEC)
     post_timeout = _coerce_int(getattr(settings, "POST_MODEL_TIMEOUT", None), 60)
@@ -352,8 +352,8 @@ async def _acquire_redis_lock(redis, channel_id: int) -> tuple[str, str] | None:
         ok = await redis.set(key, token, nx=True, ex=ttl)
         return (key, token) if ok else None
     except Exception:
-        logger.debug("tg_post_manager redis lock failed; proceed without lock", exc_info=True)
-        return ("", "")
+        logger.debug("tg_post_manager redis lock unavailable (redis error)", exc_info=True)
+        return None
 
 async def _release_redis_lock(redis, lock_key: str, token: str) -> None:
 
@@ -2333,8 +2333,16 @@ async def generate_and_post_tg() -> None:
         return
 
     redis = get_redis()
+    if not redis:
+        logger.info("tg_post_manager skip: redis lock unavailable (redis not configured)")
+        return
     lock = await _acquire_redis_lock(redis, channel_id)
-    if lock is None:
+    if not lock:
+        try:
+            await redis.ping()
+        except Exception:
+            logger.info("tg_post_manager skip: redis lock unavailable (redis error)", exc_info=True)
+            return
         logger.info("tg_post_manager skip: redis lock busy (channel=%s)", channel_id)
         return
     lock_key, lock_token = lock
