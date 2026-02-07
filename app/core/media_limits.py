@@ -1,3 +1,5 @@
+import base64
+
 from app.config import settings
 
 API_MAX_IMAGE_BYTES = int(getattr(settings, "API_MAX_IMAGE_BYTES", 5 * 1024 * 1024))
@@ -9,3 +11,19 @@ ALLOWED_VOICE_MIMES = {
     "audio/wav", "audio/x-wav", "audio/webm",
     "audio/mp4", "audio/m4a", "audio/aac",
 }
+
+
+def clean_base64_payload(b64_value: str) -> str:
+    return "".join((b64_value or "").split())
+
+
+def decode_base64_payload(b64_value: str) -> bytes:
+    """Shared base64 cleanup/validation helper for API and worker."""
+    cleaned = clean_base64_payload(b64_value)
+    try:
+        return base64.b64decode(
+            cleaned,
+            validate=bool(getattr(settings, "API_STRICT_BASE64_VALIDATION", False)),
+        )
+    except Exception:
+        return b""
