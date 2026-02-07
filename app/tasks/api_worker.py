@@ -28,9 +28,13 @@ logger = logging.getLogger(__name__)
 
 API_QUEUE_KEY = getattr(settings, "API_QUEUE_KEY", "queue:api")
 PROCESSING_KEY = f"{API_QUEUE_KEY}:processing"
+DLQ_KEY = f"{API_QUEUE_KEY}:dlq"
+DLQ_STATS_KEY = f"{DLQ_KEY}:stats"
 
 JOB_KEY_PREFIX = "api:job:"
 RESULT_TTL_SEC = int(getattr(settings, "API_RESULT_TTL_SEC", 600))
+DLQ_TTL_SEC = int(getattr(settings, "API_DLQ_TTL_SEC", 7 * 24 * 3600))
+DLQ_MAX_ITEMS = int(getattr(settings, "API_DLQ_MAX_ITEMS", 2000))
 
 MAX_INFLIGHT_TASKS = int(getattr(settings, "API_WORKER_MAX_INFLIGHT", 64))
 RESPOND_TIMEOUT = int(
@@ -56,6 +60,49 @@ JOB_TTL_SEC = max(
     RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT,
 )
 INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT
+
+def _classify_error(error: Dict[str, Any] | None) -> str:
+    if not error:
+        return "unknown"
+    code = (error.get("code") or "").lower()
+    if code in {
+        "invalid_payload",
+        "invalid_image_mime",
+        "invalid_voice_mime",
+        "empty_message",
+        "voice_transcription_failed",
+        "invalid_job",
+    }:
+        return "validation"
+    if code in {"duplicate_request"}:
+        return "duplicate"
+    if code in {"upstream_timeout"}:
+        return "timeout"
+    return "internal"
+
+async def _push_dlq(redis_queue, *, raw: str, error_type: str, request_id: str | None, reason: str) -> None:
+    payload = {
+        "ts": time.time(),
+        "error_type": error_type,
+        "request_id": request_id or "",
+        "reason": reason,
+        "raw": raw,
+    }
+    try:
+        data = json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        return
+
+    try:
+        pipe = redis_queue.pipeline()
+        pipe.lpush(DLQ_KEY, data)
+        pipe.ltrim(DLQ_KEY, 0, max(0, DLQ_MAX_ITEMS - 1))
+        pipe.expire(DLQ_KEY, DLQ_TTL_SEC)
+        pipe.hincrby(DLQ_STATS_KEY, error_type, 1)
+        pipe.expire(DLQ_STATS_KEY, DLQ_TTL_SEC)
+        await pipe.execute()
+    except Exception:
+        logger.exception("api_worker: DLQ push failed (req=%s, type=%s)", request_id, error_type)
 
 
 def _guess_audio_suffix(mime: str | None) -> str:
@@ -144,6 +191,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
         job = json.loads(raw)
     except json.JSONDecodeError:
         logger.error("api_worker: invalid JSON job, dropping: %r", raw[:200])
+        await _push_dlq(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_json",
+            request_id=None,
+            reason="invalid_json_job",
+        )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
         return
@@ -153,6 +207,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
     chat_id = job.get("chat_id")
     memory_uid = job.get("memory_uid")
     persona_owner_id = job.get("persona_owner_id")
+    persona_profile_id = job.get("persona_profile_id")
     billing_tier = job.get("billing_tier")
     if isinstance(billing_tier, (bytes, bytearray)):
         billing_tier = billing_tier.decode("utf-8", "ignore")
@@ -171,6 +226,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
     enqueued_at = job.get("enqueued_at")
     if isinstance(enqueued_at, (bytes, bytearray)):
         enqueued_at = enqueued_at.decode("utf-8", "ignore")
+    if isinstance(persona_profile_id, (bytes, bytearray)):
+        persona_profile_id = persona_profile_id.decode("utf-8", "ignore")
     try:
         enqueued_at = float(enqueued_at) if enqueued_at is not None else None
     except (TypeError, ValueError):
@@ -178,6 +235,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
 
     if not request_id or not isinstance(result_key, str):
         logger.error("api_worker: missing ids in job: %r", job)
+        await _push_dlq(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_job",
+            request_id=request_id if isinstance(request_id, str) else None,
+            reason="missing_request_or_result_key",
+        )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
         return
@@ -221,6 +285,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
             "invalid_job",
             "Invalid chat_id or memory_uid in job payload.",
         )
+        await _push_dlq(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_job",
+            request_id=request_id,
+            reason="bad_chat_or_memory_uid",
+        )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
         return
@@ -237,6 +308,13 @@ async def _handle_job(raw: str, redis_queue) -> None:
             "invalid_job",
             "Missing persona_owner_id in job payload.",
         )
+        await _push_dlq(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_job",
+            request_id=request_id,
+            reason="missing_persona_owner_id",
+        )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
         return
@@ -250,9 +328,24 @@ async def _handle_job(raw: str, redis_queue) -> None:
             "invalid_job",
             "Invalid persona_owner_id in job payload.",
         )
+        await _push_dlq(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_job",
+            request_id=request_id,
+            reason="bad_persona_owner_id",
+        )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
         return
+
+    logger.info(
+        "api_worker: start request_id=%s persona_owner_id=%s persona_profile_id=%s chat_id=%s",
+        request_id,
+        persona_owner_id,
+        persona_profile_id,
+        chat_id,
+    )
 
     voice_in = False
 
@@ -307,6 +400,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
     heartbeat_task = asyncio.create_task(_heartbeat_job(redis_queue, job_key, heartbeat_stop))
     error: Dict[str, Any] | None = None
     reply_text: str | None = None
+    responder_metrics: Dict[str, Any] = {}
 
     try:
         has_text = bool(text)
@@ -411,6 +505,9 @@ async def _handle_job(raw: str, redis_queue) -> None:
                             billing_tier=billing_tier,
                             persona_owner_id=persona_owner_id,
                             memory_uid=memory_uid,
+                            persona_profile_id=persona_profile_id,
+                            request_id=request_id,
+                            metrics_out=responder_metrics,
                         ),
                         timeout=RESPOND_TIMEOUT,
                     )
@@ -442,20 +539,37 @@ async def _handle_job(raw: str, redis_queue) -> None:
 
         latency_ms = int((time.perf_counter() - start) * 1000)
         latency_breakdown = None
+        metrics_payload: Dict[str, Any] = {}
         if enqueued_at is not None:
             queue_latency_ms = max(0, int((time.time() - enqueued_at) * 1000))
             latency_breakdown = {
                 "queue_latency_ms": queue_latency_ms,
                 "worker_latency_ms": latency_ms,
             }
+            metrics_payload["queue_wait_ms"] = queue_latency_ms
+        if responder_metrics:
+            for key in ("llm_call_ms", "memory_retrieval_ms", "total_ms", "consistency"):
+                if key in responder_metrics:
+                    metrics_payload[key] = responder_metrics[key]
+        if "total_ms" not in metrics_payload:
+            metrics_payload["total_ms"] = latency_ms + int(metrics_payload.get("queue_wait_ms", 0))
 
         if error:
+            error_type = _classify_error(error)
+            error["type"] = error_type
             payload = {
                 "ok": False,
                 "error": error,
                 "latency_ms": latency_ms,
                 "request_id": request_id,
             }
+            await _push_dlq(
+                redis_queue,
+                raw=raw,
+                error_type=error_type,
+                request_id=request_id,
+                reason=error.get("code") or "error",
+            )
         else:
             payload = {
                 "ok": True,
@@ -465,6 +579,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             }
         if latency_breakdown is not None:
             payload["latency_breakdown"] = latency_breakdown
+        if metrics_payload:
+            payload["metrics"] = metrics_payload
 
         try:
             data = json.dumps(payload, ensure_ascii=False)
@@ -494,6 +610,12 @@ async def _handle_job(raw: str, redis_queue) -> None:
                 "api_worker: push result failed key=%s req=%s: %s",
                 result_key, request_id, e,
             )
+
+        logger.info(
+            "api_worker: done request_id=%s status=%s",
+            request_id,
+            "error" if error else "ok",
+        )
 
         with suppress(Exception):
             await _mark_done(redis_queue, job_key)

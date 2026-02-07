@@ -57,6 +57,25 @@ class PersonaConfig(BaseModel):
     role: Optional[constr(min_length=1, max_length=1000)] = None
 
 
+def _build_persona_profile_id(persona: Optional["PersonaConfig"]) -> Optional[str]:
+    if persona is None:
+        return None
+    try:
+        data = persona.model_dump(exclude_none=True)
+    except Exception:
+        return None
+    if not data:
+        return None
+    raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _scoped_memory_uid(base_uid: int, profile_id: str) -> int:
+    raw = f"{base_uid}:{profile_id}".encode("utf-8")
+    digest = hashlib.sha256(raw).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+
 class ConversationRequest(BaseModel):
     user_id: constr(min_length=1, max_length=128) = Field(
         ...,
@@ -391,23 +410,30 @@ async def conversation_endpoint(
         request_id = f"{chat_id}-{msg_id}-{secrets.token_hex(3)}"
     else:
         request_id = f"{chat_id}-{msg_id}"
+    persona_profile_id = _build_persona_profile_id(payload.persona)
+    scoped_memory_uid = (
+        _scoped_memory_uid(memory_uid, persona_profile_id)
+        if persona_profile_id
+        else memory_uid
+    )
     logging.info(
-        "API /conversation owner_id=%s api_key_id=%s persona_owner_id=%s chat_id=%s request_id=%s",
+        "API /conversation owner_id=%s api_key_id=%s persona_owner_id=%s chat_id=%s request_id=%s persona_profile_id=%s",
         owner_id,
         api_key_id,
         persona_owner_id,
         chat_id,
         request_id,
+        persona_profile_id,
     )
 
     if getattr(settings, "API_PERSONA_PER_KEY", True):
         try:
-            await register_api_memory_uid(api_key_id, memory_uid)
+            await register_api_memory_uid(api_key_id, scoped_memory_uid)
         except Exception:
             logging.exception(
                 "Failed to register api memory uid api_key_id=%s memory_uid=%s",
                 api_key_id,
-                memory_uid,
+                scoped_memory_uid,
             )
 
     result_key = f"api:resp:{request_id}"
@@ -422,6 +448,7 @@ async def conversation_endpoint(
         "chat_id": chat_id,
         "memory_uid": memory_uid,
         "persona_owner_id": persona_owner_id,
+        "persona_profile_id": persona_profile_id,
         "api_key_id": api_key_id,
         "billing_tier": billing_tier,
         "result_key": result_key,
@@ -502,6 +529,12 @@ async def conversation_endpoint(
     if worker_latency_ms is None:
         worker_latency_ms = int(result.get("latency_ms") or 0)
 
+    metrics_data = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+    llm_call_ms = _coerce_int(metrics_data.get("llm_call_ms"))
+    memory_retrieval_ms = _coerce_int(metrics_data.get("memory_retrieval_ms"))
+    queue_wait_ms = _coerce_int(metrics_data.get("queue_wait_ms"))
+    total_ms = _coerce_int(metrics_data.get("total_ms"))
+
     latency_ms = worker_latency_ms or total_latency_ms
     latency_breakdown = None
     if queue_latency_ms is not None or worker_latency_ms is not None:
@@ -518,6 +551,10 @@ async def conversation_endpoint(
             "queue_latency_ms": queue_latency_ms,
             "worker_latency_ms": worker_latency_ms,
             "total_latency_ms": total_latency_ms,
+            "queue_wait_ms": queue_wait_ms,
+            "llm_call_ms": llm_call_ms,
+            "memory_retrieval_ms": memory_retrieval_ms,
+            "responder_total_ms": total_ms,
             "billing_tier": billing_tier,
         },
     )

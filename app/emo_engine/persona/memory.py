@@ -208,6 +208,24 @@ def _topic_tagify(w: str) -> str:
         max_len = 40
     return (s[:max_len].strip("_")) if len(s) > max_len else s
 
+def precision_recall_at_k(expected: list[str], predicted: list[str], k: int) -> dict:
+    exp = [e for e in expected if e]
+    pred = [p for p in predicted if p][: max(0, int(k))]
+    exp_set = set(exp)
+    pred_set = set(pred)
+    if not exp_set and not pred_set:
+        return {"precision": 1.0, "recall": 1.0, "f1": 1.0}
+    if not pred_set:
+        return {"precision": 0.0, "recall": 0.0, "f1": 0.0}
+    tp = len(exp_set & pred_set)
+    precision = tp / max(1, len(pred_set))
+    recall = tp / max(1, len(exp_set))
+    if precision + recall == 0:
+        f1 = 0.0
+    else:
+        f1 = 2 * precision * recall / (precision + recall)
+    return {"precision": precision, "recall": recall, "f1": f1}
+
 def _is_missing_index_error(exc: Exception) -> bool:
 
     msg = str(exc).lower()
@@ -1191,7 +1209,10 @@ class PersonaMemory:
         *,
         uid: int | None = None,
         salience: float | None = None,
-        event_frame: bool = True
+        event_frame: bool = True,
+        fact: str | None = None,
+        confidence: float | None = None,
+        source: str | None = None,
         ) -> Tuple[Optional[str], bool]:
 
         ts = time.time()
@@ -1280,6 +1301,15 @@ class PersonaMemory:
                     "text": text, "ts": time.time(), "event_time": event_time, "event_type": etype,
                     "chat": self.chat, "uid": uid_s, "topic": ",".join(topics) if topics else "",
                 }
+                if fact is not None:
+                    data_txt["fact"] = str(fact)
+                if confidence is not None:
+                    try:
+                        data_txt["confidence"] = float(confidence)
+                    except Exception:
+                        pass
+                if source is not None:
+                    data_txt["source"] = str(source)
                 pipe_txt = self._redis.pipeline(transaction=True)
                 pipe_txt.hset(key_txt, mapping=data_txt)
                 pipe_txt.zadd(f"memtxt:ids:{self.chat}", {key_txt: event_time})
@@ -1773,6 +1803,15 @@ class PersonaMemory:
             "salience":   max(0.0, min(1.0, float(salience or 0.0))) if salience is not None else 0.0,
             "embedding":  embedding,
         }
+        if fact is not None:
+            data["fact"] = str(fact)
+        if confidence is not None:
+            try:
+                data["confidence"] = float(confidence)
+            except Exception:
+                pass
+        if source is not None:
+            data["source"] = str(source)
         data.update({k: v for k, v in state_metrics.items()})
         pipe.hset(key, mapping=data)
         pipe.zadd(self.ZSET_IDS, {str(eid): event_time})

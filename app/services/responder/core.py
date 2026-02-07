@@ -7,6 +7,7 @@ import time
 import json
 import re
 import unicodedata
+import hashlib
 
 from typing import Dict, List, Any
 from aiohttp import ClientError
@@ -124,6 +125,7 @@ _TAG_BLOCK_RE = re.compile(
     r"\[(?P<label>[A-Za-z0-9_:-]+)\]\s*(?P<body>.*?)\s*\[/\s*(?P=label)\s*\]",
     re.DOTALL,
 )
+_NEGATION_RE = re.compile(r"\b(?:not|never|no|не|нет|ни)\b", re.IGNORECASE)
 
 def _untrusted_data_block(label: str, text: str, *, max_len: int = 1200) -> str:
     t = _b2s(text)
@@ -225,6 +227,51 @@ def _history_tail_for_coref(history: List[Dict], max_messages: int = 10) -> List
         out.append({"role": role, "content": c})
 
     return out[-max_messages:]
+
+def _scoped_memory_uid(base_uid: int, profile_id: str | int) -> int:
+    raw = f"{base_uid}:{profile_id}".encode("utf-8")
+    digest = hashlib.sha256(raw).digest()
+    return int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+
+def _extract_fact_candidates(snippets: str) -> list[tuple[str, str]]:
+    if not snippets:
+        return []
+    facts: list[tuple[str, str]] = []
+    for raw in snippets.splitlines():
+        line = raw.strip(" \t-•")
+        if not line:
+            continue
+        for sep in (":", " — ", " - ", " is ", " это ", " является "):
+            if sep in line:
+                left, right = line.split(sep, 1)
+                left = left.strip()
+                right = right.strip()
+                if left and right:
+                    facts.append((left, right))
+                break
+    return facts
+
+def _detect_consistency_issue(reply: str, memory_snippets: str, kb_snippets: str) -> dict | None:
+    reply_text = (reply or "").strip()
+    if not reply_text:
+        return None
+    reply_norm = reply_text.casefold()
+    if not _NEGATION_RE.search(reply_norm):
+        return None
+
+    for source_name, snippets in (("memory", memory_snippets), ("kb", kb_snippets)):
+        for subj, value in _extract_fact_candidates(snippets):
+            subj_norm = subj.casefold()
+            val_norm = value.casefold()
+            if subj_norm in reply_norm and val_norm in reply_norm:
+                return {
+                    "flag": True,
+                    "source": source_name,
+                    "subject": subj,
+                    "value": value,
+                    "reason": "negation_near_known_fact",
+                }
+    return None
 
 def _strip_bot_mention_prefix(text: str, *, is_group: bool) -> str:
 
@@ -685,6 +732,9 @@ async def respond_to_user(
     billing_tier: str | None = None,
     persona_owner_id: int | None = None,
     memory_uid: int | None = None,
+    persona_profile_id: str | int | None = None,
+    request_id: str | None = None,
+    metrics_out: dict | None = None,
     soft_reply_context: bool = False,
     skip_user_push: bool = False,
     skip_assistant_push: bool = False,
@@ -693,23 +743,32 @@ async def respond_to_user(
 
     redis = get_redis()
 
+    perf_start = time.perf_counter()
     t0 = time.time()
     txt = text or ""
     is_api = (trigger == "api")
     internal_mode = (trigger == "gift" and skip_user_push and skip_assistant_push)
     mem_ns = "api" if is_api else "default"
+    metrics = metrics_out if isinstance(metrics_out, dict) else None
+    llm_call_ms = 0.0
+    memory_retrieval_ms = 0.0
+    memory_snippets_blob = ""
+    kb_snippets_blob = ""
 
     if persona_owner_id is None:
         persona_owner_id = user_id
 
     if memory_uid is None:
         memory_uid = user_id
+    if persona_profile_id is not None and memory_uid is not None:
+        memory_uid = _scoped_memory_uid(int(memory_uid), persona_profile_id)
 
     logger.info(
-        "▶ respond_to_user START chat=%s persona_owner=%s memory_uid=%s len=%d",
+        "▶ respond_to_user START chat=%s persona_owner=%s memory_uid=%s request_id=%s len=%d",
         chat_id,
         persona_owner_id,
         memory_uid,
+        request_id,
         len(txt),
     )
 
@@ -718,6 +777,7 @@ async def respond_to_user(
             chat_id,
             user_id=persona_owner_id,
             group_mode=group_mode or is_channel_post,
+            profile_id=persona_profile_id,
         )
     except Exception:
         logger.exception("Failed to get_persona", exc_info=True)
@@ -895,6 +955,7 @@ async def respond_to_user(
     ctx_sys_blocks: List[str] = []
     ctx_ephemeral_history: List[Dict] = []
 
+    memory_start = time.perf_counter()
     personal_msgs: List[Dict] = []
     try:
         try:
@@ -1551,9 +1612,16 @@ async def respond_to_user(
                     "- Treat these snippets as current context part; only extract and use info if relevant."
                     + "\n".join(f"- {ln}" for ln in reversed(tail_lines))
                 )
+            memory_snippets_blob = "\n".join(
+                [block for block in (mtm_snippets, ltm_snippets, group_snippets) if (block or "").strip()]
+            )
                 
         except Exception:
             pass
+
+    memory_retrieval_ms = (time.perf_counter() - memory_start) * 1000
+    if metrics is not None:
+        metrics["memory_retrieval_ms"] = int(memory_retrieval_ms)
 
     if (history and (query_to_model or "").strip()):
         try:
@@ -1603,6 +1671,7 @@ async def respond_to_user(
                 reasoning_model = settings.REASONING_MODEL if mods.get("technical_mod", 0) > 0.6 else settings.BASE_MODEL
                 ctx = _history_tail_for_plan(history_llm, limit=int(getattr(settings, "PLAN_CONTEXT_TAIL", 8) or 8))
                 plan_user = (ctx + "\n\nUSER_NOW: " + query_to_model).strip() if ctx else ("USER_NOW: " + query_to_model)
+                llm_start = time.perf_counter()
                 plan_resp = await asyncio.wait_for(
                     _call_openai_with_retry(
                         endpoint="responses.create",
@@ -1616,6 +1685,7 @@ async def respond_to_user(
                     ),
                     timeout=settings.REASONING_MODEL_TIMEOUT,
                 )
+                llm_call_ms += (time.perf_counter() - llm_start) * 1000
                 draft_msg = (_get_output_text(plan_resp) or "").strip()
                 if draft_msg:
                     extra_sys.append(
@@ -1629,6 +1699,8 @@ async def respond_to_user(
         if image_b64 and reply is None:
             data_url = f"data:{(image_mime or 'image/jpeg')};base64,{image_b64}"
             chunks = _kb_chunks_from_hits(hits)
+            if chunks:
+                kb_snippets_blob = "\n".join(chunks)
             messages = _build_responses_messages(
                 system_prompt_content,
                 history_llm,
@@ -1641,6 +1713,7 @@ async def respond_to_user(
             browse_kwargs: Dict[str, Any] = {}
             if allow_web:
                 browse_kwargs = {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
+            llm_start = time.perf_counter()
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     model=eff_response_model,
@@ -1653,8 +1726,11 @@ async def respond_to_user(
                 ),
                 timeout=settings.RESPONSE_MODEL_TIMEOUT,
             )
+            llm_call_ms += (time.perf_counter() - llm_start) * 1000
         elif reply is None:
             chunks = _kb_chunks_from_hits(hits)
+            if chunks:
+                kb_snippets_blob = "\n".join(chunks)
             messages = _build_responses_messages(
                 system_prompt_content,
                 history_llm,
@@ -1668,6 +1744,7 @@ async def respond_to_user(
             if allow_web:
                 browse_kwargs = {"tools": [{"type": "web_search"}], "tool_choice": "auto"}
 
+            llm_start = time.perf_counter()
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     model=eff_response_model,
@@ -1680,6 +1757,7 @@ async def respond_to_user(
                 ),
                 timeout=settings.RESPONSE_MODEL_TIMEOUT,
             )
+            llm_call_ms += (time.perf_counter() - llm_start) * 1000
     except (ClientError, asyncio.TimeoutError, ValueError):
         logger.exception("OpenAI chat error", exc_info=True)
         try:
@@ -1712,6 +1790,23 @@ async def respond_to_user(
             rt = (reply or "").strip()
             if (rt == "" or rt == "…" or rt.startswith("⏳") or "something went wrong" in rt.lower()):
                 return ""
+
+    consistency_issue = _detect_consistency_issue(
+        reply or "",
+        memory_snippets_blob,
+        kb_snippets_blob,
+    )
+    if consistency_issue:
+        logger.warning(
+            "Consistency guard flagged response request_id=%s persona_owner=%s source=%s",
+            request_id,
+            persona_owner_id,
+            consistency_issue.get("source"),
+        )
+    if metrics is not None:
+        metrics["llm_call_ms"] = int(llm_call_ms)
+        metrics["total_ms"] = int((time.perf_counter() - perf_start) * 1000)
+        metrics["consistency"] = consistency_issue or {"flag": False}
                 
     assistant_allowed = True
     assistant_guard_key = None
