@@ -1327,6 +1327,15 @@ async def respond_to_user(
         )
 
     query_to_model = safe_resolved
+    ltm_frags_t = None
+    ltm_text_t = None
+    mtm_lines_t = None
+    if reply is None and (not internal_mode) and getattr(settings, "LAYERED_MEMORY_ENABLED", True):
+        ltm_frags_t = asyncio.create_task(get_ltm_slices(chat_id, memory_uid, cap_items=120, namespace=mem_ns))
+        ltm_text_t = asyncio.create_task(get_ltm_text(chat_id, memory_uid, namespace=mem_ns))
+        mtm_lines_t = asyncio.create_task(
+            get_all_mtm_texts(chat_id, memory_uid, cap_tokens=0, namespace=mem_ns)
+        )
 
     reply = None
     on_topic_flag = False
@@ -1476,12 +1485,6 @@ async def respond_to_user(
                     except Exception:
                         pass
             if getattr(settings, "LAYERED_MEMORY_ENABLED", True):
-                ltm_frags_t = asyncio.create_task(get_ltm_slices(chat_id, memory_uid, cap_items=120, namespace=mem_ns))
-                ltm_text_t  = asyncio.create_task(get_ltm_text(chat_id, memory_uid, namespace=mem_ns))
-                mtm_lines_t = asyncio.create_task(
-                    get_all_mtm_texts(chat_id, memory_uid, cap_tokens=0, namespace=mem_ns)
-                )
-
                 async def _group_snip(topic: str) -> tuple[str, list[str]]:
                     try:
                         tail = await get_group_stm_tail(
@@ -1505,9 +1508,12 @@ async def respond_to_user(
                 if (not is_api) and (chat_id != user_id):
                     group_snip_t = asyncio.create_task(_group_snip(topic_for_mtm or ""))
 
-                ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
-                    ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
-                )
+                if ltm_frags_t and ltm_text_t and mtm_lines_t:
+                    ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
+                        ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
+                    )
+                else:
+                    ltm_frags, ltm_text, mtm_lines = [], "", []
                 if isinstance(ltm_frags, Exception):
                     ltm_frags = []
                 if isinstance(ltm_text, Exception):
