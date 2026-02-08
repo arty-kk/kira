@@ -24,25 +24,30 @@ from app.tasks.kb import (
 
 logger = logging.getLogger(__name__)
 
+_cpu_count: int | None = None
+_local_tz: timezone | None = None
+_sched: AsyncIOScheduler | None = None
 
-cpu_count = os.cpu_count() or 1
 
-try:
-    tz_raw = getattr(settings, "DEFAULT_TZ", "UTC")
+def _init_scheduler_context() -> None:
+    global _cpu_count, _local_tz
+
+    _cpu_count = os.cpu_count() or 1
 
     try:
-        offset_hours = int(tz_raw)
-    except (TypeError, ValueError):
-        offset_hours = None
+        tz_raw = getattr(settings, "DEFAULT_TZ", "UTC")
 
-    if offset_hours is not None:
-        LOCAL_TZ = timezone(timedelta(hours=offset_hours))
-    else:
-        LOCAL_TZ = ZoneInfo(str(tz_raw))
-except Exception:
-    LOCAL_TZ = timezone.utc
+        try:
+            offset_hours = int(tz_raw)
+        except (TypeError, ValueError):
+            offset_hours = None
 
-_sched: AsyncIOScheduler | None = None
+        if offset_hours is not None:
+            _local_tz = timezone(timedelta(hours=offset_hours))
+        else:
+            _local_tz = ZoneInfo(str(tz_raw))
+    except Exception:
+        _local_tz = timezone.utc
 
 
 def get_scheduler() -> AsyncIOScheduler | None:
@@ -62,17 +67,19 @@ def _now_utc() -> datetime:
 
 
 def _now_local() -> datetime:
-    return datetime.now(LOCAL_TZ)
+    tz = _local_tz or timezone.utc
+    return datetime.now(tz)
 
 
 def _tweet_window_today_to_utc() -> tuple[datetime, datetime]:
+    tz = _local_tz or timezone.utc
     today_local = _now_local().date()
-    start_local = datetime.combine(today_local, time(11, 0), tzinfo=LOCAL_TZ)
-    end_local   = datetime.combine(today_local, time(23, 0), tzinfo=LOCAL_TZ)
+    start_local = datetime.combine(today_local, time(11, 0), tzinfo=tz)
+    end_local   = datetime.combine(today_local, time(23, 0), tzinfo=tz)
     if _now_local() >= end_local:
         tomorrow  = today_local + timedelta(days=1)
-        start_local = datetime.combine(tomorrow, time(11, 0), tzinfo=LOCAL_TZ)
-        end_local   = datetime.combine(tomorrow, time(23, 0), tzinfo=LOCAL_TZ)
+        start_local = datetime.combine(tomorrow, time(11, 0), tzinfo=tz)
+        end_local   = datetime.combine(tomorrow, time(23, 0), tzinfo=tz)
     return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
 
 
@@ -126,18 +133,19 @@ def _schedule_dynamic_tweets(count_min: int = 6, count_max: int = 10) -> None:
 
 
 def _tg_window_today_to_utc() -> tuple[datetime, datetime]:
+    tz = _local_tz or timezone.utc
 
     today_local = _now_local().date()
 
     start_local = datetime.combine(
         today_local,
         time(settings.SCHED_TG_START_HOUR, 0),
-        tzinfo=LOCAL_TZ,
+        tzinfo=tz,
     )
     end_local = datetime.combine(
         today_local,
         time(settings.SCHED_TG_END_HOUR, 0),
-        tzinfo=LOCAL_TZ,
+        tzinfo=tz,
     )
 
     if end_local <= start_local:
@@ -223,7 +231,11 @@ def start_scheduler() -> None:
         logger.info("Scheduler already running; skip second start")
         return
 
-    logger.info("Starting scheduler in timezone %s", LOCAL_TZ)
+    _init_scheduler_context()
+    tz = _local_tz or timezone.utc
+    max_instances = (_cpu_count or 1) * 2
+
+    logger.info("Starting scheduler in timezone %s", tz)
     try:
         import asyncio
         loop = asyncio.get_running_loop()
@@ -232,11 +244,11 @@ def start_scheduler() -> None:
 
     _sched = AsyncIOScheduler(
         event_loop=loop,
-        timezone=LOCAL_TZ,
+        timezone=tz,
         job_defaults={
             "misfire_grace_time": settings.SCHEDULER_MISFIRE_GRACE_TIME,
             "coalesce": True,
-            "max_instances": cpu_count * 2,
+            "max_instances": max_instances,
         },
     )
 

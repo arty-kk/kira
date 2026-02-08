@@ -50,30 +50,34 @@ scheduler = _load_scheduler()
 
 class SchedulerWindowTests(unittest.TestCase):
     def test_tg_window_crosses_midnight(self) -> None:
+        scheduler._init_scheduler_context()
+        tz = scheduler._local_tz or timezone.utc
         original_now_local = scheduler._now_local
-        scheduler._now_local = lambda: datetime(2024, 1, 1, 12, 0, tzinfo=scheduler.LOCAL_TZ)
+        scheduler._now_local = lambda: datetime(2024, 1, 1, 12, 0, tzinfo=tz)
         try:
             window_start, window_end = scheduler._tg_window_today_to_utc()
         finally:
             scheduler._now_local = original_now_local
 
-        expected_start = datetime(2024, 1, 1, 22, 0, tzinfo=scheduler.LOCAL_TZ)
-        expected_end = datetime(2024, 1, 2, 2, 0, tzinfo=scheduler.LOCAL_TZ)
+        expected_start = datetime(2024, 1, 1, 22, 0, tzinfo=tz)
+        expected_end = datetime(2024, 1, 2, 2, 0, tzinfo=tz)
 
         self.assertEqual(window_start, expected_start.astimezone(timezone.utc))
         self.assertEqual(window_end, expected_end.astimezone(timezone.utc))
         self.assertGreater((window_end - window_start).total_seconds(), 0)
 
     def test_tg_window_shifts_after_end(self) -> None:
+        scheduler._init_scheduler_context()
+        tz = scheduler._local_tz or timezone.utc
         original_now_local = scheduler._now_local
-        scheduler._now_local = lambda: datetime(2024, 1, 2, 3, 0, tzinfo=scheduler.LOCAL_TZ)
+        scheduler._now_local = lambda: datetime(2024, 1, 2, 3, 0, tzinfo=tz)
         try:
             window_start, window_end = scheduler._tg_window_today_to_utc()
         finally:
             scheduler._now_local = original_now_local
 
-        expected_start = datetime(2024, 1, 2, 22, 0, tzinfo=scheduler.LOCAL_TZ)
-        expected_end = datetime(2024, 1, 3, 2, 0, tzinfo=scheduler.LOCAL_TZ)
+        expected_start = datetime(2024, 1, 2, 22, 0, tzinfo=tz)
+        expected_end = datetime(2024, 1, 3, 2, 0, tzinfo=tz)
 
         self.assertEqual(window_start, expected_start.astimezone(timezone.utc))
         self.assertEqual(window_end, expected_end.astimezone(timezone.utc))
