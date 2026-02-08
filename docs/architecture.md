@@ -4,6 +4,7 @@
 1. **API** принимает запрос, валидирует payload, формирует `request_id` и ставит задачу в очередь.
    - Точка входа: `main.py`
    - Эндпоинт: `app/api/conversation.py`
+   - Списание происходит в `conversation_endpoint` до постановки job в очередь; после получения `result` от воркера возврат выполняется для 5xx и ошибок `invalid_payload`/`voice_transcription_failed`.
 2. **Queue** сохраняет job в Redis‑очереди.
    - Очередь: `app/api/conversation.py`
 3. **Worker** забирает job, выполняет обработку, вызывает responder и возвращает результат.
