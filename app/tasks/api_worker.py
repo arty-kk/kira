@@ -35,6 +35,12 @@ JOB_KEY_PREFIX = "api:job:"
 RESULT_TTL_SEC = int(getattr(settings, "API_RESULT_TTL_SEC", 600))
 DLQ_TTL_SEC = int(getattr(settings, "API_DLQ_TTL_SEC", 7 * 24 * 3600))
 DLQ_MAX_ITEMS = int(getattr(settings, "API_DLQ_MAX_ITEMS", 2000))
+DLQ_STORE_RAW = str(
+    getattr(settings, "API_DLQ_STORE_RAW", os.environ.get("API_DLQ_STORE_RAW", "false"))
+).strip().lower() in {"1", "true", "yes"}
+MAX_RAW_PREVIEW_BYTES = 2048
+MAX_RAW_PREVIEW_TEXT_CHARS = 400
+RAW_PREVIEW_FALLBACK_CHARS = 512
 
 MAX_INFLIGHT_TASKS = int(getattr(settings, "API_WORKER_MAX_INFLIGHT", 64))
 RESPOND_TIMEOUT = int(
@@ -101,14 +107,125 @@ def _classify_error(error: Dict[str, Any] | None) -> str:
         return "timeout"
     return "internal"
 
-async def _push_dlq(redis_queue, *, raw: str, error_type: str, request_id: str | None, reason: str) -> None:
-    payload = {
+def _truncate_raw_preview(raw: str, limit: int = RAW_PREVIEW_FALLBACK_CHARS) -> str:
+    if not raw:
+        return ""
+    cleaned = "".join(ch if ch.isprintable() else " " for ch in raw)
+    return cleaned[:limit]
+
+
+def _sanitize_preview_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", "ignore")
+    if isinstance(value, str):
+        return value[:MAX_RAW_PREVIEW_TEXT_CHARS]
+    if isinstance(value, (int, float, bool)):
+        return value
+    return "[omitted]"
+
+
+def _build_raw_preview(
+    raw: str,
+    *,
+    request_id: Any,
+    chat_id: Any,
+    persona_owner_id: Any,
+    error_type: str,
+    reason: str,
+) -> Any:
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "ignore")
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return _truncate_raw_preview(raw)
+
+    if not isinstance(parsed, dict):
+        return _truncate_raw_preview(raw)
+
+    allowlist = {
+        "request_id",
+        "chat_id",
+        "persona_owner_id",
+        "error_type",
+        "reason",
+        "text",
+        "message",
+    }
+    preview: Dict[str, Any] = {}
+    for key in allowlist:
+        if key in {"request_id", "chat_id", "persona_owner_id", "error_type", "reason"}:
+            value = {
+                "request_id": request_id,
+                "chat_id": chat_id,
+                "persona_owner_id": persona_owner_id,
+                "error_type": error_type,
+                "reason": reason,
+            }[key]
+            if value is None:
+                value = parsed.get(key)
+        else:
+            value = parsed.get(key)
+        if value is None:
+            continue
+        preview[key] = _sanitize_preview_value(value)
+
+    try:
+        encoded = json.dumps(preview, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return _truncate_raw_preview(raw)
+
+    if len(encoded) <= MAX_RAW_PREVIEW_BYTES:
+        return preview
+
+    for key in ("text", "message"):
+        if key in preview and isinstance(preview[key], str):
+            preview[key] = preview[key][:200]
+
+    try:
+        encoded = json.dumps(preview, ensure_ascii=False).encode("utf-8")
+    except Exception:
+        return _truncate_raw_preview(raw)
+
+    if len(encoded) <= MAX_RAW_PREVIEW_BYTES:
+        return preview
+
+    return _truncate_raw_preview(raw)
+
+
+# DLQ stores only identifiers and a safe preview; raw payloads are not persisted
+# unless API_DLQ_STORE_RAW=true and secure storage is confirmed.
+async def _push_dlq(
+    redis_queue,
+    *,
+    raw: str,
+    error_type: str,
+    request_id: str | None,
+    reason: str,
+    chat_id: Any = None,
+    persona_owner_id: Any = None,
+) -> None:
+    raw_preview = _build_raw_preview(
+        raw,
+        request_id=request_id,
+        chat_id=chat_id,
+        persona_owner_id=persona_owner_id,
+        error_type=error_type,
+        reason=reason,
+    )
+    payload: Dict[str, Any] = {
         "ts": time.time(),
         "error_type": error_type,
         "request_id": request_id or "",
+        "chat_id": chat_id if chat_id is not None else "",
+        "persona_owner_id": persona_owner_id if persona_owner_id is not None else "",
         "reason": reason,
-        "raw": raw,
+        "raw_preview": raw_preview,
     }
+    if DLQ_STORE_RAW:
+        payload["raw"] = raw
     try:
         data = json.dumps(payload, ensure_ascii=False)
     except Exception:
@@ -220,6 +337,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             error_type="invalid_json",
             request_id=None,
             reason="invalid_json_job",
+            chat_id=None,
+            persona_owner_id=None,
         )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -264,6 +383,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             error_type="invalid_job",
             request_id=request_id if isinstance(request_id, str) else None,
             reason="missing_request_or_result_key",
+            chat_id=chat_id,
+            persona_owner_id=persona_owner_id,
         )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -314,6 +435,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             error_type="invalid_job",
             request_id=request_id,
             reason="bad_chat_or_memory_uid",
+            chat_id=chat_id,
+            persona_owner_id=persona_owner_id,
         )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -337,6 +460,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             error_type="invalid_job",
             request_id=request_id,
             reason="missing_persona_owner_id",
+            chat_id=chat_id,
+            persona_owner_id=persona_owner_id,
         )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -357,6 +482,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
             error_type="invalid_job",
             request_id=request_id,
             reason="bad_persona_owner_id",
+            chat_id=chat_id,
+            persona_owner_id=persona_owner_id,
         )
         with suppress(Exception):
             await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -602,6 +729,8 @@ async def _handle_job(raw: str, redis_queue) -> None:
                 error_type=error_type,
                 request_id=request_id,
                 reason=error.get("code") or "error",
+                chat_id=chat_id,
+                persona_owner_id=persona_owner_id,
             )
         else:
             payload = {
