@@ -704,20 +704,20 @@ async def is_spam(chat_id: int, user_id: int) -> bool:
             c += 1
             _local_spam[k] = (c, ts)
             _local_spam_order.append((ts, k))
-        while _local_spam_order:
-            oldest_ts, oldest_key = _local_spam_order[0]
-            if now - oldest_ts <= local_ttl:
-                break
-            _local_spam_order.popleft()
-            current = _local_spam.get(oldest_key)
-            if current is not None and current[1] == oldest_ts:
-                _local_spam.pop(oldest_key, None)
-        if local_max_size > 0:
-            while len(_local_spam) > local_max_size and _local_spam_order:
-                oldest_ts, oldest_key = _local_spam_order.popleft()
+            while _local_spam_order:
+                oldest_ts, oldest_key = _local_spam_order[0]
+                if now - oldest_ts <= local_ttl:
+                    break
+                _local_spam_order.popleft()
                 current = _local_spam.get(oldest_key)
                 if current is not None and current[1] == oldest_ts:
                     _local_spam.pop(oldest_key, None)
+            if local_max_size > 0:
+                while len(_local_spam) > local_max_size and _local_spam_order:
+                    oldest_ts, oldest_key = _local_spam_order.popleft()
+                    current = _local_spam.get(oldest_key)
+                    if current is not None and current[1] == oldest_ts:
+                        _local_spam.pop(oldest_key, None)
         return c > limit
 
 async def inc_msg_count(chat_id: int) -> None:
