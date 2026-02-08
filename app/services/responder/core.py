@@ -1327,6 +1327,7 @@ async def respond_to_user(
         )
 
     query_to_model = safe_resolved
+    reply = None
     ltm_frags_t = None
     ltm_text_t = None
     mtm_lines_t = None
@@ -1336,8 +1337,6 @@ async def respond_to_user(
         mtm_lines_t = asyncio.create_task(
             get_all_mtm_texts(chat_id, memory_uid, cap_tokens=0, namespace=mem_ns)
         )
-
-    reply = None
     on_topic_flag = False
     on_topic_hits = None
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
