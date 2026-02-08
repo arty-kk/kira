@@ -29,8 +29,12 @@ from app.emo_engine.persona.constants.user_prefs import normalize_prefs, merge_p
 
 router = APIRouter(prefix="/api/v1", tags=["conversation"])
 
-_API_QUEUE_KEY = getattr(settings, "API_QUEUE_KEY", "queue:api")
 logger = logging.getLogger(__name__)
+
+
+def _get_api_queue_key() -> str:
+    return getattr(settings, "API_QUEUE_KEY", "queue:api")
+
 
 class PersonaConfig(BaseModel):
     name: Optional[constr(min_length=1, max_length=64)] = None
@@ -628,7 +632,7 @@ async def _send_job_and_wait(*, request_id: str, job: Dict[str, Any]) -> Dict[st
     result_key = job["result_key"]
 
     try:
-        await redis_q.lpush(_API_QUEUE_KEY, payload)
+        await redis_q.lpush(_get_api_queue_key(), payload)
     except Exception:
         logging.exception("API: enqueue failed request_id=%s", request_id)
         raise HTTPException(
