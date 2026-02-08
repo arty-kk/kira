@@ -11,7 +11,6 @@ import os
 from typing import Any
 
 from app import engine, close_redis_pools, _get_env, setup_logging
-from app.tasks.scheduler import start_scheduler, get_scheduler
 from app.emo_engine.persona.memory import PersonaMemory
 from app.emo_engine.registry import shutdown_personas
 from app.clients.http_client import http_client
@@ -71,9 +70,14 @@ async def main() -> None:
         and (run_bot or run_api)
     )
     if scheduler_enabled:
+        from app.tasks.scheduler import start_scheduler, get_scheduler
+
+        get_scheduler_fn = get_scheduler
         start_scheduler()
     else:
         logging.info("⏱️ Scheduler disabled")
+        def get_scheduler_fn():
+            return None
 
     try:
         await _preinit_persona_memory()
@@ -147,7 +151,7 @@ async def main() -> None:
         except Exception:
             logging.exception("Failed to shutdown personas cleanly")
 
-        s = get_scheduler()
+        s = get_scheduler_fn()
         if scheduler_enabled and s and s.running:
             logging.info("⏹️ Shutting down scheduler")
             s.shutdown(wait=True)
