@@ -947,8 +947,17 @@ async def respond_to_user(
     if dynamic_top_p > 0.98:
         dynamic_top_p = 0.98
 
+    system_prompt_t = asyncio.create_task(
+        build_system_prompt(
+            persona,
+            guidelines,
+            user_gender=local_gender,
+        )
+    )
+
     # Build initial history from STM only
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
+    coref_gate_t = asyncio.create_task(needs_coref(query))
     if getattr(settings, "LLM_AUDIT", False):
         logger.info("[TRACE] raw=%r query=%r", text[:200], query[:200])
 
@@ -1182,7 +1191,7 @@ async def respond_to_user(
     else:
         pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((query or "").strip()))
         try:
-            need_coref_flag = await needs_coref(query)
+            need_coref_flag = await coref_gate_t
         except Exception as e:
             logger.warning("needs_coref failed: %s", e)
             need_coref_flag = False
@@ -1318,8 +1327,16 @@ async def respond_to_user(
         )
 
     query_to_model = safe_resolved
-
     reply = None
+    ltm_frags_t = None
+    ltm_text_t = None
+    mtm_lines_t = None
+    if reply is None and (not internal_mode) and getattr(settings, "LAYERED_MEMORY_ENABLED", True):
+        ltm_frags_t = asyncio.create_task(get_ltm_slices(chat_id, memory_uid, cap_items=120, namespace=mem_ns))
+        ltm_text_t = asyncio.create_task(get_ltm_text(chat_id, memory_uid, namespace=mem_ns))
+        mtm_lines_t = asyncio.create_task(
+            get_all_mtm_texts(chat_id, memory_uid, cap_tokens=0, namespace=mem_ns)
+        )
     on_topic_flag = False
     on_topic_hits = None
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
@@ -1352,11 +1369,7 @@ async def respond_to_user(
                 chat_id,
                 user_id,
             )
-            system_prompt_content = await build_system_prompt(
-                persona,
-                guidelines,
-                user_gender=local_gender,
-            )
+            system_prompt_content = await system_prompt_t
             if not (system_prompt_content or "").strip():
                 system_prompt_content = build_fallback_system_prompt(persona, guidelines, user_gender=local_gender)
             logger.info(
@@ -1471,12 +1484,6 @@ async def respond_to_user(
                     except Exception:
                         pass
             if getattr(settings, "LAYERED_MEMORY_ENABLED", True):
-                ltm_frags_t = asyncio.create_task(get_ltm_slices(chat_id, memory_uid, cap_items=120, namespace=mem_ns))
-                ltm_text_t  = asyncio.create_task(get_ltm_text(chat_id, memory_uid, namespace=mem_ns))
-                mtm_lines_t = asyncio.create_task(
-                    get_all_mtm_texts(chat_id, memory_uid, cap_tokens=0, namespace=mem_ns)
-                )
-
                 async def _group_snip(topic: str) -> tuple[str, list[str]]:
                     try:
                         tail = await get_group_stm_tail(
@@ -1500,9 +1507,12 @@ async def respond_to_user(
                 if (not is_api) and (chat_id != user_id):
                     group_snip_t = asyncio.create_task(_group_snip(topic_for_mtm or ""))
 
-                ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
-                    ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
-                )
+                if ltm_frags_t and ltm_text_t and mtm_lines_t:
+                    ltm_frags, ltm_text, mtm_lines = await asyncio.gather(
+                        ltm_frags_t, ltm_text_t, mtm_lines_t, return_exceptions=True
+                    )
+                else:
+                    ltm_frags, ltm_text, mtm_lines = [], "", []
                 if isinstance(ltm_frags, Exception):
                     ltm_frags = []
                 if isinstance(ltm_text, Exception):
