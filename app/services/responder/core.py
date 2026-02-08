@@ -949,6 +949,7 @@ async def respond_to_user(
 
     # Build initial history from STM only
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
+    coref_gate_t = asyncio.create_task(needs_coref(query))
     if getattr(settings, "LLM_AUDIT", False):
         logger.info("[TRACE] raw=%r query=%r", text[:200], query[:200])
 
@@ -1182,7 +1183,7 @@ async def respond_to_user(
     else:
         pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((query or "").strip()))
         try:
-            need_coref_flag = await needs_coref(query)
+            need_coref_flag = await coref_gate_t
         except Exception as e:
             logger.warning("needs_coref failed: %s", e)
             need_coref_flag = False
