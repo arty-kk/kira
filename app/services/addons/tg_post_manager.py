@@ -2347,274 +2347,233 @@ async def generate_and_post_tg() -> None:
         return
     lock_key, lock_token = lock
 
-    persona = await get_persona(persona_chat_id)
     try:
-        await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
-    except Exception:
-        logger.exception("tg_post_manager persona restore failed")
-
-    try:
-        history = await load_context(persona_chat_id, persona_chat_id)
-    except Exception:
-        logger.exception("tg_post_manager load_context failed")
-        history = []
-
-    if len(history) > MAX_HISTORY:
-        history = history[-MAX_HISTORY:]
-
-    recent_posts = _extract_recent_posts(history, limit=RECENT_POSTS_FOR_CONTEXT)
-    meta = _last_meta(history) or {}
-    last_rubric = meta.get("rubric")
-    last_story_id = meta.get("story_id")
-
-    metas = _recent_metas(history, limit=10)
-    recent_rubrics: list[str] = []
-    recent_story_ids: set[str] = set()
-    if metas:
-        for m in metas:
-            r = m.get("rubric")
-            if isinstance(r, str) and r in ALL_RUBRICS:
-                recent_rubrics.append(r)
-            sid = m.get("story_id")
-            if sid:
-                recent_story_ids.add(str(sid))
-        if not last_rubric and recent_rubrics:
-            last_rubric = recent_rubrics[0]
-        if not last_story_id and recent_story_ids:
-            last_story_id = next(iter(recent_story_ids))
-
-    try:
-        style_mods = persona._mods_cache or await asyncio.wait_for(persona.style_modifiers(), 30)
-    except Exception:
-        logger.exception("tg_post_manager style_modifiers acquisition failed")
-        style_mods = {}
-    mods = _merge_and_clamp_mods(style_mods)
-
-    try:
-        guidelines = await persona.style_guidelines(persona_chat_id)
-    except Exception:
-        logger.exception("tg_post_manager style_guidelines acquisition failed")
-        guidelines = []
-
-    novelty = 0.35 * mods["creativity_mod"] + 0.20 * mods["sarcasm_mod"] + 0.45 * mods["enthusiasm_mod"]
-    coherence = (
-        0.55 * mods["precision_mod"]
-        + 0.25 * mods["confidence_mod"]
-        + 0.10 * (1 - mods["fatigue_mod"])
-        + 0.10 * (1 - mods["stress_mod"])
-    )
-
-    alpha = 1.6
-    dynamic_temperature = MIN_TEMPERATURE + (MAX_TEMPERATURE - MIN_TEMPERATURE) * (novelty**alpha)
-    dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
-
-    try:
-        dynamic_temperature *= 1.0 + 0.08 * float(mods["valence_mod"])
-    except Exception:
-        pass
-
-    if time_bucket == "morning":
-        dynamic_temperature = max(0.52, min(dynamic_temperature + 0.02, 0.76))
-
-    dynamic_temperature = max(0.50, min(dynamic_temperature, 0.80))
-    dynamic_top_p = max(0.85, min(dynamic_top_p, 0.98))
-
-    include_source = _coerce_bool(getattr(settings, "TG_POST_INCLUDE_SOURCE", None), DEFAULT_INCLUDE_SOURCE)
-    include_url = _coerce_bool(getattr(settings, "TG_POST_INCLUDE_URL", None), DEFAULT_INCLUDE_URL)
-
-    candidate_count = _coerce_int(getattr(settings, "TG_POST_CANDIDATES", None), DEFAULT_CANDIDATE_COUNT)
-    eval_enabled = _coerce_bool(getattr(settings, "TG_POST_EVAL_ENABLED", None), DEFAULT_EVAL_ENABLED)
-    polish_enabled = _coerce_bool(getattr(settings, "TG_POST_POLISH_ENABLED", None), DEFAULT_POLISH_ENABLED)
-
-    rubrics_per_run = _coerce_int(getattr(settings, "TG_POST_RUBRICS_PER_RUN", None), DEFAULT_RUBRICS_PER_RUN)
-    rubrics_per_run = max(1, min(3, rubrics_per_run))
-
-    local_now = _get_local_now()
-
-    min_posts = int(getattr(settings, "SCHED_TG_MIN_POSTS", 15) or 15)
-    max_posts = int(getattr(settings, "SCHED_TG_MAX_POSTS", 21) or 21)
-    max_posts = max(min_posts, max_posts)
-
-    count_today, last_ts = await _get_daily_pacing_state(redis, channel_id, local_now)
-    duration_min = _corridor_duration_minutes(int(start_hour), int(end_hour))
-    elapsed_min = _corridor_elapsed_minutes(local_now, int(start_hour), int(end_hour)) if duration_min else 0
-    remaining_min = max(0, duration_min - elapsed_min)
-
-    items = await _fetch_ai_news_digest(local_now)
-    ctx = _analyze_ai_day(items)
-    keywords = await _summarize_keywords(items) if items else ""
-    ctx["keywords"] = keywords or ctx.get("keywords") or ""
-
-    focus = ctx.get("focus", "MIXED")
-    mood = ctx.get("mood", "quiet")
-    intensity = ctx.get("intensity", "low")
-    kw = ctx.get("keywords", "")
-
-    if not items:
-        mood = "quiet"
-        intensity = "low"
-        kw = kw or "спокойный день, качество, данные, оценка"
-
-    try:
-        if intensity == "high":
-            target_posts = max_posts
-        elif intensity == "low":
-            target_posts = min_posts
-        else:
-            target_posts = int(round((min_posts + max_posts) / 2.0))
-        target_posts = max(1, int(target_posts))
-    except Exception:
-        target_posts = max(1, int(round((min_posts + max_posts) / 2.0)))
-
-    if count_today >= max_posts:
-        logger.info(
-            "tg_post_manager skip: daily cap reached (%d/%d)", count_today, max_posts
-        )
-        await _release_redis_lock(redis, lock_key, lock_token)
-        return
-
-    if duration_min > 0:
-        desired_gap = float(duration_min) / float(max(1, target_posts))
-    else:
-        desired_gap = 60.0
-
-    gap_floor = _coerce_int(getattr(settings, "TG_POST_MIN_GAP_MINUTES_FLOOR", None), DEFAULT_MIN_GAP_MINUTES_FLOOR)
-    gap_cap = _coerce_int(getattr(settings, "TG_POST_MAX_GAP_MINUTES_CAP", None), DEFAULT_MAX_GAP_MINUTES_CAP)
-    min_gap_min = max(gap_floor, int(desired_gap * 0.60))
-    max_gap_min = min(gap_cap, max(min_gap_min + 10, int(desired_gap * 1.45)))
-
-    last_age_min = None
-    if last_ts:
+        persona = await get_persona(persona_chat_id)
         try:
-            last_age_min = max(0.0, (time.time() - float(last_ts)) / 60.0)
+            await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
         except Exception:
-            last_age_min = None
+            logger.exception("tg_post_manager persona restore failed")
 
-    must_catch_up = False
+        try:
+            history = await load_context(persona_chat_id, persona_chat_id)
+        except Exception:
+            logger.exception("tg_post_manager load_context failed")
+            history = []
 
-    if last_age_min is not None and last_age_min > float(max_gap_min):
-        must_catch_up = True
+        if len(history) > MAX_HISTORY:
+            history = history[-MAX_HISTORY:]
 
-    if duration_min > 0 and target_posts > 1:
-        expected_now = int(round((float(elapsed_min) / float(duration_min)) * float(target_posts)))
-        if count_today + 1 < expected_now:
-            must_catch_up = True
+        recent_posts = _extract_recent_posts(history, limit=RECENT_POSTS_FOR_CONTEXT)
+        meta = _last_meta(history) or {}
+        last_rubric = meta.get("rubric")
+        last_story_id = meta.get("story_id")
 
-    if last_age_min is not None and last_age_min < float(min_gap_min):
-        need_left = max(0, int(target_posts) - int(count_today))
-        tight = remaining_min < int(need_left * min_gap_min * 1.20)
-        if not (must_catch_up and tight):
+        metas = _recent_metas(history, limit=10)
+        recent_rubrics: list[str] = []
+        recent_story_ids: set[str] = set()
+        if metas:
+            for m in metas:
+                r = m.get("rubric")
+                if isinstance(r, str) and r in ALL_RUBRICS:
+                    recent_rubrics.append(r)
+                sid = m.get("story_id")
+                if sid:
+                    recent_story_ids.add(str(sid))
+            if not last_rubric and recent_rubrics:
+                last_rubric = recent_rubrics[0]
+            if not last_story_id and recent_story_ids:
+                last_story_id = next(iter(recent_story_ids))
+
+        try:
+            style_mods = persona._mods_cache or await asyncio.wait_for(persona.style_modifiers(), 30)
+        except Exception:
+            logger.exception("tg_post_manager style_modifiers acquisition failed")
+            style_mods = {}
+        mods = _merge_and_clamp_mods(style_mods)
+
+        try:
+            guidelines = await persona.style_guidelines(persona_chat_id)
+        except Exception:
+            logger.exception("tg_post_manager style_guidelines acquisition failed")
+            guidelines = []
+
+        novelty = 0.35 * mods["creativity_mod"] + 0.20 * mods["sarcasm_mod"] + 0.45 * mods["enthusiasm_mod"]
+        coherence = (
+            0.55 * mods["precision_mod"]
+            + 0.25 * mods["confidence_mod"]
+            + 0.10 * (1 - mods["fatigue_mod"])
+            + 0.10 * (1 - mods["stress_mod"])
+        )
+
+        alpha = 1.6
+        dynamic_temperature = MIN_TEMPERATURE + (MAX_TEMPERATURE - MIN_TEMPERATURE) * (novelty**alpha)
+        dynamic_top_p = TOP_P_MIN + (TOP_P_MAX - TOP_P_MIN) * (1.0 - coherence)
+
+        try:
+            dynamic_temperature *= 1.0 + 0.08 * float(mods["valence_mod"])
+        except Exception:
+            pass
+
+        if time_bucket == "morning":
+            dynamic_temperature = max(0.52, min(dynamic_temperature + 0.02, 0.76))
+
+        dynamic_temperature = max(0.50, min(dynamic_temperature, 0.80))
+        dynamic_top_p = max(0.85, min(dynamic_top_p, 0.98))
+
+        include_source = _coerce_bool(getattr(settings, "TG_POST_INCLUDE_SOURCE", None), DEFAULT_INCLUDE_SOURCE)
+        include_url = _coerce_bool(getattr(settings, "TG_POST_INCLUDE_URL", None), DEFAULT_INCLUDE_URL)
+
+        candidate_count = _coerce_int(getattr(settings, "TG_POST_CANDIDATES", None), DEFAULT_CANDIDATE_COUNT)
+        eval_enabled = _coerce_bool(getattr(settings, "TG_POST_EVAL_ENABLED", None), DEFAULT_EVAL_ENABLED)
+        polish_enabled = _coerce_bool(getattr(settings, "TG_POST_POLISH_ENABLED", None), DEFAULT_POLISH_ENABLED)
+
+        rubrics_per_run = _coerce_int(getattr(settings, "TG_POST_RUBRICS_PER_RUN", None), DEFAULT_RUBRICS_PER_RUN)
+        rubrics_per_run = max(1, min(3, rubrics_per_run))
+
+        local_now = _get_local_now()
+
+        min_posts = int(getattr(settings, "SCHED_TG_MIN_POSTS", 15) or 15)
+        max_posts = int(getattr(settings, "SCHED_TG_MAX_POSTS", 21) or 21)
+        max_posts = max(min_posts, max_posts)
+
+        count_today, last_ts = await _get_daily_pacing_state(redis, channel_id, local_now)
+        duration_min = _corridor_duration_minutes(int(start_hour), int(end_hour))
+        elapsed_min = _corridor_elapsed_minutes(local_now, int(start_hour), int(end_hour)) if duration_min else 0
+        remaining_min = max(0, duration_min - elapsed_min)
+
+        items = await _fetch_ai_news_digest(local_now)
+        ctx = _analyze_ai_day(items)
+        keywords = await _summarize_keywords(items) if items else ""
+        ctx["keywords"] = keywords or ctx.get("keywords") or ""
+
+        focus = ctx.get("focus", "MIXED")
+        mood = ctx.get("mood", "quiet")
+        intensity = ctx.get("intensity", "low")
+        kw = ctx.get("keywords", "")
+
+        if not items:
+            mood = "quiet"
+            intensity = "low"
+            kw = kw or "спокойный день, качество, данные, оценка"
+
+        try:
+            if intensity == "high":
+                target_posts = max_posts
+            elif intensity == "low":
+                target_posts = min_posts
+            else:
+                target_posts = int(round((min_posts + max_posts) / 2.0))
+            target_posts = max(1, int(target_posts))
+        except Exception:
+            target_posts = max(1, int(round((min_posts + max_posts) / 2.0)))
+
+        if count_today >= max_posts:
             logger.info(
-                "tg_post_manager skip: min gap not met (age=%.1fmin < %dmin, catch_up=%s)",
-                last_age_min, min_gap_min, must_catch_up
+                "tg_post_manager skip: daily cap reached (%d/%d)", count_today, max_posts
             )
-            await _release_redis_lock(redis, lock_key, lock_token)
             return
 
-    story_alts = int(getattr(settings, "TG_POST_STORY_ALTS", DEFAULT_STORY_ALTS) or DEFAULT_STORY_ALTS)
-    story_alts = max(1, min(6, story_alts))
+        if duration_min > 0:
+            desired_gap = float(duration_min) / float(max(1, target_posts))
+        else:
+            desired_gap = 60.0
 
-    story_candidates: list[NewsItem] = []
-    if items:
-        exclude_ids = set(recent_story_ids)
-        if last_story_id:
-            exclude_ids.add(str(last_story_id))
-        story_candidates = _pick_story_candidates(items, recent_posts, exclude_ids, limit=story_alts)
-        if not story_candidates:
-            st = _pick_story(items, recent_posts, last_story_id)
-            if st:
-                story_candidates = [st]
+        gap_floor = _coerce_int(getattr(settings, "TG_POST_MIN_GAP_MINUTES_FLOOR", None), DEFAULT_MIN_GAP_MINUTES_FLOOR)
+        gap_cap = _coerce_int(getattr(settings, "TG_POST_MAX_GAP_MINUTES_CAP", None), DEFAULT_MAX_GAP_MINUTES_CAP)
+        min_gap_min = max(gap_floor, int(desired_gap * 0.60))
+        max_gap_min = min(gap_cap, max(min_gap_min + 10, int(desired_gap * 1.45)))
 
-    story = (story_candidates[0] if story_candidates else None) if items else None
+        last_age_min = None
+        if last_ts:
+            try:
+                last_age_min = max(0.0, (time.time() - float(last_ts)) / 60.0)
+            except Exception:
+                last_age_min = None
 
-    story_text_for_pacing = ""
-    if story:
-        story_text_for_pacing = f"{story.type} {story.title} {story.what} {story.why}"
+        must_catch_up = False
 
-    if (not must_catch_up) and (not _should_post_now(time_bucket, mood, intensity, kw, story_text_for_pacing, mods)):
-        logger.info(
-            "tg_post_manager skip posting by contextual pacing "
-            "(bucket=%s focus=%s mood=%s intensity=%s keywords=%r)",
-            time_bucket,
-            focus,
-            mood,
-            intensity,
-            kw,
-        )
-        await _release_redis_lock(redis, lock_key, lock_token)
-        return
+        if last_age_min is not None and last_age_min > float(max_gap_min):
+            must_catch_up = True
 
-    if intensity == "high":
-        dynamic_temperature = min(dynamic_temperature + 0.03, 0.80)
-    elif intensity == "low":
-        dynamic_temperature = max(dynamic_temperature - 0.03, 0.50)
+        if duration_min > 0 and target_posts > 1:
+            expected_now = int(round((float(elapsed_min) / float(duration_min)) * float(target_posts)))
+            if count_today + 1 < expected_now:
+                must_catch_up = True
 
-    planned_base = _planned_rubrics_for_today(local_now)
+        if last_age_min is not None and last_age_min < float(min_gap_min):
+            need_left = max(0, int(target_posts) - int(count_today))
+            tight = remaining_min < int(need_left * min_gap_min * 1.20)
+            if not (must_catch_up and tight):
+                logger.info(
+                    "tg_post_manager skip: min gap not met (age=%.1fmin < %dmin, catch_up=%s)",
+                    last_age_min, min_gap_min, must_catch_up
+                )
+                return
 
-    rubrics: list[str] = []
+        story_alts = int(getattr(settings, "TG_POST_STORY_ALTS", DEFAULT_STORY_ALTS) or DEFAULT_STORY_ALTS)
+        story_alts = max(1, min(6, story_alts))
 
-    try:
-        system_base = await build_system_prompt(persona, guidelines, user_gender=None)
-    except Exception:
-        logger.exception("tg_post_manager build_system_prompt failed")
-        system_base = "Ты — Bonnie. Пиши по-русски, коротко и по делу."
+        story_candidates: list[NewsItem] = []
+        if items:
+            exclude_ids = set(recent_story_ids)
+            if last_story_id:
+                exclude_ids.add(str(last_story_id))
+            story_candidates = _pick_story_candidates(items, recent_posts, exclude_ids, limit=story_alts)
+            if not story_candidates:
+                st = _pick_story(items, recent_posts, last_story_id)
+                if st:
+                    story_candidates = [st]
 
-    history_block = ""
-    if recent_posts:
-        history_block = (
-            "Краткая хроника последних постов (для уникальности формулировок):\n"
-            f"{recent_posts}\n\n"
-            "Не повторяй те же заходы и обороты.\n\n"
-        )
+        story = (story_candidates[0] if story_candidates else None) if items else None
 
-    focus_label = {
-        "PRODUCT": "релизы и продуктовые обновления",
-        "TOOL": "инструменты и практики",
-        "RESEARCH": "исследования и результаты",
-        "INCIDENT": "инциденты и безопасность",
-        "POLICY": "регуляторика и нормы",
-        "BUSINESS": "рынок и компании",
-        "MIXED": "смешанная повестка",
-    }.get(focus, "повестка дня")
+        story_text_for_pacing = ""
+        if story:
+            story_text_for_pacing = f"{story.type} {story.title} {story.what} {story.why}"
 
-    if story:
-        story_block = (
-            "story_block (единственный источник фактов):\n"
-            f"{_format_story_for_prompt(story)}\n\n"
-        )
-    else:
-        story_block = (
-            "story_block: сегодня нет явного главного сюжета. "
-            "Пиши evergreen-заметку про практику внедрения ИИ (качество, оценка, безопасность, данные), "
-            "без новых фактов и без упоминаний «сегодня в новостях».\n\n"
-        )
-
-    attempts: list[NewsItem | None]
-    if items:
-        attempts = list(story_candidates) if story_candidates else [story]
-    else:
-        attempts = [None]
-
-    last_fail_reason = ""
-    for i_try, story in enumerate(attempts, start=1):
-        _ = await _get_image_disabled_reason(redis, channel_id)
-
-        planned = _context_override_rubrics(list(planned_base), mood, story)
-
-        rubrics = []
-        for r in planned:
-            if r not in rubrics:
-                rubrics.append(r)
-        while len(rubrics) < rubrics_per_run:
-            r = _rubric_for_context(
+        if (not must_catch_up) and (not _should_post_now(time_bucket, mood, intensity, kw, story_text_for_pacing, mods)):
+            logger.info(
+                "tg_post_manager skip posting by contextual pacing "
+                "(bucket=%s focus=%s mood=%s intensity=%s keywords=%r)",
                 time_bucket,
+                focus,
                 mood,
                 intensity,
-                (rubrics[-1] if rubrics else last_rubric),
-                recent_rubrics=recent_rubrics,
+                kw,
             )
-            if r not in rubrics:
-                rubrics.append(r)
+            return
+
+        if intensity == "high":
+            dynamic_temperature = min(dynamic_temperature + 0.03, 0.80)
+        elif intensity == "low":
+            dynamic_temperature = max(dynamic_temperature - 0.03, 0.50)
+
+        planned_base = _planned_rubrics_for_today(local_now)
+
+        rubrics: list[str] = []
+
+        try:
+            system_base = await build_system_prompt(persona, guidelines, user_gender=None)
+        except Exception:
+            logger.exception("tg_post_manager build_system_prompt failed")
+            system_base = "Ты — Bonnie. Пиши по-русски, коротко и по делу."
+
+        history_block = ""
+        if recent_posts:
+            history_block = (
+                "Краткая хроника последних постов (для уникальности формулировок):\n"
+                f"{recent_posts}\n\n"
+                "Не повторяй те же заходы и обороты.\n\n"
+            )
+
+        focus_label = {
+            "PRODUCT": "релизы и продуктовые обновления",
+            "TOOL": "инструменты и практики",
+            "RESEARCH": "исследования и результаты",
+            "INCIDENT": "инциденты и безопасность",
+            "POLICY": "регуляторика и нормы",
+            "BUSINESS": "рынок и компании",
+            "MIXED": "смешанная повестка",
+        }.get(focus, "повестка дня")
 
         if story:
             story_block = (
@@ -2628,313 +2587,348 @@ async def generate_and_post_tg() -> None:
                 "без новых фактов и без упоминаний «сегодня в новостях».\n\n"
             )
 
-        user_prompt = (
-            history_block
-            + story_block
-            + "Задача: напиши один пост для публичного телеграм-канала.\n"
-            "Требования:\n"
-            "- начни сразу с мысли, без приветствий;\n"
-            "- один главный сюжет;\n"
-            "- 3–7 предложений;\n"
-            "- встрой 1 конкретный факт из story_block (если story_block содержит новость);\n"
-            "- затем: что это значит и практический вывод;\n"
-            "- без списков/нумераций/эмодзи/хэштегов/CTA;\n"
-            f"Контекст дня: {focus_label}; темы: {kw or '—'}.\n"
-            "Верни только готовый текст поста.\n"
-        )
-
-        include_url_local = include_url
-        humor_target = _compute_humor_target(time_bucket, mood, story, mods)
-        humor_max = float(getattr(settings, "TG_POST_HUMOR_MAX", DEFAULT_HUMOR_MAX) or DEFAULT_HUMOR_MAX)
-
-        total_candidates = max(1, int(candidate_count))
-        counts = _allocate_counts(total_candidates, len(rubrics))
-
-        generated: list[tuple[str, str]] = []  # (text, rubric_used)
-        for idx_r, rubric in enumerate(rubrics):
-            k = counts[idx_r]
-            if k <= 0:
-                continue
-
-            p_humor = float(humor_target)
-            if rubric in HUMOR_FRIENDLY_RUBRICS:
-                p_humor = min(humor_max, p_humor + 0.12)
-            if mood in {"controversial"} or (story and story.type == "POLICY"):
-                p_humor *= 0.85
-            humor_on = random.random() < max(0.0, min(humor_max, p_humor))
-
-            style_block = _build_bonnie_style_block(
-                rubric=rubric,
-                time_bucket_label=time_bucket_label,
-                mood=mood,
-                intensity=intensity,
-                char_limit=POST_CHAR_LIMIT,
-                allow_source=include_source,
-                allow_url=include_url_local,
-                humor_on=humor_on,
-                story_type=(story.type if story else None),
-            )
-            system_msg = {"role": "system", "content": system_base + style_block}
-            messages = [system_msg, {"role": "user", "content": user_prompt}]
-
-            for _ in range(k):
-                t = max(0.50, min(0.80, dynamic_temperature + random.uniform(-0.03, 0.03)))
-                p = max(0.85, min(0.98, dynamic_top_p + random.uniform(-0.02, 0.02)))
-                try:
-                    resp = await asyncio.wait_for(
-                        _call_openai_with_retry(
-                            endpoint="responses.create",
-                            model=post_model,
-                            input=_to_responses_input(messages),
-                            temperature=t,
-                            top_p=p,
-                            max_output_tokens=560,
-                            total_timeout=240,
-                        ),
-                        timeout=post_timeout,
-                    )
-                    txt = (_get_output_text(resp) or "").strip()
-                except Exception:
-                    logger.exception("tg_post_manager candidate generation failed rubric=%s", rubric)
-                    continue
-
-                if not txt:
-                    continue
-                txt = _strip_forbidden_openers(txt)
-                txt = _strip_source_footer(txt)
-                txt = _strip_urls_if_disallowed(txt, include_url_local)
-                txt = _clamp_text_len(txt, POST_CHAR_LIMIT)
-                generated.append((txt, rubric))
-
-        post_text: str
-        chosen_rubric: str = rubrics[0] if rubrics else "news_explainer"
-
-        if not generated:
-            post_text = _story_fallback(story) if story else random.choice(_post_fallbacks())
-            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-            post_text = _ensure_sentence_per_line(post_text)
-            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+        attempts: list[NewsItem | None]
+        if items:
+            attempts = list(story_candidates) if story_candidates else [story]
         else:
-            scored: list[tuple[float, str, str, dict[str, Any] | None, list[str]]] = []
-            for cand, rubric_used in generated:
-                h_score, h_notes = _heuristic_score_candidate(cand, recent_posts, story, include_url_local)
+            attempts = [None]
 
-                llm_judge = None
-                llm_score = None
-                if eval_enabled:
-                    llm_judge = await _judge_candidate_llm(cand, story_block, rubric_used, recent_posts)
-                    if isinstance(llm_judge, dict) and isinstance(llm_judge.get("score"), (int, float)):
-                        llm_score = float(llm_judge["score"])
-                        if llm_judge.get("has_cta") is True:
-                            llm_score = 0.0
-                        risk = (llm_judge.get("hallucination_risk") or "").lower()
-                        if risk == "high":
-                            llm_score -= 25.0
-                        elif risk == "medium":
-                            llm_score -= 8.0
-                        if llm_judge.get("has_list") is True:
-                            llm_score -= 15.0
-                        if llm_judge.get("has_emoji_or_hashtags") is True:
-                            llm_score -= 15.0
-                        if llm_judge.get("too_similar") is True:
-                            llm_score -= 12.0
+        last_fail_reason = ""
+        for i_try, story in enumerate(attempts, start=1):
+            _ = await _get_image_disabled_reason(redis, channel_id)
 
-                if llm_score is None:
-                    final = float(h_score)
+            planned = _context_override_rubrics(list(planned_base), mood, story)
+
+            rubrics = []
+            for r in planned:
+                if r not in rubrics:
+                    rubrics.append(r)
+            while len(rubrics) < rubrics_per_run:
+                r = _rubric_for_context(
+                    time_bucket,
+                    mood,
+                    intensity,
+                    (rubrics[-1] if rubrics else last_rubric),
+                    recent_rubrics=recent_rubrics,
+                )
+                if r not in rubrics:
+                    rubrics.append(r)
+
+            if story:
+                story_block = (
+                    "story_block (единственный источник фактов):\n"
+                    f"{_format_story_for_prompt(story)}\n\n"
+                )
+            else:
+                story_block = (
+                    "story_block: сегодня нет явного главного сюжета. "
+                    "Пиши evergreen-заметку про практику внедрения ИИ (качество, оценка, безопасность, данные), "
+                    "без новых фактов и без упоминаний «сегодня в новостях».\n\n"
+                )
+
+            user_prompt = (
+                history_block
+                + story_block
+                + "Задача: напиши один пост для публичного телеграм-канала.\n"
+                "Требования:\n"
+                "- начни сразу с мысли, без приветствий;\n"
+                "- один главный сюжет;\n"
+                "- 3–7 предложений;\n"
+                "- встрой 1 конкретный факт из story_block (если story_block содержит новость);\n"
+                "- затем: что это значит и практический вывод;\n"
+                "- без списков/нумераций/эмодзи/хэштегов/CTA;\n"
+                f"Контекст дня: {focus_label}; темы: {kw or '—'}.\n"
+                "Верни только готовый текст поста.\n"
+            )
+
+            include_url_local = include_url
+            humor_target = _compute_humor_target(time_bucket, mood, story, mods)
+            humor_max = float(getattr(settings, "TG_POST_HUMOR_MAX", DEFAULT_HUMOR_MAX) or DEFAULT_HUMOR_MAX)
+
+            total_candidates = max(1, int(candidate_count))
+            counts = _allocate_counts(total_candidates, len(rubrics))
+
+            generated: list[tuple[str, str]] = []  # (text, rubric_used)
+            for idx_r, rubric in enumerate(rubrics):
+                k = counts[idx_r]
+                if k <= 0:
+                    continue
+
+                p_humor = float(humor_target)
+                if rubric in HUMOR_FRIENDLY_RUBRICS:
+                    p_humor = min(humor_max, p_humor + 0.12)
+                if mood in {"controversial"} or (story and story.type == "POLICY"):
+                    p_humor *= 0.85
+                humor_on = random.random() < max(0.0, min(humor_max, p_humor))
+
+                style_block = _build_bonnie_style_block(
+                    rubric=rubric,
+                    time_bucket_label=time_bucket_label,
+                    mood=mood,
+                    intensity=intensity,
+                    char_limit=POST_CHAR_LIMIT,
+                    allow_source=include_source,
+                    allow_url=include_url_local,
+                    humor_on=humor_on,
+                    story_type=(story.type if story else None),
+                )
+                system_msg = {"role": "system", "content": system_base + style_block}
+                messages = [system_msg, {"role": "user", "content": user_prompt}]
+
+                for _ in range(k):
+                    t = max(0.50, min(0.80, dynamic_temperature + random.uniform(-0.03, 0.03)))
+                    p = max(0.85, min(0.98, dynamic_top_p + random.uniform(-0.02, 0.02)))
+                    try:
+                        resp = await asyncio.wait_for(
+                            _call_openai_with_retry(
+                                endpoint="responses.create",
+                                model=post_model,
+                                input=_to_responses_input(messages),
+                                temperature=t,
+                                top_p=p,
+                                max_output_tokens=560,
+                                total_timeout=240,
+                            ),
+                            timeout=post_timeout,
+                        )
+                        txt = (_get_output_text(resp) or "").strip()
+                    except Exception:
+                        logger.exception("tg_post_manager candidate generation failed rubric=%s", rubric)
+                        continue
+
+                    if not txt:
+                        continue
+                    txt = _strip_forbidden_openers(txt)
+                    txt = _strip_source_footer(txt)
+                    txt = _strip_urls_if_disallowed(txt, include_url_local)
+                    txt = _clamp_text_len(txt, POST_CHAR_LIMIT)
+                    generated.append((txt, rubric))
+
+            post_text: str
+            chosen_rubric: str = rubrics[0] if rubrics else "news_explainer"
+
+            if not generated:
+                post_text = _story_fallback(story) if story else random.choice(_post_fallbacks())
+                post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+                post_text = _ensure_sentence_per_line(post_text)
+                post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+            else:
+                scored: list[tuple[float, str, str, dict[str, Any] | None, list[str]]] = []
+                for cand, rubric_used in generated:
+                    h_score, h_notes = _heuristic_score_candidate(cand, recent_posts, story, include_url_local)
+
+                    llm_judge = None
+                    llm_score = None
+                    if eval_enabled:
+                        llm_judge = await _judge_candidate_llm(cand, story_block, rubric_used, recent_posts)
+                        if isinstance(llm_judge, dict) and isinstance(llm_judge.get("score"), (int, float)):
+                            llm_score = float(llm_judge["score"])
+                            if llm_judge.get("has_cta") is True:
+                                llm_score = 0.0
+                            risk = (llm_judge.get("hallucination_risk") or "").lower()
+                            if risk == "high":
+                                llm_score -= 25.0
+                            elif risk == "medium":
+                                llm_score -= 8.0
+                            if llm_judge.get("has_list") is True:
+                                llm_score -= 15.0
+                            if llm_judge.get("has_emoji_or_hashtags") is True:
+                                llm_score -= 15.0
+                            if llm_judge.get("too_similar") is True:
+                                llm_score -= 12.0
+
+                    if llm_score is None:
+                        final = float(h_score)
+                    else:
+                        final = 0.45 * float(h_score) + 0.55 * llm_score
+                        tone = (llm_judge or {}).get("tone")
+                        if tone == "too_dry":
+                            final -= 3.0
+                        elif tone == "too_funny":
+                            final -= 6.0
+
+                    scored.append((final, cand, rubric_used, llm_judge, h_notes))
+
+                scored.sort(key=lambda x: x[0], reverse=True)
+                best_row = None
+                for row in scored:
+                    _, cand, _, _, _ = row
+                    if _passes_hard_constraints(cand, include_url_local, story):
+                        best_row = row
+                        break
+
+                if best_row is None:
+                    post_text = _story_fallback(story) if story else random.choice(_post_fallbacks())
+                    post_text = _strip_source_footer(post_text)
+                    post_text = _strip_forbidden_openers(post_text)
+                    post_text = _strip_urls_if_disallowed(post_text, include_url_local)
+                    post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+                    chosen_rubric = rubrics[0] if rubrics else "news_explainer"
+                    best_score = 0.0
+                    best_judge = {}
+                    best_h_notes = ["все кандидаты провалили hard-constraints"]
                 else:
-                    final = 0.45 * float(h_score) + 0.55 * llm_score
-                    tone = (llm_judge or {}).get("tone")
-                    if tone == "too_dry":
-                        final -= 3.0
-                    elif tone == "too_funny":
-                        final -= 6.0
+                    best_score, post_text, chosen_rubric, best_judge, best_h_notes = best_row
 
-                scored.append((final, cand, rubric_used, llm_judge, h_notes))
+                logger.info(
+                    "tg_post_manager candidate selection: best_score=%.1f rubric=%s story=%s judge=%s h_notes=%s",
+                    best_score,
+                    chosen_rubric,
+                    (story.id if story else None),
+                    (best_judge or {}),
+                    best_h_notes,
+                )
 
-            scored.sort(key=lambda x: x[0], reverse=True)
-            best_row = None
-            for row in scored:
-                _, cand, _, _, _ = row
-                if _passes_hard_constraints(cand, include_url_local, story):
-                    best_row = row
-                    break
+                if (not eval_enabled) and polish_enabled:
+                    best_score = best_score or 0.0
+                    post_text = post_text or ""
+                    forced = await _polish_post(post_text, story_block, chosen_rubric, POST_CHAR_LIMIT)
+                    if forced and _passes_hard_constraints(forced, include_url_local, story):
+                        post_text = forced
+                elif polish_enabled and best_score < 84:
+                    polished = await _polish_post(post_text, story_block, chosen_rubric, POST_CHAR_LIMIT)
+                    if polished:
+                        polished = _strip_forbidden_openers(polished)
+                        polished = _strip_source_footer(polished)
+                        polished = _strip_urls_if_disallowed(polished, include_url_local)
+                        polished = _clamp_text_len(polished, POST_CHAR_LIMIT)
+                        if _passes_hard_constraints(polished, include_url_local, story):
+                            post_text = polished
 
-            if best_row is None:
+            post_text = _strip_forbidden_openers(post_text)
+            post_text = _strip_source_footer(post_text)
+            post_text = _strip_urls_if_disallowed(post_text, include_url_local)
+            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+
+            if _contains_direct_call_to_action(post_text):
+                rewritten = await _rewrite_post_without_calls(post_text, POST_CHAR_LIMIT)
+                if rewritten and not _contains_direct_call_to_action(rewritten):
+                    post_text = rewritten
+                else:
+                    logger.warning("tg_post_manager: failed to rewrite CTA out, skip sending")
+                    return
+
+            if not _passes_hard_constraints(post_text, include_url_local, story):
+                logger.warning("tg_post_manager: hard-constraints violation after cleanup; fallback to evergreen")
                 post_text = _story_fallback(story) if story else random.choice(_post_fallbacks())
                 post_text = _strip_source_footer(post_text)
                 post_text = _strip_forbidden_openers(post_text)
                 post_text = _strip_urls_if_disallowed(post_text, include_url_local)
                 post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-                chosen_rubric = rubrics[0] if rubrics else "news_explainer"
-                best_score = 0.0
-                best_judge = {}
-                best_h_notes = ["все кандидаты провалили hard-constraints"]
-            else:
-                best_score, post_text, chosen_rubric, best_judge, best_h_notes = best_row
+                post_text = _ensure_sentence_per_line(post_text)
+                post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
+
+            post_text = _append_source_footer(
+                post_text,
+                story=story,
+                allow_source=include_source,
+                allow_url=include_url_local,
+                limit=POST_CHAR_LIMIT,
+            )
+            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
 
             logger.info(
-                "tg_post_manager candidate selection: best_score=%.1f rubric=%s story=%s judge=%s h_notes=%s",
-                best_score,
+                "tg_post_manager final post length=%d chars focus=%s mood=%s intensity=%s rubric=%s story=%s try=%d/%d text=%r",
+                len(post_text),
+                focus,
+                mood,
+                intensity,
                 chosen_rubric,
                 (story.id if story else None),
-                (best_judge or {}),
-                best_h_notes,
+                i_try,
+                len(attempts),
+                post_text,
             )
 
-            if (not eval_enabled) and polish_enabled:
-                best_score = best_score or 0.0
-                post_text = post_text or ""
-                forced = await _polish_post(post_text, story_block, chosen_rubric, POST_CHAR_LIMIT)
-                if forced and _passes_hard_constraints(forced, include_url_local, story):
-                    post_text = forced
-            elif polish_enabled and best_score < 84:
-                polished = await _polish_post(post_text, story_block, chosen_rubric, POST_CHAR_LIMIT)
-                if polished:
-                    polished = _strip_forbidden_openers(polished)
-                    polished = _strip_source_footer(polished)
-                    polished = _strip_urls_if_disallowed(polished, include_url_local)
-                    polished = _clamp_text_len(polished, POST_CHAR_LIMIT)
-                    if _passes_hard_constraints(polished, include_url_local, story):
-                        post_text = polished
-
-        post_text = _strip_forbidden_openers(post_text)
-        post_text = _strip_source_footer(post_text)
-        post_text = _strip_urls_if_disallowed(post_text, include_url_local)
-        post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-
-        if _contains_direct_call_to_action(post_text):
-            rewritten = await _rewrite_post_without_calls(post_text, POST_CHAR_LIMIT)
-            if rewritten and not _contains_direct_call_to_action(rewritten):
-                post_text = rewritten
-            else:
-                logger.warning("tg_post_manager: failed to rewrite CTA out, skip sending")
-                await _release_redis_lock(redis, lock_key, lock_token)
-                return
-
-        if not _passes_hard_constraints(post_text, include_url_local, story):
-            logger.warning("tg_post_manager: hard-constraints violation after cleanup; fallback to evergreen")
-            post_text = _story_fallback(story) if story else random.choice(_post_fallbacks())
-            post_text = _strip_source_footer(post_text)
-            post_text = _strip_forbidden_openers(post_text)
-            post_text = _strip_urls_if_disallowed(post_text, include_url_local)
-            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-            post_text = _ensure_sentence_per_line(post_text)
-            post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-
-        post_text = _append_source_footer(
-            post_text,
-            story=story,
-            allow_source=include_source,
-            allow_url=include_url_local,
-            limit=POST_CHAR_LIMIT,
-        )
-        post_text = _clamp_text_len(post_text, POST_CHAR_LIMIT)
-
-        logger.info(
-            "tg_post_manager final post length=%d chars focus=%s mood=%s intensity=%s rubric=%s story=%s try=%d/%d text=%r",
-            len(post_text),
-            focus,
-            mood,
-            intensity,
-            chosen_rubric,
-            (story.id if story else None),
-            i_try,
-            len(attempts),
-            post_text,
-        )
-
-        opener_fp = _opening_fingerprint(post_text)
-        opener_pref = _opening_prefix(post_text, n_words=4)
-        if redis and opener_fp:
-            try:
-                if await _is_recent_opener(redis, channel_id, local_now, opener_fp):
-                    logger.info(
-                        "tg_post_manager duplicate opener detected (fp=%s pref=%r) -> rephrase once (try=%d/%d)",
-                        opener_fp, opener_pref, i_try, len(attempts)
-                    )
-                    rephrased = await _rephrase_opening_once(
-                        draft=post_text,
-                        story_block=story_block,
-                        rubric=chosen_rubric,
-                        char_limit=POST_CHAR_LIMIT,
-                        avoid_prefix=opener_pref,
-                    )
-                    if rephrased:
-                        new_fp = _opening_fingerprint(rephrased)
-                        new_pref = _opening_prefix(rephrased, n_words=4)
-                        if new_fp and (not await _is_recent_opener(redis, channel_id, local_now, new_fp)):
-                            post_text = rephrased
-                            opener_fp = new_fp
-                            opener_pref = new_pref
-                            logger.info("tg_post_manager opener rephrase accepted (new_fp=%s)", new_fp)
+            opener_fp = _opening_fingerprint(post_text)
+            opener_pref = _opening_prefix(post_text, n_words=4)
+            if redis and opener_fp:
+                try:
+                    if await _is_recent_opener(redis, channel_id, local_now, opener_fp):
+                        logger.info(
+                            "tg_post_manager duplicate opener detected (fp=%s pref=%r) -> rephrase once (try=%d/%d)",
+                            opener_fp, opener_pref, i_try, len(attempts)
+                        )
+                        rephrased = await _rephrase_opening_once(
+                            draft=post_text,
+                            story_block=story_block,
+                            rubric=chosen_rubric,
+                            char_limit=POST_CHAR_LIMIT,
+                            avoid_prefix=opener_pref,
+                        )
+                        if rephrased:
+                            new_fp = _opening_fingerprint(rephrased)
+                            new_pref = _opening_prefix(rephrased, n_words=4)
+                            if new_fp and (not await _is_recent_opener(redis, channel_id, local_now, new_fp)):
+                                post_text = rephrased
+                                opener_fp = new_fp
+                                opener_pref = new_pref
+                                logger.info("tg_post_manager opener rephrase accepted (new_fp=%s)", new_fp)
+                            else:
+                                last_fail_reason = "opener_duplicate_after_rephrase"
+                                logger.info("tg_post_manager opener still duplicates; try next story (plan B)")
+                                continue
                         else:
-                            last_fail_reason = "opener_duplicate_after_rephrase"
-                            logger.info("tg_post_manager opener still duplicates; try next story (plan B)")
+                            last_fail_reason = "opener_rephrase_failed"
+                            logger.info("tg_post_manager opener rephrase failed; try next story (plan B)")
                             continue
-                    else:
-                        last_fail_reason = "opener_rephrase_failed"
-                        logger.info("tg_post_manager opener rephrase failed; try next story (plan B)")
-                        continue
-            except Exception:
-                logger.debug("tg_post_manager opener anti-dup flow failed; proceed", exc_info=True)
+                except Exception:
+                    logger.debug("tg_post_manager opener anti-dup flow failed; proceed", exc_info=True)
 
-        try:
-            image_bytes = None
             try:
-                image_bytes = await _generate_post_image_bytes(redis, channel_id, story, post_text, mood)
-            except Exception:
-                logger.info("tg_post_manager: image generation pipeline failed", exc_info=True)
                 image_bytes = None
-
-            require_image = _coerce_bool(getattr(settings, "TG_POST_REQUIRE_IMAGE", None), DEFAULT_REQUIRE_IMAGE)
-            strict = _coerce_bool(getattr(settings, "TG_POST_REQUIRE_IMAGE_STRICT", None), DEFAULT_REQUIRE_IMAGE_STRICT)
-
-            if require_image and not image_bytes:
-                image_bytes = _load_fallback_image_bytes()
-                if not image_bytes:
-                    if strict:
-                        logger.warning("tg_post_manager: require_image=true but no image (gen+fallback failed) -> skip post")
-                        await _release_redis_lock(redis, lock_key, lock_token)
-                        return
-                    logger.warning("tg_post_manager: no image available; sending text-only")
+                try:
+                    image_bytes = await _generate_post_image_bytes(redis, channel_id, story, post_text, mood)
+                except Exception:
+                    logger.info("tg_post_manager: image generation pipeline failed", exc_info=True)
                     image_bytes = None
 
-            ok = await _send_telegram_with_retry(channel_id, post_text, image_bytes=image_bytes)
-        except Exception:
-            logger.exception("tg_post_manager failed to send Telegram message")
-            await _release_redis_lock(redis, lock_key, lock_token)
-            return
-        if not ok:
-            logger.warning("tg_post_manager: telegram send failed; skip persisting meta/pacing")
-            await _release_redis_lock(redis, lock_key, lock_token)
+                require_image = _coerce_bool(getattr(settings, "TG_POST_REQUIRE_IMAGE", None), DEFAULT_REQUIRE_IMAGE)
+                strict = _coerce_bool(getattr(settings, "TG_POST_REQUIRE_IMAGE_STRICT", None), DEFAULT_REQUIRE_IMAGE_STRICT)
+
+                if require_image and not image_bytes:
+                    image_bytes = _load_fallback_image_bytes()
+                    if not image_bytes:
+                        if strict:
+                            logger.warning("tg_post_manager: require_image=true but no image (gen+fallback failed) -> skip post")
+                            return
+                        logger.warning("tg_post_manager: no image available; sending text-only")
+                        image_bytes = None
+
+                ok = await _send_telegram_with_retry(channel_id, post_text, image_bytes=image_bytes)
+            except Exception:
+                logger.exception("tg_post_manager failed to send Telegram message")
+                return
+            if not ok:
+                logger.warning("tg_post_manager: telegram send failed; skip persisting meta/pacing")
+                return
+
+            await _bump_daily_pacing_state(redis, channel_id, local_now)
+            await _remember_opener(redis, channel_id, local_now, opener_fp)
+
+            try:
+                meta_obj = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "rubric": chosen_rubric,
+                    "planned_rubrics": planned,
+                    "rubrics_considered": rubrics,
+                    "story_id": (story.id if story else None),
+                    "story_type": (story.type if story else None),
+                    "story_source": (story.source if story else None),
+                    "opener_fp": opener_fp,
+                    "opener_prefix": opener_pref,
+                    "has_image": bool(image_bytes),
+                }
+                await asyncio.gather(
+                    persona.process_interaction(persona_chat_id, post_text),
+                    push_message(persona_chat_id, "assistant", post_text, user_id=persona_chat_id),
+                    push_message(persona_chat_id, "system", META_MARKER_PREFIX + json.dumps(meta_obj, ensure_ascii=False), user_id=persona_chat_id),
+                )
+            except Exception:
+                logger.exception("tg_post_manager saving to memory failed")
             return
 
-        await _bump_daily_pacing_state(redis, channel_id, local_now)
-        await _remember_opener(redis, channel_id, local_now, opener_fp)
-
-        try:
-            meta_obj = {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "rubric": chosen_rubric,
-                "planned_rubrics": planned,
-                "rubrics_considered": rubrics,
-                "story_id": (story.id if story else None),
-                "story_type": (story.type if story else None),
-                "story_source": (story.source if story else None),
-                "opener_fp": opener_fp,
-                "opener_prefix": opener_pref,
-                "has_image": bool(image_bytes),
-            }
-            await asyncio.gather(
-                persona.process_interaction(persona_chat_id, post_text),
-                push_message(persona_chat_id, "assistant", post_text, user_id=persona_chat_id),
-                push_message(persona_chat_id, "system", META_MARKER_PREFIX + json.dumps(meta_obj, ensure_ascii=False), user_id=persona_chat_id),
-            )
-        except Exception:
-            logger.exception("tg_post_manager saving to memory failed")
-        await _release_redis_lock(redis, lock_key, lock_token)
+        logger.info("tg_post_manager: all story attempts exhausted without unique opener (last_fail=%s)", last_fail_reason)
         return
-
-    logger.info("tg_post_manager: all story attempts exhausted without unique opener (last_fail=%s)", last_fail_reason)
-    await _release_redis_lock(redis, lock_key, lock_token)
-    return
+    finally:
+        await _release_redis_lock(redis, lock_key, lock_token)
