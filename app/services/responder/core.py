@@ -947,6 +947,14 @@ async def respond_to_user(
     if dynamic_top_p > 0.98:
         dynamic_top_p = 0.98
 
+    system_prompt_t = asyncio.create_task(
+        build_system_prompt(
+            persona,
+            guidelines,
+            user_gender=local_gender,
+        )
+    )
+
     # Build initial history from STM only
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
     coref_gate_t = asyncio.create_task(needs_coref(query))
@@ -1353,11 +1361,7 @@ async def respond_to_user(
                 chat_id,
                 user_id,
             )
-            system_prompt_content = await build_system_prompt(
-                persona,
-                guidelines,
-                user_gender=local_gender,
-            )
+            system_prompt_content = await system_prompt_t
             if not (system_prompt_content or "").strip():
                 system_prompt_content = build_fallback_system_prompt(persona, guidelines, user_gender=local_gender)
             logger.info(
