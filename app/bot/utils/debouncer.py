@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 message_buffers: dict[str, list[dict]] = defaultdict(list)
 pending_tasks: dict[str, asyncio.Task] = {}
 _locks: dict[str, asyncio.Lock] = {}
+_global_lock = asyncio.Lock()
+total_buffered: int = 0
 
 MAX_BUFFER_PER_CHAT = int(getattr(settings, "DEBOUNCE_BUFFER_PER_CHAT", 30))
 GLOBAL_MAX_BUFFERS   = int(getattr(settings, "DEBOUNCE_GLOBAL_MAX", 10000))
@@ -48,6 +50,7 @@ async def _enqueue(payload: dict):
     await consts.redis_queue.lpush(settings.QUEUE_KEY, json.dumps(payload))
 
 async def schedule_response(key: str):
+    global total_buffered
     lock = _get_lock(key)
     try:
         while True:
@@ -56,8 +59,11 @@ async def schedule_response(key: str):
                     break
 
             if DEBOUNCE_MODE == "single":
-                async with lock:
-                    msgs = message_buffers.pop(key, [])
+                async with _global_lock:
+                    async with lock:
+                        msgs = message_buffers.pop(key, [])
+                        if msgs:
+                            total_buffered -= len(msgs)
                 for m in msgs:
                     p = m.copy()
                     p.pop("merged_msg_ids", None)
@@ -65,8 +71,11 @@ async def schedule_response(key: str):
                 continue
 
             if DEBOUNCE_MODE == "merge":
-                async with lock:
-                    msgs = message_buffers.pop(key, [])
+                async with _global_lock:
+                    async with lock:
+                        msgs = message_buffers.pop(key, [])
+                        if msgs:
+                            total_buffered -= len(msgs)
                 await _merge_and_send(msgs)
                 continue
 
@@ -93,27 +102,31 @@ async def schedule_response(key: str):
                     await asyncio.sleep(BUSY_POLL_INTERVAL)
                 await asyncio.sleep(IDLE_GRACE)
 
-            async with lock:
-                msgs = message_buffers.pop(key, [])
+            async with _global_lock:
+                async with lock:
+                    msgs = message_buffers.pop(key, [])
+                    if msgs:
+                        total_buffered -= len(msgs)
             if msgs:
                 await _merge_and_send(msgs)
     except asyncio.CancelledError:
         return
     finally:
         current = asyncio.current_task()
-        async with lock:
-            has_msgs = bool(message_buffers.get(key))
-            existing = pending_tasks.get(key)
-            if has_msgs:
-                if (existing is None) or existing.done() or (existing is current):
-                    logger.debug("debounce[%s]: spawn successor; pending=%d",
-                                 key, len(message_buffers.get(key, ())))
-                    pending_tasks[key] = asyncio.create_task(schedule_response(key))
-            else:
-                if key in message_buffers or key in pending_tasks:
-                    logger.debug("debounce[%s]: empty buffer → cleanup", key)
-                message_buffers.pop(key, None)
-                pending_tasks.pop(key, None)
+        async with _global_lock:
+            async with lock:
+                has_msgs = bool(message_buffers.get(key))
+                existing = pending_tasks.get(key)
+                if has_msgs:
+                    if (existing is None) or existing.done() or (existing is current):
+                        logger.debug("debounce[%s]: spawn successor; pending=%d",
+                                     key, len(message_buffers.get(key, ())))
+                        pending_tasks[key] = asyncio.create_task(schedule_response(key))
+                else:
+                    if key in message_buffers or key in pending_tasks:
+                        logger.debug("debounce[%s]: empty buffer → cleanup", key)
+                    message_buffers.pop(key, None)
+                    pending_tasks.pop(key, None)
 
         lk = _locks.get(key)
         if (lk is not None) and (not lk.locked()) and (pending_tasks.get(key) is None) and (not message_buffers.get(key)):
@@ -215,22 +228,36 @@ def buffer_message_for_response(payload: dict):
 
     async def _append_and_schedule():
         lock = _get_lock(key)
-        async with lock:
-            payload.setdefault("ts", time.time())
-            if len(message_buffers[key]) >= MAX_BUFFER_PER_CHAT:
-                message_buffers[key].pop(0)
-            if sum(len(v) for v in message_buffers.values()) >= GLOBAL_MAX_BUFFERS:
-                def _head_ts(k: str) -> float:
-                    head = message_buffers.get(k, [None])[0] or {}
-                    return float(head.get("ts") or 0.0)
-                oldest_key = min(message_buffers, key=_head_ts)
-                message_buffers[oldest_key].pop(0)
-            message_buffers[key].append(payload)
-            logger.debug("debounce[%s]: appended; size=%d", key, len(message_buffers[key]))
-            task = pending_tasks.get(key)
-            if task is None or task.done():
-                logger.debug("debounce[%s]: schedule task (was %s)", key,
-                             "none/done" if task is None or task.done() else "running")
-                pending_tasks[key] = asyncio.create_task(schedule_response(key))
+        async with _global_lock:
+            async with lock:
+                global total_buffered
+                payload.setdefault("ts", time.time())
+                if len(message_buffers[key]) >= MAX_BUFFER_PER_CHAT:
+                    message_buffers[key].pop(0)
+                    total_buffered -= 1
+                if GLOBAL_MAX_BUFFERS > 0 and total_buffered >= GLOBAL_MAX_BUFFERS:
+                    def _head_ts(k: str) -> float:
+                        head = message_buffers.get(k, [None])[0] or {}
+                        return float(head.get("ts") or 0.0)
+                    if message_buffers:
+                        oldest_key = min(message_buffers, key=_head_ts)
+                        if oldest_key == key:
+                            if message_buffers[key]:
+                                message_buffers[key].pop(0)
+                                total_buffered -= 1
+                        else:
+                            oldest_lock = _get_lock(oldest_key)
+                            async with oldest_lock:
+                                if message_buffers.get(oldest_key):
+                                    message_buffers[oldest_key].pop(0)
+                                    total_buffered -= 1
+                message_buffers[key].append(payload)
+                total_buffered += 1
+                logger.debug("debounce[%s]: appended; size=%d", key, len(message_buffers[key]))
+                task = pending_tasks.get(key)
+                if task is None or task.done():
+                    logger.debug("debounce[%s]: schedule task (was %s)", key,
+                                 "none/done" if task is None or task.done() else "running")
+                    pending_tasks[key] = asyncio.create_task(schedule_response(key))
 
     asyncio.create_task(_append_and_schedule())
