@@ -103,7 +103,9 @@ class ConversationRequest(BaseModel):
     )
     voice_mime: Optional[str] = Field(
         None,
-        description="Optional MIME type for voice_b64 (audio/ogg, audio/mpeg, audio/wav, ...).",
+        description="Optional MIME type for voice_b64 (audio/ogg, audio/mpeg, audio/wav, ...). "
+                    "If omitted, the server may detect the format; if detection fails, "
+                    "provide voice_mime explicitly.",
     )
 
     persona: Optional[PersonaConfig] = None

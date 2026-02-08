@@ -61,6 +61,27 @@ JOB_TTL_SEC = max(
 )
 INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT
 
+def detect_voice_mime(audio: bytes) -> str | None:
+    if not audio:
+        return None
+    if len(audio) >= 12 and audio[:4] == b"RIFF" and audio[8:12] == b"WAVE":
+        return "audio/wav"
+    if len(audio) >= 3 and audio[:3] == b"ID3":
+        return "audio/mpeg"
+    if len(audio) >= 2 and audio[0] == 0xFF and (audio[1] & 0xE0) == 0xE0:
+        return "audio/mpeg"
+    if len(audio) >= 12 and audio[4:8] == b"ftyp":
+        brand = audio[8:12].decode("ascii", "ignore").strip().upper()
+        if brand == "M4A":
+            return "audio/m4a"
+        if brand in {"ISOM", "MP42"}:
+            return "audio/mp4"
+    if len(audio) >= 4 and audio[:4] == b"OggS":
+        return "audio/ogg"
+    if len(audio) >= 4 and audio[:4] == b"\x1A\x45\xDF\xA3":
+        return "audio/webm"
+    return None
+
 def _classify_error(error: Dict[str, Any] | None) -> str:
     if not error:
         return "unknown"
@@ -115,6 +136,8 @@ def _guess_audio_suffix(mime: str | None) -> str:
         return ".mp3"
     if "mp4" in m or "m4a" in m or "aac" in m:
         return ".m4a"
+    if "webm" in m:
+        return ".webm"
     return ".ogg"
 
 
@@ -440,6 +463,16 @@ async def _handle_job(raw: str, redis_queue) -> None:
                         "code": "invalid_payload",
                         "message": f"voice_b64 exceeds {API_MAX_VOICE_BYTES} bytes after decoding.",
                     }
+                elif not voice_mime:
+                    detected_mime = detect_voice_mime(voice_bytes)
+                    if not detected_mime:
+                        error = {
+                            "status": 400,
+                            "code": "invalid_voice_format",
+                            "message": "Unable to detect audio format; provide voice_mime.",
+                        }
+                    else:
+                        voice_mime = detected_mime
 
             if not error and has_voice and not has_text:
                 transcript = await _transcribe_voice_bytes(voice_bytes, voice_mime)
