@@ -1,3 +1,4 @@
+# Boolean env vars accept 1/true/yes/on and 0/false/no/off (case-insensitive).
 services:
 
   db:

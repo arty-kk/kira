@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from app import engine, close_redis_pools, _get_env, setup_logging
+from app.config import _parse_bool
 from app.emo_engine.persona.memory import PersonaMemory
 from app.emo_engine.registry import shutdown_personas
 from app.clients.http_client import http_client
@@ -35,7 +36,7 @@ async def start_api_server() -> None:
     ssl_keyfile = None
 
     certs_dir = _get_env("CERTS_DIR", "")
-    use_self_signed = _get_env("USE_SELF_SIGNED_CERT", "false").lower() == "true"
+    use_self_signed = _get_env("USE_SELF_SIGNED_CERT", "false", conv=_parse_bool)
 
     if certs_dir and use_self_signed:
         fullchain = os.path.join(certs_dir, "fullchain.pem")
@@ -62,11 +63,11 @@ async def main() -> None:
     setup_logging()
     logging.info("🚀 Starting application")
 
-    run_bot = _get_env("RUN_BOT", "true").lower() == "true"
-    run_api = _get_env("RUN_API", "true").lower() == "true"
+    run_bot = _get_env("RUN_BOT", "true", conv=_parse_bool)
+    run_api = _get_env("RUN_API", "true", conv=_parse_bool)
     
     scheduler_enabled = (
-        _get_env("ENABLE_SCHEDULER", "true").lower() == "true"
+        _get_env("ENABLE_SCHEDULER", "true", conv=_parse_bool)
         and (run_bot or run_api)
     )
     if scheduler_enabled:
