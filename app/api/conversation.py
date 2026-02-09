@@ -7,6 +7,7 @@ import json
 import secrets
 import ipaddress
 
+from collections import OrderedDict
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, constr, model_validator
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api/v1", tags=["conversation"])
 
 logger = logging.getLogger(__name__)
 
-_fallback_rl_state: Dict[str, tuple[int, float]] = {}
+_fallback_rl_state: "OrderedDict[str, tuple[int, float]]" = OrderedDict()
 _fallback_rl_lock = asyncio.Lock()
 
 
@@ -56,16 +57,27 @@ def _normalize_idempotency_key(value: Optional[str]) -> Optional[str]:
 
 
 async def _fallback_rate_limit(key: str, limit: int, window_sec: int) -> bool:
-    if limit <= 0:
-        return True
     now = time.time()
     async with _fallback_rl_lock:
+        expired_keys = [k for k, (_, exp) in _fallback_rl_state.items() if exp <= now]
+        for expired_key in expired_keys:
+            _fallback_rl_state.pop(expired_key, None)
+
+        if limit <= 0:
+            return True
+
         count, exp = _fallback_rl_state.get(key, (0, 0.0))
         if exp <= now:
             count = 0
             exp = now + window_sec
         count += 1
         _fallback_rl_state[key] = (count, exp)
+        _fallback_rl_state.move_to_end(key)
+
+        max_keys = getattr(settings, "API_FALLBACK_RL_MAX_KEYS", 0) or 0
+        if max_keys > 0:
+            while len(_fallback_rl_state) > max_keys:
+                _fallback_rl_state.popitem(last=False)
         return count <= limit
 
 
