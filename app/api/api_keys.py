@@ -143,18 +143,27 @@ async def authenticate_key(db, raw_key: str) -> Optional[ApiKey]:
             active = cached.get(b"active") == b"1"
             if not active:
                 return None
-            try:
-                api_key_id = int(cached[b"id"])
-                user_id = int(cached[b"user_id"])
-            except Exception:
-                pass
-            else:
-                return ApiKey(
-                    id=api_key_id,
-                    user_id=user_id,
-                    key_hash=key_hash,
-                    active=True,
+            res = await db.execute(
+                select(ApiKey.id, ApiKey.user_id, ApiKey.active).where(
+                    ApiKey.key_hash == key_hash
                 )
+            )
+            row = res.first()
+            if not row or not row.active:
+                if redis is not None:
+                    try:
+                        ttl = settings.API_KEY_CACHE_NEGATIVE_TTL_SEC
+                        await redis.hset(ck, mapping={"active": 0})
+                        await redis.expire(ck, max(10, ttl))
+                    except Exception:
+                        pass
+                return None
+            return ApiKey(
+                id=row.id,
+                user_id=row.user_id,
+                key_hash=key_hash,
+                active=True,
+            )
 
     res = await db.execute(
         select(ApiKey).where(ApiKey.key_hash == key_hash)
