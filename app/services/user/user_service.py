@@ -153,6 +153,7 @@ async def refund_reservation(db: AsyncSession, reservation_id: int) -> None:
         update(RequestReservation)
         .where(RequestReservation.id == reservation_id)
         .where(RequestReservation.status == "reserved")
+        .values(status="refunded")
         .returning(
             RequestReservation.user_id,
             RequestReservation.used_paid,
@@ -181,12 +182,6 @@ async def refund_reservation(db: AsyncSession, reservation_id: int) -> None:
                 used_requests=func.greatest(User.used_requests - 1, 0),
             )
         )
-
-    await db.execute(
-        update(RequestReservation)
-        .where(RequestReservation.id == reservation_id)
-        .values(status="refunded")
-    )
 
 
 async def confirm_reservation_by_id(reservation_id: int) -> None:
