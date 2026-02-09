@@ -426,6 +426,19 @@ async def conversation_endpoint(
     async def _store_idempotency_result(status_code: int, body: dict) -> None:
         if not (idem_lock_acquired and idem_redis is not None and idem_cache_key):
             return
+        detail = body.get("detail") if isinstance(body, dict) else None
+        detail_code = detail.get("code") if isinstance(detail, dict) else None
+        should_store = False
+        if 200 <= status_code < 300:
+            should_store = True
+        elif 400 <= status_code < 500 and detail_code in {"invalid_payload", "payload_too_large"}:
+            should_store = True
+        if not should_store:
+            try:
+                await idem_redis.delete(idem_cache_key)
+            except Exception:
+                logger.exception("Failed to clear idempotency result")
+            return
         ttl = int(getattr(settings, "API_IDEMPOTENCY_TTL_SEC", 3600))
         try:
             await idem_redis.set(
