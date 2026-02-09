@@ -5,6 +5,7 @@ import time
 import logging
 import json
 import secrets
+import ipaddress
 
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -66,6 +67,54 @@ async def _fallback_rate_limit(key: str, limit: int, window_sec: int) -> bool:
         count += 1
         _fallback_rl_state[key] = (count, exp)
         return count <= limit
+
+
+def _is_trusted_proxy(client_host: Optional[str]) -> bool:
+    trusted_entries = getattr(settings, "TRUSTED_PROXY_IPS", None) or []
+    if not client_host or not trusted_entries:
+        return False
+
+    try:
+        client_ip = ipaddress.ip_address(client_host)
+    except ValueError:
+        client_ip = None
+
+    for entry in trusted_entries:
+        if not entry:
+            continue
+        if "/" in entry:
+            try:
+                network = ipaddress.ip_network(entry, strict=False)
+            except ValueError:
+                continue
+            if client_ip and client_ip in network:
+                return True
+            continue
+
+        try:
+            entry_ip = ipaddress.ip_address(entry)
+        except ValueError:
+            entry_ip = None
+
+        if entry_ip and client_ip and entry_ip == client_ip:
+            return True
+        if not entry_ip and entry.lower() == client_host.lower():
+            return True
+
+    return False
+
+
+def _resolve_rate_limit_ip(request: Request) -> str:
+    client_host = request.client.host if request.client else None
+    if not client_host:
+        return "unknown"
+
+    if not _is_trusted_proxy(client_host):
+        return client_host
+
+    fwd = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    real = (request.headers.get("X-Real-IP") or "").strip()
+    return fwd or real or client_host
 
 
 class PersonaConfig(BaseModel):
@@ -297,9 +346,7 @@ async def _check_rate_limit(request: Request, api_key_id: int) -> None:
                 headers={"Retry-After": "60"},
             )
 
-        fwd = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        real = (request.headers.get("X-Real-IP") or "").strip()
-        ip = fwd or real or (request.client.host if request.client else None) or "unknown"
+        ip = _resolve_rate_limit_ip(request)
         if ip != "unknown":
             ip_key = f"rl:api:ip:{ip}:{window}"
             ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
@@ -330,9 +377,7 @@ async def _check_rate_limit(request: Request, api_key_id: int) -> None:
                 headers={"Retry-After": "60"},
             )
 
-        fwd = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-        real = (request.headers.get("X-Real-IP") or "").strip()
-        ip = fwd or real or (request.client.host if request.client else None) or "unknown"
+        ip = _resolve_rate_limit_ip(request)
         if ip != "unknown":
             ip_ok = await _fallback_rate_limit(f"ip:{ip}", ip_limit, window_sec)
             if not ip_ok:
