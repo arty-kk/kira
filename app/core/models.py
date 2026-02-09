@@ -97,7 +97,7 @@ class PaymentOutbox(Base):
         CheckConstraint("kind IN ('buy','gift')", name="ck_payment_outbox_kind"),
         CheckConstraint("status IN ('pending','applied','failed')", name="ck_payment_outbox_status"),
         CheckConstraint("stars_amount >= 0", name="ck_payment_outbox_stars_nonneg"),
-        CheckConstraint("requests_amount >= 0", name="ck_payment_outbox_requests_nonneg"),
+        CheckConstraint("requests_amount > 0", name="ck_payment_outbox_requests_positive"),
         CheckConstraint("telegram_payment_charge_id <> ''", name="ck_payment_outbox_charge_id_nonempty"),
     )
 
