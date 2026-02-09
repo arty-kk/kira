@@ -26,6 +26,24 @@ class User(Base):
     pm_welcome_sent     = Column(DateTime(timezone=True), nullable=True)
     persona_prefs       = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
 
+
+class RequestReservation(Base):
+
+    __tablename__ = "request_reservations"
+
+    id            = Column(BigInteger, Identity(always=False), primary_key=True)
+    user_id       = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status        = Column(String(16), nullable=False, server_default=text("'reserved'"))
+    used_paid     = Column(Boolean, nullable=False, server_default=text("false"))
+    chat_id       = Column(BigInteger, nullable=True)
+    message_id    = Column(BigInteger, nullable=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('reserved','consumed','refunded')", name="ck_request_reservations_status"),
+    )
+
 class PaymentReceipt(Base):
 
     __tablename__ = "payment_receipts"
@@ -49,6 +67,38 @@ class PaymentReceipt(Base):
             "(provider_payment_charge_id IS NULL) OR (provider_payment_charge_id <> '')",
             name="ck_payment_receipts_provider_charge_id_nonempty",
         ),
+    )
+
+
+class PaymentOutbox(Base):
+
+    __tablename__ = "payment_outbox"
+
+    id                         = Column(BigInteger, Identity(always=False), primary_key=True)
+    user_id                    = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind                       = Column(String(16), nullable=False)  # buy|gift
+    status                     = Column(String(16), nullable=False, server_default=text("'pending'"))
+    requests_amount            = Column(Integer, nullable=False, server_default=text("0"))
+    stars_amount               = Column(Integer, nullable=False, server_default=text("0"))
+    invoice_payload            = Column(String(128), nullable=True)
+    telegram_payment_charge_id = Column(String(128), nullable=False, unique=True)
+    provider_payment_charge_id = Column(String(128), nullable=True, index=True)
+    gift_code                  = Column(String(64), nullable=True)
+    gift_title                 = Column(String(128), nullable=True)
+    gift_emoji                 = Column(String(32), nullable=True)
+    attempts                   = Column(Integer, nullable=False, server_default=text("0"))
+    last_error                 = Column(String, nullable=True)
+    created_at                 = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at                 = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    applied_at                 = Column(DateTime(timezone=True), nullable=True, index=True)
+    notified_at                = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('buy','gift')", name="ck_payment_outbox_kind"),
+        CheckConstraint("status IN ('pending','applied','failed')", name="ck_payment_outbox_status"),
+        CheckConstraint("stars_amount >= 0", name="ck_payment_outbox_stars_nonneg"),
+        CheckConstraint("requests_amount >= 0", name="ck_payment_outbox_requests_nonneg"),
+        CheckConstraint("telegram_payment_charge_id <> ''", name="ck_payment_outbox_charge_id_nonempty"),
     )
 
 class ApiKey(Base):

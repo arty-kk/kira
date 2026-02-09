@@ -7,6 +7,8 @@ import logging
 from collections import defaultdict
 
 import app.bot.components.constants as consts
+from app.tasks.queue_schema import validate_bot_job
+from app.services.user.user_service import refund_reservation_by_id
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,7 @@ BUSY_HOLD_TIMEOUT = float(getattr(settings, "DEBOUNCE_BUSY_HOLD_TIMEOUT", 3.0))
 BUSY_POLL_INTERVAL = float(getattr(settings, "DEBOUNCE_BUSY_POLL_INTERVAL", 0.25))
 IDLE_GRACE = float(getattr(settings, "DEBOUNCE_IDLE_GRACE", 0.2))
 CHAT_BUSY_PREFIX = "chatbusy:"
+BOT_QUEUE_MAX_PAYLOAD_BYTES = int(getattr(settings, "BOT_QUEUE_MAX_PAYLOAD_BYTES", 64 * 1024))
 
 def _get_lock(key: str) -> asyncio.Lock:
     return _locks.setdefault(key, asyncio.Lock())
@@ -47,7 +50,39 @@ def compute_typing_delay(text: str) -> float:
 
 
 async def _enqueue(payload: dict):
-    await consts.redis_queue.lpush(settings.QUEUE_KEY, json.dumps(payload))
+    reservation_id = 0
+    try:
+        reservation_id = int(payload.get("reservation_id") or 0)
+    except Exception:
+        reservation_id = 0
+    err = validate_bot_job(payload)
+    if err:
+        logger.error("debouncer: invalid queue payload: %s", err)
+        if reservation_id:
+            await refund_reservation_by_id(reservation_id)
+        return
+    try:
+        data = json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        logger.exception("debouncer: failed to encode queue payload")
+        if reservation_id:
+            await refund_reservation_by_id(reservation_id)
+        return
+    payload_bytes = data.encode("utf-8")
+    if BOT_QUEUE_MAX_PAYLOAD_BYTES > 0 and len(payload_bytes) > BOT_QUEUE_MAX_PAYLOAD_BYTES:
+        logger.warning(
+            "debouncer: payload too large (%d bytes), dropping",
+            len(payload_bytes),
+        )
+        if reservation_id:
+            await refund_reservation_by_id(reservation_id)
+        return
+    try:
+        await consts.redis_queue.lpush(settings.QUEUE_KEY, data)
+    except Exception:
+        logger.exception("debouncer: enqueue failed")
+        if reservation_id:
+            await refund_reservation_by_id(reservation_id)
 
 async def schedule_response(key: str):
     global total_buffered

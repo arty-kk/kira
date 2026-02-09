@@ -40,7 +40,8 @@ celery = Celery(
         "app.tasks.welcome",
         "app.tasks.moderation",
         "app.tasks.api_cleanup",
-        "app.tasks.kb"
+        "app.tasks.kb",
+        "app.tasks.payments",
     ],
 )
 

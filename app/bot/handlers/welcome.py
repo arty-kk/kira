@@ -73,6 +73,45 @@ async def _schedule_group_welcome_once(chat_id: int, user: User) -> None:
     )
 
 
+async def _handle_group_join(chat_id: int, user: User, *, source: str) -> None:
+    uid = user.id
+    try:
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.sadd(f"all_users:{chat_id}", uid)
+            pipe.expire(f"all_users:{chat_id}", MEMORY_TTL)
+            pipe.sadd(f"new_users:{chat_id}", uid)
+            pipe.expire(f"new_users:{chat_id}", settings.NEW_USER_TTL_SECONDS)
+            pipe.set(f"last_message_ts:{chat_id}", time_module.time())
+            pipe.expire(f"last_message_ts:{chat_id}", MEMORY_TTL)
+            try:
+                await pipe.execute()
+            except asyncio.TimeoutError:
+                logger.error("Redis pipeline timeout in welcome handler")
+
+        with contextlib.suppress(Exception):
+            await record_new_user(chat_id, uid)
+
+        try:
+            if getattr(user, "language_code", None):
+                await redis_client.set(f"lang:{uid}", user.language_code.lower())
+        except Exception:
+            logger.debug("welcome(%s): failed to store language for %s", source, uid, exc_info=True)
+
+        logger.info("Added new member %s to chat %s via %s", uid, chat_id, source)
+
+        if not getattr(settings, "ENABLE_GROUP_AI_WELCOME", True):
+            logger.info("Group welcomes disabled by flag for chat %s", chat_id)
+            return
+
+        if not await can_greet(chat_id):
+            logger.info("Rate limit reached for %s in chat %s", uid, chat_id)
+            return
+
+        await _schedule_group_welcome_once(chat_id, user)
+    except Exception:
+        logger.exception("Error welcoming new member %s in chat %s", uid, chat_id)
+
+
 @dp.message(
     F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]),
     F.content_type == ContentType.NEW_CHAT_MEMBERS
@@ -81,43 +120,7 @@ async def on_new_members(message: Message) -> None:
 
     chat_id = message.chat.id
     for user in message.new_chat_members:
-        uid = user.id
-        try:
-            async with redis_client.pipeline(transaction=True) as pipe:
-                pipe.sadd(f"all_users:{chat_id}", uid)
-                pipe.expire(f"all_users:{chat_id}", MEMORY_TTL)
-                pipe.sadd(f"new_users:{chat_id}", uid)
-                pipe.expire(f"new_users:{chat_id}", settings.NEW_USER_TTL_SECONDS)
-                pipe.set(f"last_message_ts:{chat_id}", time_module.time())
-                pipe.expire(f"last_message_ts:{chat_id}", MEMORY_TTL)
-                try:
-                    await pipe.execute()
-                except asyncio.TimeoutError:
-                    logger.error("Redis pipeline timeout in welcome handler")
-
-            with contextlib.suppress(Exception):
-                await record_new_user(chat_id, uid)
-
-            try:
-                if getattr(user, "language_code", None):
-                    await redis_client.set(f"lang:{uid}", user.language_code.lower())
-            except Exception:
-                logger.debug("welcome: failed to store language for %s", uid, exc_info=True)
-
-            logger.info("Added new member %s to chat %s", uid, chat_id)
-
-            if not getattr(settings, "ENABLE_GROUP_AI_WELCOME", True):
-                logger.info("Group welcomes disabled by flag for chat %s", chat_id)
-                continue
-
-            if not await can_greet(chat_id):
-                logger.info("Rate limit reached for %s in chat %s", uid, chat_id)
-                continue
-
-            await _schedule_group_welcome_once(chat_id, user)
-
-        except Exception:
-            logger.exception("Error welcoming new member %s in chat %s", uid, chat_id)
+        await _handle_group_join(chat_id, user, source="new_chat_members")
 
 
 @dp.chat_member(ChatMemberUpdatedFilter(IS_NOT_MEMBER >> IS_MEMBER))
@@ -134,42 +137,7 @@ async def on_user_join_via_chat_member(update: ChatMemberUpdated) -> None:
         uid,
     )
 
-    try:
-        async with redis_client.pipeline(transaction=True) as pipe:
-            pipe.sadd(f"all_users:{chat_id}", uid)
-            pipe.expire(f"all_users:{chat_id}", MEMORY_TTL)
-            pipe.sadd(f"new_users:{chat_id}", uid)
-            pipe.expire(f"new_users:{chat_id}", settings.NEW_USER_TTL_SECONDS)
-            pipe.set(f"last_message_ts:{chat_id}", time_module.time())
-            pipe.expire(f"last_message_ts:{chat_id}", MEMORY_TTL)
-            try:
-                await pipe.execute()
-            except asyncio.TimeoutError:
-                logger.error("Redis pipeline timeout in welcome handler")
-        
-        with contextlib.suppress(Exception):
-            await record_new_user(chat_id, uid)
-        
-        try:
-            if getattr(user, "language_code", None):
-                await redis_client.set(f"lang:{uid}", user.language_code.lower())
-        except Exception:
-            logger.debug("welcome(chat_member): failed to store language for %s", uid, exc_info=True)
-
-        logger.info("User %s joined chat %s via ChatMemberUpdated", uid, chat_id)
-
-        if not getattr(settings, "ENABLE_GROUP_AI_WELCOME", True):
-            logger.info("Group welcomes disabled by flag for chat %s", chat_id)
-            return
-
-        if not await can_greet(chat_id):
-            logger.info("Rate limit reached for %s in chat %s", uid, chat_id)
-            return
-        
-        await _schedule_group_welcome_once(chat_id, user)
-
-    except Exception:
-        logger.exception("Error in on_user_join_via_chat_member for user %s in chat %s", uid, chat_id)
+    await _handle_group_join(chat_id, user, source="chat_member_update")
 
 
 @dp.chat_member(

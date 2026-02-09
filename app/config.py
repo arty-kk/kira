@@ -113,6 +113,13 @@ class Settings:
     ENABLE_GROUP_AI_WELCOME: bool = field(default_factory=lambda: _get_env("ENABLE_GROUP_AI_WELCOME", "false", conv=_parse_bool))
     CLEAR_SETUP_MESSAGES: bool = field(default_factory=lambda: _get_env("CLEAR_SETUP_MESSAGES", "false", conv=_parse_bool))
     SHOW_SHOP_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_SHOP_BUTTON", "true", conv=_parse_bool))
+    SHOW_REQUESTS_BUTTON: bool = field(
+        default_factory=lambda: _get_env(
+            "SHOW_REQUESTS_BUTTON",
+            _get_env("SHOW_SHOP_BUTTON", "true"),
+            conv=_parse_bool,
+        )
+    )
     SHOW_MEMORY_CLEAR_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_MEMORY_CLEAR_BUTTON", "true", conv=_parse_bool))
     SHOW_CHANNEL_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_CHANNEL_BUTTON", "false", conv=_parse_bool))
     SHOW_PERSONA_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_PERSONA_BUTTON", "true", conv=_parse_bool))
@@ -145,10 +152,15 @@ class Settings:
     API_RATELIMIT_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_MIN", "60", conv=int))
     API_RATELIMIT_BURST_FACTOR: int = field(default_factory=lambda: _get_env("API_RATELIMIT_BURST_FACTOR", "2", conv=int))
     API_RATELIMIT_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_IP_PER_MIN", "360", conv=int))
+    API_RATELIMIT_FALLBACK_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_MIN", "10", conv=int))
+    API_RATELIMIT_FALLBACK_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_IP_PER_MIN", "30", conv=int))
+    API_IDEMPOTENCY_TTL_SEC: int = field(default_factory=lambda: _get_env("API_IDEMPOTENCY_TTL_SEC", "3600", conv=int))
     API_KEY_HASH_SECRET: str = field(default_factory=lambda: _get_env("API_KEY_HASH_SECRET", "", conv=str))
     API_KEY_CACHE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_TTL_SEC", "60", conv=int))
     API_KEY_CACHE_NEGATIVE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_NEGATIVE_TTL_SEC", "30", conv=int))
     API_PERSONA_PER_KEY: bool = field(default_factory=lambda: _get_env("API_PERSONA_PER_KEY", "true", conv=_parse_bool))
+    API_QUEUE_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("API_QUEUE_MAX_PAYLOAD_BYTES", "131072", conv=int))
+    API_QUEUE_SNAPSHOT_SEC: int = field(default_factory=lambda: _get_env("API_QUEUE_SNAPSHOT_SEC", "60", conv=int))
 
     #Basic Spam Filter
     SPAM_WINDOW: int = field(default_factory=lambda: _get_env("SPAM_WINDOW", "10", conv=int))
@@ -190,6 +202,7 @@ class Settings:
     PENDING_INVOICE_TTL: int = field(default_factory=lambda: _get_env("PENDING_INVOICE_TTL", "1800", conv=int))
     SHOP_LAST_TAB_TTL: int = field(default_factory=lambda: _get_env("SHOP_LAST_TAB_TTL", str(7 * 86400), conv=int))
     PAYMENTS_TRANSIENT_NOTICE_TTL: int = field(default_factory=lambda: _get_env("PAYMENTS_TRANSIENT_NOTICE_TTL", "6", conv=int))
+    BOT_QUEUE_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("BOT_QUEUE_MAX_PAYLOAD_BYTES", "65536", conv=int))
 
     # ─── Group Moderation Settings ────────────────────────────────
     ENABLE_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_MODERATION", "false", conv=_parse_bool))
