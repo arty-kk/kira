@@ -58,7 +58,7 @@ from app.emo_engine.persona.constants.user_prefs import (
 )
 from app.services.addons.analytics import record_user_message
 from app.services.addons.personal_ping import register_private_activity
-from app.services.user.user_service import compute_remaining, consume_request, get_or_create_user
+from app.services.user.user_service import compute_remaining, get_or_create_user, reserve_request
 from app.tasks.welcome import send_private_ai_welcome_task
 
 logger = logging.getLogger(__name__)
@@ -308,7 +308,7 @@ async def build_quick_links_kb(user_id: int) -> ReplyKeyboardMarkup | None:
             buttons.append(KeyboardButton(text=f"__i18n__:{key}::{default}"))
 
     add("SHOW_SHOP_BUTTON", "menu.shop", "🛒 Shop")
-    add("SHOW_SHOP_BUTTON", "menu.requests", "⚡ Requests")
+    add("SHOW_REQUESTS_BUTTON", "menu.requests", "⚡ Requests")
     add("SHOW_CHANNEL_BUTTON", "menu.link", "📢 Channel")
     add("SHOW_PERSONA_BUTTON", "menu.persona", "🧬 Persona")
     add("SHOW_MEMORY_CLEAR_BUTTON", "menu.memory_clear", "🧹 Clear memory")
@@ -433,7 +433,7 @@ async def _send_private_welcome(uid: int, *, full_name: str | None = None) -> bo
 # ---------------------------
 # Access / billing guard
 # ---------------------------
-async def _ensure_access_and_increment(message: Message, text_for_guard: str | None) -> tuple[User, bool, str] | None:
+async def _ensure_access_and_increment(message: Message, text_for_guard: str | None) -> tuple[User, bool, str, int] | None:
     chat_id, user_id = message.chat.id, message.from_user.id
 
     if await pm_block_guard(bot, t, user_id=user_id, chat_id=chat_id, text=text_for_guard):
@@ -451,9 +451,19 @@ async def _ensure_access_and_increment(message: Message, text_for_guard: str | N
     async with session_scope(stmt_timeout_ms=2000) as db:
         user = await get_or_create_user(db, message.from_user)
         remaining = compute_remaining(user)
-        cr = await consume_request(db, user.id, prefer_paid=(user.paid_requests > 0)) if remaining > 0 else None
+        cr = (
+            await reserve_request(
+                db,
+                user.id,
+                prefer_paid=(user.paid_requests > 0),
+                chat_id=chat_id,
+                message_id=message.message_id,
+            )
+            if remaining > 0
+            else None
+        )
 
-    if remaining <= 0 or not (cr and cr.consumed):
+    if remaining <= 0 or not (cr and cr.reserved):
         msg = await tr(user_id, "private.need_gift_soft", "You're out of requests. Open the shop to buy more.")
         gifts_btn = await tr(user_id, "shop.open.gifts", "🎁 Gifts")
         reqs_btn = await tr(user_id, "shop.open.reqs", "⚡ Buy requests")
@@ -468,7 +478,7 @@ async def _ensure_access_and_increment(message: Message, text_for_guard: str | N
     used_paid = bool(cr.used_paid)
     allow_web = used_paid
     billing_tier = "paid" if used_paid else "free"
-    return user, allow_web, billing_tier
+    return user, allow_web, billing_tier, int(cr.reservation_id or 0)
 
 
 def _mk_ctx_payload(role: str, text: str, *, speaker_id: int | None = None) -> str:
@@ -827,7 +837,7 @@ async def on_private_message(message: Message) -> None:
     if not res:
         return
 
-    _, allow_web, billing_tier = res
+    _, allow_web, billing_tier, reservation_id = res
     await _store_context(chat_id, message.message_id, text, speaker_id=user_id)
     await _store_reply_target_best_effort(chat_id, message)
     
@@ -840,6 +850,7 @@ async def on_private_message(message: Message) -> None:
         "user_id": user_id,
         "reply_to": reply_to_mid,
         "tg_reply_to": tg_reply_to,
+        "reservation_id": reservation_id,
         "is_group": False,
         "msg_id": message.message_id,
         "trigger": "pm",
@@ -1007,7 +1018,14 @@ def reject_voice_and_reply(chat_id: int, reason: str, user_id: int | None = None
     _fire_and_forget(_send())
 
 
-async def _handle_image_payload(message: Message, caption: str, jpeg_bytes: bytes, allow_web: bool, billing_tier: str) -> None:
+async def _handle_image_payload(
+    message: Message,
+    caption: str,
+    jpeg_bytes: bytes,
+    allow_web: bool,
+    billing_tier: str,
+    reservation_id: int,
+) -> None:
     chat_id, user_id = message.chat.id, message.from_user.id
     cap_raw = (caption or "")
     urls = _extract_urls_from_entities(cap_raw, getattr(message, "caption_entities", None))
@@ -1026,6 +1044,7 @@ async def _handle_image_payload(message: Message, caption: str, jpeg_bytes: byte
         "user_id": user_id,
         "reply_to": reply_to_mid,
         "tg_reply_to": tg_reply_to,
+        "reservation_id": reservation_id,
         "is_group": False,
         "msg_id": message.message_id,
         "image_b64": base64.b64encode(jpeg_bytes).decode("ascii"),
@@ -1074,7 +1093,7 @@ async def on_private_photo(message: Message) -> None:
     res = await _ensure_access_and_increment(message, (message.caption or "").strip() or None)
     if not res:
         return
-    _, allow_web, billing_tier = res
+    _, allow_web, billing_tier, reservation_id = res
 
     tmp_path: str | None = None
     try:
@@ -1092,7 +1111,7 @@ async def on_private_photo(message: Message) -> None:
             reject_multi_or_oversize_and_reply(chat_id, "file is larger than 5 MB after compression", user_id)
             return
 
-        await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier)
+        await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier, reservation_id)
 
     except ValueError as ve:
         logger.warning("Image validation failed: %s", ve)
@@ -1311,7 +1330,7 @@ async def on_private_document(message: Message) -> None:
     res = await _ensure_access_and_increment(message, (message.caption or "").strip() or None)
     if not res:
         return
-    _, allow_web, billing_tier = res
+    _, allow_web, billing_tier, reservation_id = res
 
     tmp_path: str | None = None
     try:
@@ -1330,7 +1349,7 @@ async def on_private_document(message: Message) -> None:
             reject_multi_or_oversize_and_reply(chat_id, "file is larger than 5 MB after compression", user_id)
             return
 
-        await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier)
+        await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier, reservation_id)
 
     except ValueError as ve:
         logger.warning("Document image validation failed: %s", ve)
@@ -1387,7 +1406,7 @@ async def on_private_voice(message: Message) -> None:
     res = await _ensure_access_and_increment(message, text_for_guard=None)
     if not res:
         return
-    _, allow_web, billing_tier = res
+    _, allow_web, billing_tier, reservation_id = res
 
     await _store_reply_target_best_effort(chat_id, message)
     
@@ -1400,6 +1419,7 @@ async def on_private_voice(message: Message) -> None:
         "user_id": user_id,
         "reply_to": reply_to_mid,
         "tg_reply_to": tg_reply_to,
+        "reservation_id": reservation_id,
         "is_group": False,
         "voice_in": True,
         "voice_file_id": voice_file_id,

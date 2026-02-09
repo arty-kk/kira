@@ -11,7 +11,7 @@ from functools import wraps
 from typing import Any, Dict, Optional, Tuple, Literal, Callable, Awaitable
 
 from aiogram import F
-from aiogram.enums import ChatAction, ChatType, ContentType
+from aiogram.enums import ChatType, ContentType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import (
@@ -23,6 +23,7 @@ from aiogram.types import (
     PreCheckoutQuery,
 )
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, OperationalError
 
@@ -44,12 +45,8 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.db import session_scope
 from app.core.memory import push_message
-from app.core.models import GiftPurchase, PaymentReceipt
-from app.services.user.user_service import (
-    add_paid_requests,
-    compute_remaining,
-    get_or_create_user,
-)
+from app.core.models import PaymentOutbox
+from app.services.user.user_service import compute_remaining, get_or_create_user
 from app.tasks.celery_app import celery
 
 logger = logging.getLogger(__name__)
@@ -481,6 +478,12 @@ async def show_pending_invoice_stub(chat_id: int, user_id: int) -> bool:
     return True
 
 
+async def ensure_no_pending_or_show_stub(chat_id: int, user_id: int) -> bool:
+    if await redis_client.exists(RedisKeys.pending(user_id)):
+        return not await show_pending_invoice_stub(chat_id, user_id)
+    return True
+
+
 # ----------------------------
 # Payment “success” UX
 # ----------------------------
@@ -623,10 +626,8 @@ async def _show_shop(message: Message | CallbackQuery, *, tab: Optional[str] = N
         cb = None
         msg_obj = None
 
-    if await redis_client.exists(RedisKeys.pending(user_id)):
-        still_pending = await show_pending_invoice_stub(chat_id, user_id)
-        if still_pending:
-            return
+    if not await ensure_no_pending_or_show_stub(chat_id, user_id):
+        return
 
     tab0 = _norm_tab(tab) if tab is not None else _norm_tab(await _get_last_tab(user_id))
 
@@ -776,9 +777,8 @@ async def cmd_buy(message: Message) -> None:
 
     await _delete_prev_shop_menu(user_id, chat_id)
 
-    if await redis_client.exists(RedisKeys.pending(user_id)):
-        if await show_pending_invoice_stub(chat_id, user_id):
-            return
+    if not await ensure_no_pending_or_show_stub(chat_id, user_id):
+        return
 
     await _show_shop(message, tab="home")
 
@@ -789,9 +789,8 @@ async def cmd_buy_reqs(message: Message) -> None:
 
     await _delete_prev_shop_menu(user_id, chat_id)
 
-    if await redis_client.exists(RedisKeys.pending(user_id)):
-        if await show_pending_invoice_stub(chat_id, user_id):
-            return
+    if not await ensure_no_pending_or_show_stub(chat_id, user_id):
+        return
 
     await _show_shop(message, tab="reqs")
 
@@ -965,56 +964,39 @@ async def on_payment_success(message: Message) -> None:
         if int(getattr(sp, "total_amount", 0) or 0) != int(stars_amt):
             raise ValueError("Amount mismatch")
 
-        duplicate = False
-        remaining: Optional[int] = None
-
+        outbox_status = "pending"
         for attempt in range(3):
             try:
                 async with session_scope(stmt_timeout_ms=5000) as db:
                     user = await get_or_create_user(db, message.from_user)
 
                     stmt = (
-                        pg_insert(PaymentReceipt)
+                        pg_insert(PaymentOutbox)
                         .values(
                             user_id=user.id,
                             kind=kind,
+                            status="pending",
                             requests_amount=req_amt,
                             stars_amount=stars_amt,
                             invoice_payload=payload,
                             telegram_payment_charge_id=str(charge_id),
                             provider_payment_charge_id=str(provider_charge_id) if provider_charge_id else None,
-                        )
-                        .on_conflict_do_nothing(index_elements=["telegram_payment_charge_id"])
-                        .returning(PaymentReceipt.id)
-                    )
-                    receipt_id = (await db.execute(stmt)).scalar_one_or_none()
-
-                    if receipt_id is None:
-                        logger.info("Duplicate payment ignored: charge_id=%s", charge_id)
-                        duplicate = True
-                        await db.refresh(user)
-                        remaining = compute_remaining(user)
-                        break
-
-                    if kind == "buy":
-                        await add_paid_requests(db, user.id, req_amt)
-                    else:
-                        gp = GiftPurchase(
-                            user_id=user.id,
                             gift_code=gift.get("code") if gift else None,
                             gift_title=gift.get("title") if gift else None,
                             gift_emoji=gift.get("emoji") if gift else None,
-                            stars_amount=stars_amt,
-                            requests_amount=req_amt,
-                            invoice_payload=payload,
-                            telegram_payment_charge_id=str(charge_id),
                         )
-                        db.add(gp)
-                        await add_paid_requests(db, user.id, req_amt)
-
-                    await db.flush()
-                    await db.refresh(user)
-                    remaining = compute_remaining(user)
+                        .on_conflict_do_nothing(index_elements=["telegram_payment_charge_id"])
+                        .returning(PaymentOutbox.status)
+                    )
+                    row = (await db.execute(stmt)).scalar_one_or_none()
+                    if row is None:
+                        status_row = await db.execute(
+                            select(PaymentOutbox.status)
+                            .where(PaymentOutbox.telegram_payment_charge_id == str(charge_id))
+                        )
+                        outbox_status = status_row.scalar_one_or_none() or "pending"
+                    else:
+                        outbox_status = row
                 break
             except (OperationalError, DBAPIError):
                 if attempt == 2:
@@ -1023,61 +1005,21 @@ async def on_payment_success(message: Message) -> None:
 
         await clear_payment_ui(message.from_user.id, message.chat.id)
 
-        if kind == "buy":
-            text, notice_delay = await _payment_success_notice(
-                message.from_user.id,
-                kind="buy",
-                duplicate=duplicate,
-                req_amt=req_amt,
-                remaining=remaining,
-            )
-            await send_transient_notice(message.chat.id, text, parse_mode="HTML", delay=notice_delay)
-            await _refresh_shop_after_payment(message)
+        if outbox_status == "applied":
+            dup_txt = await tr(message.from_user.id, "payments.success_duplicate_short", "✅ Payment already processed.")
+            await send_transient_notice(message.chat.id, dup_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
             return
 
-        # gift
-        if gift:
-            name = await gift_display_name(message.from_user.id, gift)
-            emoji = (gift.get("emoji") or "").strip()
-            gift_label = (f"{emoji} {name}").strip() if emoji else name
+        with suppress(Exception):
+            celery.send_task("payments.process_outbox", args=[str(charge_id)])
 
-            if not duplicate:
-                await _push_gift_event(message.chat.id, message.from_user.id, str(gift_label))
-
-            if not duplicate:
-                with suppress(Exception):
-                    celery.send_task(
-                        "gifts.react",
-                        args=[
-                            int(message.from_user.id),
-                            int(message.chat.id),
-                            str(gift.get("code") or ""),
-                            str(gift_label),
-                            int(req_amt),
-                            int(stars_amt),
-                            str(charge_id),
-                            None,
-                            int(message.message_id),
-                        ],
-                    )
-
-            with suppress(Exception):
-                await bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-
-            ok_txt, notice_delay = await _payment_success_notice(
-                message.from_user.id,
-                kind="gift",
-                duplicate=duplicate,
-            )
-            await send_transient_notice(message.chat.id, ok_txt, parse_mode="HTML", delay=notice_delay)
-            return
-
-        await send_message_safe(
-            bot,
-            message.chat.id,
-            (await tr(message.from_user.id, "payments.error", "Payment error, please try again.")),
-            parse_mode="HTML",
+        processing_txt = await tr(
+            message.from_user.id,
+            "payments.processing",
+            "✅ Payment received. We are processing it now.",
         )
+        await send_transient_notice(message.chat.id, processing_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
+        return
 
     except ValueError as ve:
         logger.warning("on_payment_success: invalid payload '%s': %s", payload, ve)

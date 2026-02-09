@@ -11,7 +11,8 @@ from sqlalchemy import func, update
 
 from aiogram.types import User as TelegramUser
 
-from app.core.models import User
+from app.core.models import RequestReservation, User
+from app.core.db import session_scope
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,13 @@ async def get_or_create_user(db: AsyncSession, tg_user: TelegramUser) -> User:
 class ConsumeResult:
     consumed: bool
     used_paid: bool
+
+
+@dataclass(frozen=True)
+class ReserveResult:
+    reserved: bool
+    used_paid: bool
+    reservation_id: int | None
 
 async def consume_request(db: AsyncSession, user_id: int, *, prefer_paid: bool = False) -> ConsumeResult:
 
@@ -94,6 +102,100 @@ async def consume_request(db: AsyncSession, user_id: int, *, prefer_paid: bool =
     if res2.scalar() is not None:
         return ConsumeResult(consumed=True, used_paid=True)
     return ConsumeResult(consumed=False, used_paid=False)
+
+
+async def reserve_request(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    prefer_paid: bool = False,
+    chat_id: int | None = None,
+    message_id: int | None = None,
+) -> ReserveResult:
+    res = await consume_request(db, user_id, prefer_paid=prefer_paid)
+    if not res.consumed:
+        return ReserveResult(reserved=False, used_paid=False, reservation_id=None)
+
+    reservation = RequestReservation(
+        user_id=user_id,
+        status="reserved",
+        used_paid=bool(res.used_paid),
+        chat_id=chat_id,
+        message_id=message_id,
+    )
+    db.add(reservation)
+    await db.flush()
+    return ReserveResult(
+        reserved=True,
+        used_paid=bool(res.used_paid),
+        reservation_id=reservation.id,
+    )
+
+
+async def confirm_reservation(db: AsyncSession, reservation_id: int) -> None:
+    if not reservation_id:
+        return
+    res = await db.execute(
+        update(RequestReservation)
+        .where(RequestReservation.id == reservation_id)
+        .where(RequestReservation.status == "reserved")
+        .values(status="consumed")
+        .returning(RequestReservation.id)
+    )
+    if res.scalar_one_or_none() is None:
+        return
+
+
+async def refund_reservation(db: AsyncSession, reservation_id: int) -> None:
+    if not reservation_id:
+        return
+    res = await db.execute(
+        update(RequestReservation)
+        .where(RequestReservation.id == reservation_id)
+        .where(RequestReservation.status == "reserved")
+        .values(status="refunded")
+        .returning(
+            RequestReservation.user_id,
+            RequestReservation.used_paid,
+        )
+    )
+    row = res.one_or_none()
+    if row is None:
+        return
+
+    user_id, used_paid = row
+    if used_paid:
+        await db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                paid_requests=User.paid_requests + 1,
+                used_requests=func.greatest(User.used_requests - 1, 0),
+            )
+        )
+    else:
+        await db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(
+                free_requests=User.free_requests + 1,
+                used_requests=func.greatest(User.used_requests - 1, 0),
+            )
+        )
+
+
+async def confirm_reservation_by_id(reservation_id: int) -> None:
+    if not reservation_id:
+        return
+    async with session_scope(stmt_timeout_ms=2000) as db:
+        await confirm_reservation(db, reservation_id)
+
+
+async def refund_reservation_by_id(reservation_id: int) -> None:
+    if not reservation_id:
+        return
+    async with session_scope(stmt_timeout_ms=2000) as db:
+        await refund_reservation(db, reservation_id)
 
 async def increment_usage(db: AsyncSession, user_id: int) -> None:
     r = await consume_request(db, user_id, prefer_paid=False)

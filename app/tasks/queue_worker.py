@@ -36,6 +36,7 @@ from app.services.addons.voice_generator import (
 from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
+from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
 
 
 logger = logging.getLogger(__name__)
@@ -963,6 +964,27 @@ async def handle_job(raw, processing_key: str) -> None:
     if billing_tier not in ("paid", "free", "none"):
         billing_tier = None
     entities   = job.get("entities") or []
+    reservation_id = job.get("reservation_id")
+    try:
+        reservation_id = int(reservation_id) if reservation_id is not None else 0
+    except Exception:
+        reservation_id = 0
+
+    async def _confirm_reservation() -> None:
+        if reservation_id <= 0:
+            return
+        try:
+            await confirm_reservation_by_id(reservation_id)
+        except Exception:
+            logger.exception("Failed to confirm reservation_id=%s", reservation_id)
+
+    async def _refund_reservation() -> None:
+        if reservation_id <= 0:
+            return
+        try:
+            await refund_reservation_by_id(reservation_id)
+        except Exception:
+            logger.exception("Failed to refund reservation_id=%s", reservation_id)
 
     try:
         msg_id = int(msg_id) if msg_id is not None else None
@@ -995,6 +1017,7 @@ async def handle_job(raw, processing_key: str) -> None:
             chat_id, user_id, len(text or "") if isinstance(text, str) else -1, bool(image_b64),
         )
         await REDIS_QUEUE.lrem(processing_key, 1, raw)
+        await _refund_reservation()
         return
 
     if msg_id is None:
@@ -1004,6 +1027,7 @@ async def handle_job(raw, processing_key: str) -> None:
         )
         with suppress(Exception):
             await REDIS_QUEUE.lrem(processing_key, 1, raw)
+        await _refund_reservation()
         return
 
     try:
@@ -1012,6 +1036,7 @@ async def handle_job(raw, processing_key: str) -> None:
             with suppress(Exception):
                 await REDIS_QUEUE.lrem(processing_key, 1, raw)
             logger.debug("Drop job as already answered: chat=%s msg_id=%s", chat_id, msg_id)
+            await _confirm_reservation()
             return
     except Exception:
         pass
@@ -1139,6 +1164,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             merged_ids,
                             user_id=user_id,
                         )
+                        await _confirm_reservation()
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     return
@@ -1265,6 +1291,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     await _mark_sent_reply_keys(chat_id, msg_id, merged_ids)
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _confirm_reservation()
                     try:
                         await push_message(
                             chat_id,
@@ -1307,6 +1334,7 @@ async def handle_job(raw, processing_key: str) -> None:
 
                     with suppress(Exception):
                         await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _confirm_reservation()
                     try:
                         await REDIS_QUEUE.set(f"last_out_mode:{chat_id}:{user_id}", "text", ex=3600)
                     except Exception:
@@ -1353,6 +1381,7 @@ async def handle_job(raw, processing_key: str) -> None:
                 await _send_reply(chat_id, reply_text, send_reply_target, msg_id, merged_ids, user_id=user_id)
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                await _confirm_reservation()
             except Exception:
                 with suppress(Exception):
                     await _delete_if_inflight(REDIS_QUEUE, job_key, value)

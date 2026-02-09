@@ -48,6 +48,7 @@ RESPOND_TIMEOUT = int(
             getattr(settings, "API_CALL_TIMEOUT_SEC", 60))
 )
 JOB_HEARTBEAT_INTERVAL_SEC = int(getattr(settings, "API_JOB_HEARTBEAT_INTERVAL_SEC", 10))
+API_QUEUE_SNAPSHOT_SEC = int(getattr(settings, "API_QUEUE_SNAPSHOT_SEC", 60))
 
 PROCESSING_TASKS: Set[asyncio.Task] = set()
 
@@ -849,6 +850,23 @@ async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
             await asyncio.sleep(5)
 
 
+async def _queue_depth_loop(stop_evt: asyncio.Event, redis_queue) -> None:
+    if API_QUEUE_SNAPSHOT_SEC <= 0:
+        return
+    while not stop_evt.is_set():
+        try:
+            depth = await redis_queue.llen(API_QUEUE_KEY)
+            processing = await redis_queue.llen(PROCESSING_KEY)
+            logger.info(
+                "api_worker: queue depth=%s processing=%s",
+                depth,
+                processing,
+            )
+        except Exception:
+            logger.debug("api_worker: failed to read queue depth", exc_info=True)
+        await asyncio.sleep(API_QUEUE_SNAPSHOT_SEC)
+
+
 async def _worker_loop(stop_evt: asyncio.Event) -> None:
     redis_queue = get_redis_queue()
     logger.info("api_worker: starting; queue=%s", API_QUEUE_KEY)
@@ -866,6 +884,7 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
         logger.warning("api_worker: requeue-on-start failed: %s", e)
 
     sweeper = asyncio.create_task(_sweeper_loop(stop_evt, redis_queue))
+    depth_logger = asyncio.create_task(_queue_depth_loop(stop_evt, redis_queue))
 
     try:
         while not stop_evt.is_set():
@@ -896,6 +915,9 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
         sweeper.cancel()
         with suppress(asyncio.CancelledError):
             await sweeper
+        depth_logger.cancel()
+        with suppress(asyncio.CancelledError):
+            await depth_logger
 
         if PROCESSING_TASKS:
             logger.info(
