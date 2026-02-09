@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ValidationError
 class BotQueueJob(BaseModel):
     chat_id: int
     user_id: int
-    text: str = ""
+    text: Optional[str] = ""
     msg_id: Optional[int] = None
     reply_to: Optional[int] = None
     tg_reply_to: Optional[int] = None

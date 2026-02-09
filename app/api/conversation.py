@@ -588,7 +588,12 @@ async def conversation_endpoint(
         try:
             result = await _send_job_and_wait(request_id=request_id, job=job)
         except HTTPException as e:
-            if 500 <= e.status_code < 600:
+            detail = e.detail if isinstance(e.detail, dict) else {}
+            err_code = detail.get("code")
+            if 500 <= e.status_code < 600 or err_code in {
+                "invalid_payload",
+                "payload_too_large",
+            }:
                 await _refund_request(owner_id, billing_tier)
             raise
         except asyncio.TimeoutError:
