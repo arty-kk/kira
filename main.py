@@ -88,6 +88,21 @@ async def main() -> None:
     tasks: list[asyncio.Task[Any]] = []
 
     if run_bot:
+        missing = []
+        if not (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip():
+            missing.append("TELEGRAM_BOT_TOKEN")
+        if not (os.getenv("TELEGRAM_BOT_USERNAME") or "").strip():
+            missing.append("TELEGRAM_BOT_USERNAME")
+        if _get_env("TELEGRAM_BOT_ID", conv=int) is None:
+            missing.append("TELEGRAM_BOT_ID")
+        if not (os.getenv("WEBHOOK_URL") or "").strip():
+            missing.append("WEBHOOK_URL")
+        if missing:
+            missing_list = ", ".join(missing)
+            raise RuntimeError(
+                "RUN_BOT=true requires Telegram configuration. "
+                f"Missing environment variables: {missing_list}"
+            )
         logging.info("🤖 Launching bot")
         bot_task = asyncio.create_task(start_bot())
         tasks.append(bot_task)

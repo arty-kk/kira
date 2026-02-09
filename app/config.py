@@ -88,9 +88,9 @@ class Settings:
     EMBED_BATCH_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BATCH_SIZE", "128", conv=int))
 
     # ─── Telegram ───────────────────────────────────────
-    TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN", required=True))
-    TELEGRAM_BOT_USERNAME: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_USERNAME", required=True))
-    TELEGRAM_BOT_ID: int = field(default_factory=lambda: _get_env("TELEGRAM_BOT_ID", required=True, conv=int))
+    TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN"))
+    TELEGRAM_BOT_USERNAME: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_USERNAME"))
+    TELEGRAM_BOT_ID: int = field(default_factory=lambda: _get_env("TELEGRAM_BOT_ID", conv=int))
     BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Bonnie ⚓️"))
     DEFAULT_LANG: str = field(default_factory=lambda: _get_env("DEFAULT_LANG", "en"))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
@@ -118,7 +118,7 @@ class Settings:
     SHOW_PERSONA_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_PERSONA_BUTTON", "true", conv=_parse_bool))
     SHOW_API_BUTTON: bool = field(default_factory=lambda: _get_env("SHOW_API_BUTTON", "true", conv=_parse_bool))
     #Webhook 
-    WEBHOOK_URL: str = field(default_factory=lambda: _get_env("WEBHOOK_URL", required=True))
+    WEBHOOK_URL: str = field(default_factory=lambda: _get_env("WEBHOOK_URL"))
     WEBHOOK_PATH: str = field(default_factory=lambda: _get_env("WEBHOOK_PATH", "/webhook"))
     WEBHOOK_HOST: str = field(default_factory=lambda: _get_env("WEBHOOK_HOST", "0.0.0.0"))
     WEBHOOK_PORT: int = field(default_factory=lambda: _get_env("WEBHOOK_PORT", "8443", conv=int))
