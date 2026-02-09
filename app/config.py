@@ -154,6 +154,7 @@ class Settings:
     API_RATELIMIT_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_IP_PER_MIN", "360", conv=int))
     API_RATELIMIT_FALLBACK_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_MIN", "10", conv=int))
     API_RATELIMIT_FALLBACK_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_IP_PER_MIN", "30", conv=int))
+    API_FALLBACK_RL_MAX_KEYS: int = field(default_factory=lambda: _get_env("API_FALLBACK_RL_MAX_KEYS", "10000", conv=int))
     API_IDEMPOTENCY_TTL_SEC: int = field(default_factory=lambda: _get_env("API_IDEMPOTENCY_TTL_SEC", "3600", conv=int))
     API_KEY_HASH_SECRET: str = field(default_factory=lambda: _get_env("API_KEY_HASH_SECRET", "", conv=str))
     API_KEY_CACHE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_TTL_SEC", "60", conv=int))
