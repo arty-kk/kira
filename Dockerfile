@@ -32,10 +32,5 @@ RUN adduser --disabled-password --gecos '' appuser && \
 
 USER appuser
 
-RUN EMBEDDING_MODEL=text-embedding-3-large \
-    python scripts/precompute_embeddings.py \
-      --kb-file app/services/responder/rag/knowledge_on.json \
-      --out-file data/embeddings/knowledge_embedded_text-embedding-3-large.json
-
 EXPOSE 8443
 CMD ["python", "-u", "main.py"]
