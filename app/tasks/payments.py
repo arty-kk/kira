@@ -45,6 +45,11 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
             outbox.last_error = "user_not_found"
             return outbox, None, False
 
+        if outbox.requests_amount is None or outbox.requests_amount <= 0:
+            outbox.status = "failed"
+            outbox.last_error = "invalid_requests_amount"
+            return outbox, None, False
+
         stmt = (
             pg_insert(PaymentReceipt)
             .values(
