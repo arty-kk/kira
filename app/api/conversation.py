@@ -307,34 +307,26 @@ async def conversation_endpoint(
     async with session_scope(
         stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
     ) as db:
-        billing_cte = (
-            select(
-                User.id,
-                User.free_requests,
-                User.paid_requests,
-                User.used_requests,
-            )
-            .where(User.id == owner_id)
-            .cte("billing_cte")
-        )
+        billing_snapshot = User.__table__.alias("billing_snapshot")
         billing_stmt = (
             update(User)
-            .where(User.id == billing_cte.c.id)
-            .where(or_(billing_cte.c.free_requests > 0, billing_cte.c.paid_requests > 0))
+            .where(User.id == owner_id)
+            .where(or_(User.free_requests > 0, User.paid_requests > 0))
+            .where(User.id == billing_snapshot.c.id)
             .values(
                 free_requests=case(
-                    (billing_cte.c.free_requests > 0, billing_cte.c.free_requests - 1),
-                    else_=billing_cte.c.free_requests,
+                    (billing_snapshot.c.free_requests > 0, billing_snapshot.c.free_requests - 1),
+                    else_=billing_snapshot.c.free_requests,
                 ),
                 paid_requests=case(
-                    (billing_cte.c.free_requests > 0, billing_cte.c.paid_requests),
-                    else_=billing_cte.c.paid_requests - 1,
+                    (billing_snapshot.c.free_requests > 0, billing_snapshot.c.paid_requests),
+                    else_=billing_snapshot.c.paid_requests - 1,
                 ),
-                used_requests=billing_cte.c.used_requests + 1,
+                used_requests=billing_snapshot.c.used_requests + 1,
             )
             .returning(
                 case(
-                    (billing_cte.c.free_requests > 0, literal("free")),
+                    (billing_snapshot.c.free_requests > 0, literal("free")),
                     else_=literal("paid"),
                 ).label("billing_tier")
             )
