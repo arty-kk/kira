@@ -499,7 +499,11 @@ async def conversation_endpoint(
         err = result.get("error") or {}
         status_code = int(err.get("status") or 500)
         err_code = err.get("code")
-        if status_code >= 500 or err_code in {"invalid_payload", "voice_transcription_failed"}:
+        if status_code >= 500 or err_code in {
+            "invalid_payload",
+            "voice_transcription_failed",
+            "duplicate_request",
+        }:
             await _refund_request(owner_id, billing_tier)
         raise HTTPException(
             status_code=status_code,
