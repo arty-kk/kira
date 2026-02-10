@@ -1,0 +1,221 @@
+import asyncio
+import importlib.util
+import pathlib
+import sys
+import types
+import unittest
+
+
+class _FakeAsyncFile:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def read(self):
+        return "{}"
+
+
+class _FakeAiofiles(types.ModuleType):
+    def open(self, *_args, **_kwargs):
+        return _FakeAsyncFile()
+
+
+class _FakeRedis:
+    async def exists(self, _key):
+        return False
+
+    async def set(self, *_args, **_kwargs):
+        return True
+
+    async def expire(self, *_args, **_kwargs):
+        return True
+
+    async def get(self, _key):
+        return None
+
+
+class _FakeRouter:
+    def add_get(self, *_args, **_kwargs):
+        return None
+
+    def add_post(self, *_args, **_kwargs):
+        return None
+
+    def add_route(self, *_args, **_kwargs):
+        return None
+
+
+class _FakeApplication:
+    def __init__(self):
+        self.router = _FakeRouter()
+
+
+class _FakeAppRunner:
+    def __init__(self, app):
+        self.app = app
+        self.setup_called = False
+        self.cleanup_called = False
+
+    async def setup(self):
+        self.setup_called = True
+
+    async def cleanup(self):
+        self.cleanup_called = True
+
+
+class _FakeTCPSite:
+    last_instance = None
+
+    def __init__(self, runner, host, port, ssl_context=None):
+        self.runner = runner
+        self.host = host
+        self.port = port
+        self.ssl_context = ssl_context
+        self.started = False
+        _FakeTCPSite.last_instance = self
+
+    async def start(self):
+        self.started = True
+
+
+class _FakeWeb(types.ModuleType):
+    class Response:
+        def __init__(self, status=200, text=""):
+            self.status = status
+            self.text = text
+
+    class Request:
+        pass
+
+    AppRunner = _FakeAppRunner
+    TCPSite = _FakeTCPSite
+    Application = _FakeApplication
+
+
+class _FakeSession:
+    def __init__(self):
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakeBot:
+    def __init__(self):
+        self.session = _FakeSession()
+
+    async def get_me(self):
+        return types.SimpleNamespace(id=42, username="TestBot")
+
+    async def set_webhook(self, **_kwargs):
+        return True
+
+
+class _FakeDispatcher:
+    async def feed_update(self, *_args, **_kwargs):
+        return None
+
+
+def _load_webhook_module():
+    fake_app = types.ModuleType("app")
+    fake_config = types.ModuleType("app.config")
+    fake_core = types.ModuleType("app.core")
+    fake_memory = types.ModuleType("app.core.memory")
+    fake_clients = types.ModuleType("app.clients")
+    fake_telegram = types.ModuleType("app.clients.telegram_client")
+    fake_bot_pkg = types.ModuleType("app.bot")
+    fake_bot_components = types.ModuleType("app.bot.components")
+    fake_dispatcher = types.ModuleType("app.bot.components.dispatcher")
+    fake_constants = types.ModuleType("app.bot.components.constants")
+
+    settings = types.SimpleNamespace(
+        USE_SELF_SIGNED_CERT=False,
+        WEBHOOK_CERT="/tmp/missing-cert.pem",
+        WEBHOOK_KEY="/tmp/missing-key.pem",
+        WEBHOOK_URL="https://example.local",
+        WEBHOOK_PATH="/webhook",
+        WEBHOOK_HOST="127.0.0.1",
+        WEBHOOK_PORT=8443,
+        ALLOWED_GROUP_IDS=[],
+        MEMORY_TTL_DAYS=1,
+    )
+
+    fake_config.settings = settings
+    fake_memory.get_redis = lambda: _FakeRedis()
+    fake_memory.get_redis_queue = lambda: _FakeRedis()
+
+    fake_telegram.get_bot = lambda: _FakeBot()
+
+    fake_dispatcher.dp = _FakeDispatcher()
+
+    fake_constants.redis_client = None
+    fake_constants.redis_queue = None
+    fake_constants.BOT_ID = None
+    fake_constants.BOT_USERNAME = ""
+    fake_constants.LANG_FILE = "lang.json"
+    fake_constants.WELCOME_MESSAGES = {}
+
+    fake_aiohttp = types.ModuleType("aiohttp")
+    fake_aiohttp.web = _FakeWeb("aiohttp.web")
+    fake_aiohttp.ContentTypeError = ValueError
+
+    fake_aiogram = types.ModuleType("aiogram")
+    fake_aiogram.types = types.SimpleNamespace(Update=dict)
+    fake_aiogram_types = types.ModuleType("aiogram.types")
+    fake_aiogram_types.FSInputFile = object
+
+    injected_modules = {
+        "app": fake_app,
+        "app.config": fake_config,
+        "app.core": fake_core,
+        "app.core.memory": fake_memory,
+        "app.clients": fake_clients,
+        "app.clients.telegram_client": fake_telegram,
+        "app.bot": fake_bot_pkg,
+        "app.bot.components": fake_bot_components,
+        "app.bot.components.dispatcher": fake_dispatcher,
+        "app.bot.components.constants": fake_constants,
+        "aiofiles": _FakeAiofiles("aiofiles"),
+        "aiohttp": fake_aiohttp,
+        "aiogram": fake_aiogram,
+        "aiogram.types": fake_aiogram_types,
+    }
+    module_name = "webhook_under_test"
+
+    previous_modules = {name: sys.modules.get(name) for name in [*injected_modules, module_name]}
+    try:
+        sys.modules.update(injected_modules)
+
+        webhook_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "bot" / "components" / "webhook.py"
+        spec = importlib.util.spec_from_file_location(module_name, webhook_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, previous in previous_modules.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
+
+
+webhook = _load_webhook_module()
+
+
+class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_bot_without_self_signed_cert_uses_none_ssl_context(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        await webhook.start_bot(stop_event=stop_event)
+
+        self.assertIsNotNone(_FakeTCPSite.last_instance)
+        self.assertIsNone(_FakeTCPSite.last_instance.ssl_context)
+        self.assertTrue(_FakeTCPSite.last_instance.started)
+
+
+if __name__ == "__main__":
+    unittest.main()

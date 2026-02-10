@@ -3,6 +3,7 @@ import ssl
 import asyncio
 import logging
 import json
+import os
 import time as time_module
 
 import aiofiles
@@ -80,8 +81,28 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     except Exception:
         logger.exception("Error setting webhook")
 
-    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
+    ssl_context = None
+    if settings.USE_SELF_SIGNED_CERT:
+        missing_files = [
+            path
+            for path in (settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
+            if not os.path.exists(path)
+        ]
+        if missing_files:
+            logger.error(
+                "Invalid webhook TLS configuration. Missing files: %s",
+                ", ".join(missing_files),
+            )
+            raise RuntimeError(
+                f"Webhook TLS files are missing: {', '.join(missing_files)}"
+            )
+
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
+    else:
+        logger.info(
+            "USE_SELF_SIGNED_CERT is disabled; local TLS is not started and external proxy TLS termination is expected"
+        )
 
     async def handle_webhook(request: web.Request) -> web.Response:
 
