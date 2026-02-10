@@ -74,10 +74,12 @@ async def _fallback_rate_limit(key: str, limit: int, window_sec: int) -> bool:
         _fallback_rl_state[key] = (count, exp)
         _fallback_rl_state.move_to_end(key)
 
-        max_keys = getattr(settings, "API_FALLBACK_RL_MAX_KEYS", 0) or 0
-        if max_keys > 0:
-            while len(_fallback_rl_state) > max_keys:
-                _fallback_rl_state.popitem(last=False)
+        max_keys = getattr(settings, "API_FALLBACK_RL_MAX_KEYS", None)
+        if max_keys is None or max_keys <= 0:
+            max_keys = 10000
+
+        while len(_fallback_rl_state) > max_keys:
+            _fallback_rl_state.popitem(last=False)
         return count <= limit
 
 
