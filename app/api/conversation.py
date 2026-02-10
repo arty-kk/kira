@@ -420,50 +420,53 @@ def _get_persona_owner_id(owner_user_id: int, api_key_id: int) -> int:
 
 
 async def _check_rate_limit(request: Request, api_key_id: int) -> None:
+    redis = get_redis()
+    use_fallback = redis is None
 
-    try:
-        redis = get_redis()
-        if redis is None:
-            return
+    if not use_fallback:
+        try:
+            now = int(time.time())
+            window = now // 60
 
-        now = int(time.time())
-        window = now // 60
-
-        per_min = settings.API_RATELIMIT_PER_MIN
-        burst_factor = settings.API_RATELIMIT_BURST_FACTOR
-        if per_min <= 0 or burst_factor <= 0:
-            return
-        key = f"rl:api:key:{api_key_id}:{window}"
-
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, 70)
-        if count > per_min * burst_factor:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={"code": "rate_limited", "message": "Too many requests for this API key"},
-                headers={"Retry-After": "60"},
-            )
-
-        ip = _resolve_rate_limit_ip(request)
-        if ip != "unknown":
-            ip_key = f"rl:api:ip:{ip}:{window}"
-            ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
-            if ip_limit <= 0:
+            per_min = settings.API_RATELIMIT_PER_MIN
+            burst_factor = settings.API_RATELIMIT_BURST_FACTOR
+            if per_min <= 0 or burst_factor <= 0:
                 return
-            ic = await redis.incr(ip_key)
-            if ic == 1:
-                await redis.expire(ip_key, 70)
-            if ic > ip_limit:
+            key = f"rl:api:key:{api_key_id}:{window}"
+
+            count = await redis.incr(key)
+            if count == 1:
+                await redis.expire(key, 70)
+            if count > per_min * burst_factor:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
+                    detail={"code": "rate_limited", "message": "Too many requests for this API key"},
                     headers={"Retry-After": "60"},
                 )
-    except HTTPException:
-        raise
-    except Exception:
-        logging.warning("Rate limiter failed; using fallback limiter.", exc_info=True)
+
+            ip = _resolve_rate_limit_ip(request)
+            if ip != "unknown":
+                ip_key = f"rl:api:ip:{ip}:{window}"
+                ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
+                if ip_limit <= 0:
+                    return
+                ic = await redis.incr(ip_key)
+                if ic == 1:
+                    await redis.expire(ip_key, 70)
+                if ic > ip_limit:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
+                        headers={"Retry-After": "60"},
+                    )
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            logging.warning("Rate limiter failed; using fallback limiter.", exc_info=True)
+            use_fallback = True
+
+    if use_fallback:
         per_min = int(getattr(settings, "API_RATELIMIT_FALLBACK_PER_MIN", 10))
         ip_limit = int(getattr(settings, "API_RATELIMIT_FALLBACK_PER_IP_PER_MIN", 30))
         window_sec = 60
