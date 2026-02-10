@@ -10,6 +10,7 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.tasks.celery_app import celery, _run
 from app.tasks.cleanup import cleanup_nonbuyers
+from app.tasks.payments import requeue_pending_outbox
 from app.services.addons.analytics import generate_and_send_daily_reports
 from app.services.addons import (
     start_battle_job, price_fetcher,
@@ -125,3 +126,10 @@ def tweet_once_task():
     logger.info("tweet_once_task start")
     _run(generate_and_post_tweet())
     logger.info("tweet_once_task done")
+
+
+@celery.task(name="payments_requeue_pending_outbox")
+def payments_requeue_pending_outbox_task():
+    logger.info("payments_requeue_pending_outbox_task start")
+    _run(requeue_pending_outbox())
+    logger.info("payments_requeue_pending_outbox_task done")
