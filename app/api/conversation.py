@@ -522,18 +522,32 @@ async def conversation_endpoint(
             if cached:
                 if isinstance(cached, (bytes, bytearray)):
                     cached = cached.decode("utf-8", "ignore")
+                if str(cached).startswith("inflight:"):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "idempotency_in_flight",
+                            "message": "Request with this Idempotency-Key is already in progress.",
+                        },
+                    )
                 status_code, body = _read_final_idempotency_record(cached, current_request_hash)
                 if status_code < 400:
                     return ConversationResponse(**body)
                 raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
 
-            ttl = int(getattr(settings, "API_IDEMPOTENCY_TTL_SEC", 3600))
+            inflight_ttl = int(
+                getattr(
+                    settings,
+                    "API_IDEMPOTENCY_INFLIGHT_TTL_SEC",
+                    int(getattr(settings, "API_CALL_TIMEOUT_SEC", 135)) + 20,
+                )
+            )
             try:
                 idem_lock_acquired = await idem_redis.set(
                     idem_cache_key,
                     f"inflight:{time.time()}",
                     nx=True,
-                    ex=max(60, ttl),
+                    ex=max(1, inflight_ttl),
                 )
             except Exception:
                 idem_lock_acquired = False

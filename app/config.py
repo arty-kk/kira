@@ -58,6 +58,11 @@ def _parse_bool(value: str) -> bool:
     raise ValueError(f"Unsupported boolean value: {value!r}")
 
 
+def _default_api_idempotency_inflight_ttl_sec() -> int:
+    call_timeout = int(_get_env("API_CALL_TIMEOUT_SEC", "135", conv=int) or 135)
+    return max(30, call_timeout + 20)
+
+
 @dataclass
 class Settings:
 
@@ -157,6 +162,13 @@ class Settings:
     # Fallback limiter keeps a bounded OrderedDict; values <= 0 fall back to the safe default (10000), not unlimited.
     API_FALLBACK_RL_MAX_KEYS: int = field(default_factory=lambda: _get_env("API_FALLBACK_RL_MAX_KEYS", "10000", conv=int))
     API_IDEMPOTENCY_TTL_SEC: int = field(default_factory=lambda: _get_env("API_IDEMPOTENCY_TTL_SEC", "3600", conv=int))
+    API_IDEMPOTENCY_INFLIGHT_TTL_SEC: int = field(
+        default_factory=lambda: _get_env(
+            "API_IDEMPOTENCY_INFLIGHT_TTL_SEC",
+            str(_default_api_idempotency_inflight_ttl_sec()),
+            conv=int,
+        )
+    )
     API_KEY_HASH_SECRET: str = field(default_factory=lambda: _get_env("API_KEY_HASH_SECRET", "", conv=str))
     API_KEY_CACHE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_TTL_SEC", "60", conv=int))
     API_KEY_CACHE_NEGATIVE_TTL_SEC: int = field(default_factory=lambda: _get_env("API_KEY_CACHE_NEGATIVE_TTL_SEC", "30", conv=int))
