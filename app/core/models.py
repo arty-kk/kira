@@ -105,6 +105,34 @@ class PaymentOutbox(Base):
         CheckConstraint("telegram_payment_charge_id <> ''", name="ck_payment_outbox_charge_id_nonempty"),
     )
 
+
+class RefundOutbox(Base):
+
+    __tablename__ = "refund_outbox"
+
+    id           = Column(BigInteger, Identity(always=False), primary_key=True)
+    owner_id     = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    billing_tier = Column(String(16), nullable=True)
+    request_id   = Column(String(128), nullable=False, index=True)
+    reason       = Column(String(128), nullable=False)
+    status       = Column(String(16), nullable=False, server_default=text("'pending'"))
+    attempts     = Column(Integer, nullable=False, server_default=text("0"))
+    lease_attempts = Column(Integer, nullable=False, server_default=text("0"))
+    last_error   = Column(String, nullable=True)
+    leased_at    = Column(DateTime(timezone=True), nullable=True, index=True)
+    lease_token  = Column(String(64), nullable=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    processed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','applied','failed')", name="ck_refund_outbox_status"),
+        CheckConstraint("attempts >= 0", name="ck_refund_outbox_attempts_nonneg"),
+        CheckConstraint("lease_attempts >= 0", name="ck_refund_outbox_lease_attempts_nonneg"),
+        CheckConstraint("request_id <> ''", name="ck_refund_outbox_request_id_nonempty"),
+        CheckConstraint("reason <> ''", name="ck_refund_outbox_reason_nonempty"),
+    )
+
 class ApiKey(Base):
 
     __tablename__ = 'api_keys'
