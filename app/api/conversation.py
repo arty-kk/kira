@@ -56,6 +56,50 @@ def _normalize_idempotency_key(value: Optional[str]) -> Optional[str]:
     return key[:128]
 
 
+def _build_idempotency_request_hash(payload: "ConversationRequest") -> str:
+    persona_payload = None
+    if payload.persona is not None:
+        persona_payload = payload.persona.model_dump(exclude_none=True)
+
+    normalized_payload = {
+        "user_id": payload.user_id,
+        "message": (payload.message or "").strip() or None,
+        "image_b64": payload.image_b64,
+        "image_mime": payload.image_mime,
+        "voice_b64": payload.voice_b64,
+        "voice_mime": payload.voice_mime,
+        "persona": persona_payload,
+    }
+    canonical_payload = json.dumps(
+        normalized_payload,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+def _read_final_idempotency_record(raw_value: str, current_request_hash: Optional[str]) -> tuple[int, dict]:
+    try:
+        parsed = json.loads(raw_value)
+        status_code = int(parsed.get("status_code", 500))
+        body = parsed.get("body") or {}
+        cached_request_hash = parsed.get("request_hash")
+    except Exception:
+        return 500, {}
+
+    if cached_request_hash and current_request_hash and cached_request_hash != current_request_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "idempotency_key_reused_with_different_payload",
+                "message": "Idempotency-Key was already used with a different request payload.",
+            },
+        )
+
+    return status_code, body
+
+
 async def _fallback_rate_limit(key: str, limit: int, window_sec: int) -> bool:
     now = time.time()
     async with _fallback_rl_lock:
@@ -447,6 +491,7 @@ async def conversation_endpoint(
     persona_owner_id = _get_persona_owner_id(owner_id, api_key_id)
 
     idem_key = _normalize_idempotency_key(idempotency_key)
+    current_request_hash = _build_idempotency_request_hash(payload) if idem_key else None
     idem_redis = None
     idem_cache_key = None
     idem_lock_acquired = False
@@ -462,13 +507,7 @@ async def conversation_endpoint(
             if cached:
                 if isinstance(cached, (bytes, bytearray)):
                     cached = cached.decode("utf-8", "ignore")
-                try:
-                    parsed = json.loads(cached)
-                    status_code = int(parsed.get("status_code", 500))
-                    body = parsed.get("body") or {}
-                except Exception:
-                    status_code = 500
-                    body = {}
+                status_code, body = _read_final_idempotency_record(cached, current_request_hash)
                 if status_code < 400:
                     return ConversationResponse(**body)
                 raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
@@ -500,13 +539,7 @@ async def conversation_endpoint(
                                 "message": "Request with this Idempotency-Key is already in progress.",
                             },
                         )
-                    try:
-                        parsed = json.loads(existing)
-                        status_code = int(parsed.get("status_code", 500))
-                        body = parsed.get("body") or {}
-                    except Exception:
-                        status_code = 500
-                        body = {}
+                    status_code, body = _read_final_idempotency_record(existing, current_request_hash)
                     if status_code < 400:
                         return ConversationResponse(**body)
                     raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
@@ -531,7 +564,14 @@ async def conversation_endpoint(
         try:
             await idem_redis.set(
                 idem_cache_key,
-                json.dumps({"status_code": status_code, "body": body}, ensure_ascii=False),
+                json.dumps(
+                    {
+                        "status_code": status_code,
+                        "body": body,
+                        "request_hash": current_request_hash,
+                    },
+                    ensure_ascii=False,
+                ),
                 ex=max(60, ttl),
             )
         except Exception:
