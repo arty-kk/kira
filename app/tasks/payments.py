@@ -132,7 +132,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
         else:
             text = await _tr("payments.gift_delivered", "✅ Gift delivered.")
 
-    await send_message_safe(bot, int(outbox.user_id), text, parse_mode="HTML")
+    sent_message = await send_message_safe(bot, int(outbox.user_id), text, parse_mode="HTML")
 
     if outbox.kind == "gift" and outbox.gift_title and not duplicate:
         gift_label = f"{outbox.gift_emoji or ''} {outbox.gift_title}".strip()
@@ -165,6 +165,14 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             )
         except Exception:
             logger.exception("payment_outbox: failed to schedule gift reaction")
+
+    if sent_message is None:
+        logger.warning(
+            "payment_outbox: notify skipped charge_id=%s user_id=%s",
+            outbox.telegram_payment_charge_id,
+            outbox.user_id,
+        )
+        return
 
     async with session_scope(stmt_timeout_ms=3000) as db:
         res = await db.execute(
