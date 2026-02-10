@@ -15,6 +15,43 @@ class _DummyRedis:
         return self._payload
 
 
+
+
+class _ExpiringFakeRedis:
+    def __init__(self, now_fn) -> None:
+        self._now_fn = now_fn
+        self._data = {}
+        self.set_calls = []
+
+    def _cleanup(self, key: str) -> None:
+        record = self._data.get(key)
+        if record is None:
+            return
+        value, expires_at = record
+        if expires_at is not None and self._now_fn() >= expires_at:
+            self._data.pop(key, None)
+
+    async def get(self, key):
+        self._cleanup(key)
+        record = self._data.get(key)
+        if record is None:
+            return None
+        value, _expires_at = record
+        return value
+
+    async def set(self, key, value, nx=False, ex=None):
+        self._cleanup(key)
+        self.set_calls.append({"key": key, "nx": nx, "ex": ex, "value": value})
+        if nx and key in self._data:
+            return False
+        expires_at = None if ex is None else self._now_fn() + int(ex)
+        self._data[key] = (value, expires_at)
+        return True
+
+    async def delete(self, key):
+        self._data.pop(key, None)
+
+
 class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
     def test_normalize_idempotency_key_trim_and_empty_behavior(self) -> None:
         self.assertEqual(conversation._normalize_idempotency_key("  abc  "), "abc")
@@ -162,6 +199,68 @@ class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail.get("code"), "invalid_idempotency_key")
+
+
+    async def test_inflight_lock_uses_short_ttl_and_expires_after_crash(self) -> None:
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        now = {"value": 1000.0}
+        fake_redis = _ExpiringFakeRedis(lambda: now["value"])
+
+        original_ttl = conversation.settings.API_IDEMPOTENCY_TTL_SEC
+        original_inflight_ttl = conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC
+        conversation.settings.API_IDEMPOTENCY_TTL_SEC = 3600
+        conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC = 2
+        try:
+            with (
+                unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+                unittest.mock.patch.object(conversation, "_check_rate_limit", side_effect=RuntimeError("boom")),
+                unittest.mock.patch.object(conversation.time, "time", side_effect=lambda: now["value"]),
+            ):
+                with self.assertRaises(RuntimeError):
+                    await conversation.conversation_endpoint(
+                        payload,
+                        request,
+                        api_key={"user_id": 1, "id": 2},
+                        idempotency_key="abc",
+                    )
+
+                with self.assertRaises(conversation.HTTPException) as inflight_exc:
+                    await conversation.conversation_endpoint(
+                        payload,
+                        request,
+                        api_key={"user_id": 1, "id": 2},
+                        idempotency_key="abc",
+                    )
+
+                self.assertEqual(inflight_exc.exception.status_code, 409)
+                self.assertEqual(inflight_exc.exception.detail.get("code"), "idempotency_in_flight")
+
+                now["value"] += 3
+
+                with self.assertRaises(RuntimeError):
+                    await conversation.conversation_endpoint(
+                        payload,
+                        request,
+                        api_key={"user_id": 1, "id": 2},
+                        idempotency_key="abc",
+                    )
+        finally:
+            conversation.settings.API_IDEMPOTENCY_TTL_SEC = original_ttl
+            conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC = original_inflight_ttl
+
+        inflight_set_calls = [call for call in fake_redis.set_calls if call["nx"] is True]
+        self.assertGreaterEqual(len(inflight_set_calls), 2)
+        self.assertEqual(inflight_set_calls[0]["ex"], 2)
+        self.assertTrue(all(call["ex"] != 3600 for call in inflight_set_calls))
 
 
 if __name__ == "__main__":
