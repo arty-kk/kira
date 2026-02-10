@@ -2,6 +2,8 @@ import unittest
 import unittest.mock
 from contextlib import asynccontextmanager
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.api import conversation
@@ -100,6 +102,28 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(job["persona_profile_id"])
         self.assertEqual(job["memory_uid"], job["chat_id"])
         self.assertEqual(job["memory_uid"], register_memory_uid)
+
+    async def test_user_id_whitespace_rejected_before_worker_call(self):
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_job_mock = unittest.mock.AsyncMock()
+        with unittest.mock.patch.object(conversation, "_send_job_and_wait", send_job_mock):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={"user_id": "   ", "message": "hi"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"].get("code"), "invalid_payload")
+        send_job_mock.assert_not_called()
+
+    async def test_user_id_normalized_by_trimming(self):
+        payload = conversation.ConversationRequest(user_id="  user-1  ", message="hi")
+
+        self.assertEqual(payload.user_id, "user-1")
 
 
 if __name__ == "__main__":

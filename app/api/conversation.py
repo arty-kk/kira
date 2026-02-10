@@ -10,7 +10,7 @@ import ipaddress
 from collections import OrderedDict
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field, constr, model_validator
+from pydantic import BaseModel, Field, constr, field_validator, model_validator
 from sqlalchemy import case, literal, or_, select, update, cast
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -222,6 +222,23 @@ class ConversationRequest(BaseModel):
 
     persona: Optional[PersonaConfig] = None
 
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def normalize_user_id(cls, value):
+        if not isinstance(value, str):
+            return value
+
+        normalized = value.strip()
+        if not normalized:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_payload",
+                    "message": "user_id must not be empty.",
+                },
+            )
+        return normalized
+
     @model_validator(mode="after")
     def validate_content(self):
         def _payload_error(message: str) -> None:
@@ -306,8 +323,7 @@ class ConversationResponse(BaseModel):
 
 
 def _make_chat_id(persona_owner_id: int, external_user_id: str) -> int:
-    norm_uid = (external_user_id or "").strip()
-    raw = f"api:{persona_owner_id}:{norm_uid}".encode("utf-8")
+    raw = f"api:{persona_owner_id}:{external_user_id}".encode("utf-8")
     base = int.from_bytes(hashlib.sha256(raw).digest()[:8], "big")
     return (1 << 62) | (base & ((1 << 62) - 1))
 
