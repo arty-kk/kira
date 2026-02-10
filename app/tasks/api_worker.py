@@ -952,21 +952,62 @@ async def _async_main() -> None:
             pass
 
     worker = asyncio.create_task(_worker_loop(stop_evt))
+    stop_waiter = asyncio.create_task(stop_evt.wait())
     logger.info("api_worker: loop started")
 
-    await stop_evt.wait()
-    logger.info("api_worker: stop signal received")
-
-    worker.cancel()
-    with suppress(asyncio.CancelledError):
-        await worker
-
     try:
-        await close_redis_pools()
-    except Exception:
-        pass
+        done, _ = await asyncio.wait(
+            {stop_waiter, worker},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-    logger.info("api_worker: shutdown complete")
+        if stop_waiter in done:
+            logger.info("api_worker: stop signal received")
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+            try:
+                await close_redis_pools()
+            except Exception:
+                pass
+
+            logger.info("api_worker: shutdown complete")
+            return
+
+        if stop_evt.is_set():
+            logger.info("api_worker: stop signal received")
+            try:
+                await close_redis_pools()
+            except Exception:
+                pass
+            logger.info("api_worker: shutdown complete")
+            return
+
+        try:
+            exc = worker.exception()
+        except asyncio.CancelledError as cancelled_exc:
+            exc = cancelled_exc
+
+        if exc is not None:
+            logger.exception(
+                "api_worker: worker crashed unexpectedly",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+        else:
+            logger.error("api_worker: worker exited unexpectedly without stop signal")
+
+        try:
+            await close_redis_pools()
+        except Exception:
+            pass
+
+        raise SystemExit(1)
+    finally:
+        if not stop_waiter.done():
+            stop_waiter.cancel()
+            with suppress(asyncio.CancelledError):
+                await stop_waiter
 
 
 def main() -> None:
