@@ -631,7 +631,9 @@ async def process_interaction(
     text: str,
     user_gender: str | None = None,
 ) -> None:
-
+    # _proc_sem serializes the full message-processing step for this method.
+    # It preserves order only inside this pipeline and is not a global lock for
+    # every possible self.state mutation in the object.
     async with self._proc_sem:
         return await _process_interaction_unlocked(self, uid, text, user_gender=user_gender)
 
@@ -927,7 +929,6 @@ async def _process_interaction_unlocked(
         self._dirty_metrics.add("fatigue")
 
     loop = asyncio.get_running_loop()
-    snapshot_version = self.state_version
     computed = await loop.run_in_executor(
         EXECUTOR, _compute_states, dict(self.state), readings, self.change_rates
     )
@@ -1004,15 +1005,10 @@ async def _process_interaction_unlocked(
             by_ts = sorted(self.attachments.items(), key=lambda kv: kv[1].get("ts", 0.0), reverse=True)
             self.attachments = dict(by_ts[:MAX_ATTACH])
 
-    delta_ticks = self.state_version - snapshot_version
-    if delta_ticks <= 1:
-        atten = 1.0
-    else:
-        atten = 0.9 if delta_ticks == 2 else 0.8
+    # process_interaction runs under self._proc_sem and serializes this contour.
+    # So no concurrent application of another computed happens inside this step.
+    # Direct apply is correct for this specific critical section.
     for m, val in computed.items():
-        if atten != 1.0:
-            cur = self.state.get(m, val)
-            val = cur + atten * (val - cur)
         self.state[m] = val
         self._dirty_metrics.add(m)
     for m in list(self._dirty_metrics):
