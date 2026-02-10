@@ -645,7 +645,7 @@ async def conversation_endpoint(
             "voice_b64": payload.voice_b64,
             "voice_mime": payload.voice_mime,
             "chat_id": chat_id,
-            "memory_uid": memory_uid,
+            "memory_uid": scoped_memory_uid,
             "persona_owner_id": persona_owner_id,
             "persona_profile_id": persona_profile_id,
             "api_key_id": api_key_id,
