@@ -87,7 +87,10 @@ class PaymentOutbox(Base):
     gift_title                 = Column(String(128), nullable=True)
     gift_emoji                 = Column(String(32), nullable=True)
     attempts                   = Column(Integer, nullable=False, server_default=text("0"))
+    lease_attempts             = Column(Integer, nullable=False, server_default=text("0"))
     last_error                 = Column(String, nullable=True)
+    leased_at                  = Column(DateTime(timezone=True), nullable=True, index=True)
+    lease_token                = Column(String(64), nullable=True)
     created_at                 = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     updated_at                 = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     applied_at                 = Column(DateTime(timezone=True), nullable=True, index=True)
@@ -98,6 +101,7 @@ class PaymentOutbox(Base):
         CheckConstraint("status IN ('pending','applied','failed')", name="ck_payment_outbox_status"),
         CheckConstraint("stars_amount >= 0", name="ck_payment_outbox_stars_nonneg"),
         CheckConstraint("requests_amount > 0", name="ck_payment_outbox_requests_positive"),
+        CheckConstraint("lease_attempts >= 0", name="ck_payment_outbox_lease_attempts_nonneg"),
         CheckConstraint("telegram_payment_charge_id <> ''", name="ck_payment_outbox_charge_id_nonempty"),
     )
 
