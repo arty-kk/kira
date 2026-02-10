@@ -18,6 +18,7 @@ from app.tasks.celery_app import celery, _run
 
 logger = logging.getLogger(__name__)
 bot = get_bot()
+REQUEUE_PENDING_OUTBOX_BATCH_SIZE = 100
 
 
 async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Optional[int], bool]:
@@ -195,3 +196,43 @@ def process_outbox_task(charge_id: str) -> None:
         await _notify_payment_result(outbox, remaining, duplicate)
 
     _run(_run_task())
+
+
+async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:
+    safe_batch_size = max(1, int(batch_size))
+    async with session_scope(stmt_timeout_ms=5000) as db:
+        stmt = (
+            select(PaymentOutbox.telegram_payment_charge_id)
+            .where(
+                PaymentOutbox.status == "pending",
+                PaymentOutbox.applied_at.is_(None),
+            )
+            .order_by(PaymentOutbox.id)
+            .limit(safe_batch_size)
+            .with_for_update(skip_locked=True)
+        )
+        charge_ids = list((await db.execute(stmt)).scalars().all())
+
+    enqueued = 0
+    enqueue_errors = 0
+    for charge_id in charge_ids:
+        try:
+            celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            enqueued += 1
+        except Exception:
+            enqueue_errors += 1
+            logger.exception("payments.requeue_pending_outbox: enqueue failed for charge_id=%s", charge_id)
+
+    logger.info(
+        "payments.requeue_pending_outbox: scanned=%s enqueued=%s enqueue_errors=%s batch_size=%s",
+        len(charge_ids),
+        enqueued,
+        enqueue_errors,
+        safe_batch_size,
+    )
+    return enqueued, enqueue_errors
+
+
+@celery.task(name="payments.requeue_pending_outbox")
+def requeue_pending_outbox_task(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> None:
+    _run(requeue_pending_outbox(batch_size=batch_size))

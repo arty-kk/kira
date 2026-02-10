@@ -1033,7 +1033,7 @@ async def on_payment_success(message: Message) -> None:
                     )
                 ).scalar_one_or_none()
                 if row:
-                    row.status = "failed"
+                    row.status = "pending"
                     row.last_error = safe_error
 
             error_txt = await tr(
