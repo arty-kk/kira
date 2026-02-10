@@ -119,6 +119,15 @@ def _is_trusted_proxy(client_host: Optional[str]) -> bool:
 
 
 def _resolve_rate_limit_ip(request: Request) -> str:
+    def _is_valid_ip(value: str) -> bool:
+        if not value:
+            return False
+        try:
+            ipaddress.ip_address(value)
+            return True
+        except ValueError:
+            return False
+
     client_host = request.client.host if request.client else None
     if not client_host:
         return "unknown"
@@ -128,7 +137,11 @@ def _resolve_rate_limit_ip(request: Request) -> str:
 
     fwd = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
     real = (request.headers.get("X-Real-IP") or "").strip()
-    return fwd or real or client_host
+    if _is_valid_ip(fwd):
+        return fwd
+    if _is_valid_ip(real):
+        return real
+    return client_host
 
 
 class PersonaConfig(BaseModel):

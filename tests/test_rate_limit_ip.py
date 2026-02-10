@@ -55,6 +55,24 @@ class RateLimitIpTests(unittest.TestCase):
         ip = conversation._resolve_rate_limit_ip(request)
         self.assertEqual(ip, "203.0.113.12")
 
+    def test_uses_real_ip_when_forwarded_for_invalid(self) -> None:
+        settings.TRUSTED_PROXY_IPS = ["10.0.0.0/8"]
+        request = _make_request(
+            "10.0.0.9",
+            headers={"X-Forwarded-For": "invalid-ip", "X-Real-IP": "203.0.113.11"},
+        )
+        ip = conversation._resolve_rate_limit_ip(request)
+        self.assertEqual(ip, "203.0.113.11")
+
+    def test_uses_client_host_when_forwarded_for_and_real_ip_invalid(self) -> None:
+        settings.TRUSTED_PROXY_IPS = ["10.0.0.0/8"]
+        request = _make_request(
+            "10.0.0.9",
+            headers={"X-Forwarded-For": "invalid-ip", "X-Real-IP": "still-not-ip"},
+        )
+        ip = conversation._resolve_rate_limit_ip(request)
+        self.assertEqual(ip, "10.0.0.9")
+
 
 if __name__ == "__main__":
     unittest.main()
