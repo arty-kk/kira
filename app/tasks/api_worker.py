@@ -528,7 +528,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
         now = int(time.time())
         inflight_age = None if inflight_ts is None else now - inflight_ts
 
-        if inflight_age is None or inflight_age > RESPOND_TIMEOUT:
+        if inflight_age is None or inflight_age > INFLIGHT_STALE_AFTER_SEC:
             try:
                 await redis_queue.set(job_key, f"inflight:{now}", ex=JOB_TTL_SEC)
             except Exception as e:
