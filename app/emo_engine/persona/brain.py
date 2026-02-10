@@ -80,6 +80,8 @@ class PersonaBrain:
         for name in VALID_TRIADS.values():
             self.state.setdefault(name, 0.0)
 
+        self.recompute_derived()
+
     def set_metric(self, name: str, value: float) -> None:
         v = float(value)
         if name == "valence":
