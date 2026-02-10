@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 from app import engine, close_redis_pools, _get_env, setup_logging
-from app.config import _parse_bool
+from app.config import settings, _parse_bool
 from app.emo_engine.persona.memory import PersonaMemory
 from app.emo_engine.registry import shutdown_personas
 from app.clients.http_client import http_client
@@ -35,15 +35,34 @@ async def start_api_server() -> None:
     ssl_certfile = None
     ssl_keyfile = None
 
-    certs_dir = _get_env("CERTS_DIR", "")
-    use_self_signed = _get_env("USE_SELF_SIGNED_CERT", "false", conv=_parse_bool)
+    use_self_signed = settings.USE_SELF_SIGNED_CERT
 
-    if certs_dir and use_self_signed:
-        fullchain = os.path.join(certs_dir, "fullchain.pem")
-        privkey = os.path.join(certs_dir, "privkey.pem")
-        if os.path.exists(fullchain) and os.path.exists(privkey):
-            ssl_certfile = fullchain
-            ssl_keyfile = privkey
+    api_cert = _get_env("API_CERT", None)
+    api_key = _get_env("API_KEY", None)
+    certfile = api_cert if isinstance(api_cert, str) and api_cert.strip() else settings.WEBHOOK_CERT
+    keyfile = api_key if isinstance(api_key, str) and api_key.strip() else settings.WEBHOOK_KEY
+
+    if use_self_signed:
+        missing_files = [
+            path
+            for path in (certfile, keyfile)
+            if not path or not os.path.exists(path)
+        ]
+        if missing_files:
+            logging.error(
+                "Invalid API TLS configuration. Missing files: %s",
+                ", ".join(missing_files),
+            )
+            raise RuntimeError(
+                f"API TLS files are missing: {', '.join(missing_files)}"
+            )
+
+        ssl_certfile = certfile
+        ssl_keyfile = keyfile
+    else:
+        logging.info(
+            "USE_SELF_SIGNED_CERT is disabled; local TLS is not started and external proxy TLS termination is expected"
+        )
 
     config = uvicorn.Config(
         app,
