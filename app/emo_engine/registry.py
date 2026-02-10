@@ -123,8 +123,65 @@ async def get_persona(
 
     logger.debug("persona.cache miss key=%s – constructing", key)
 
+    dispose: Persona | None = None
+    closers2: list[Persona] = []
     try:
         persona = Persona(chat_id)
+
+        async with session_scope(read_only=True) as db:
+            prefs = None
+            ak = None
+            try:
+                if user_id:
+                    with suppress(Exception):
+                        ak = await db.get(ApiKey, int(user_id))
+                if ak and getattr(ak, "persona_prefs", None):
+                    prefs = ak.persona_prefs
+                owner_uid = getattr(ak, "user_id", None) if ak else None
+                target_id = owner_uid or (user_id if not ak else None) or chat_id
+                if prefs is None and target_id:
+                    with suppress(Exception):
+                        u = await db.get(User, int(target_id))
+                    if u and getattr(u, "persona_prefs", None):
+                        prefs = u.persona_prefs
+            except Exception:
+                logger.debug("load persona_prefs failed", exc_info=True)
+
+            if prefs:
+                try:
+                    persona.apply_overrides(prefs)
+                except Exception:
+                    logger.debug("apply_overrides failed", exc_info=True)
+
+        async with _lock:
+            now = _now()
+            current = _cache.get(key)
+            if current is not None:
+                p2, ts2 = current
+                if now - ts2 <= _TTL:
+                    _cache[key] = (p2, now)
+                    _cache.move_to_end(key, last=True)
+                    logger.debug("persona.raced key=%s reused existing", key)
+                    dispose = persona
+                    ret = p2
+                else:
+                    _cache.pop(key, None)
+                    _cache[key] = (persona, now)
+                    _cache.move_to_end(key, last=True)
+                    ret = persona
+            else:
+                _cache[key] = (persona, now)
+                _cache.move_to_end(key, last=True)
+                ret = persona
+            closers2 = _purge_locked(now)
+            try:
+                loop = asyncio.get_running_loop()
+                ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
+            except Exception:
+                logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
+            fut_done = _inflight.pop(key, None)
+            if fut_done and not fut_done.done():
+                fut_done.set_result(ret)
     except Exception as e:
         async with _lock:
             fut_fail = _inflight.pop(key, None)
@@ -135,63 +192,6 @@ async def get_persona(
                     logger.debug("persona.cache: set_exception failed", exc_info=True)
         logger.debug("persona.cache build failed key=%s", key, exc_info=True)
         raise
-
-    async with session_scope(read_only=True) as db:
-        prefs = None
-        ak = None
-        try:
-            if user_id:
-                with suppress(Exception):
-                    ak = await db.get(ApiKey, int(user_id))
-            if ak and getattr(ak, "persona_prefs", None):
-                prefs = ak.persona_prefs
-            owner_uid = getattr(ak, "user_id", None) if ak else None
-            target_id = owner_uid or (user_id if not ak else None) or chat_id
-            if prefs is None and target_id:
-                with suppress(Exception):
-                    u = await db.get(User, int(target_id))
-                if u and getattr(u, "persona_prefs", None):
-                    prefs = u.persona_prefs
-        except Exception:
-            logger.debug("load persona_prefs failed", exc_info=True)
-
-        if prefs:
-            try:
-                persona.apply_overrides(prefs)
-            except Exception:
-                logger.debug("apply_overrides failed", exc_info=True)
-
-    dispose: Persona | None = None
-    closers2: list[Persona] = []
-    async with _lock:
-        now = _now()
-        current = _cache.get(key)
-        if current is not None:
-            p2, ts2 = current
-            if now - ts2 <= _TTL:
-                _cache[key] = (p2, now)
-                _cache.move_to_end(key, last=True)
-                logger.debug("persona.raced key=%s reused existing", key)
-                dispose = persona
-                ret = p2
-            else:
-                _cache.pop(key, None)
-                _cache[key] = (persona, now)
-                _cache.move_to_end(key, last=True)
-                ret = persona
-        else:
-            _cache[key] = (persona, now)
-            _cache.move_to_end(key, last=True)
-            ret = persona
-        closers2 = _purge_locked(now)
-        try:
-            loop = asyncio.get_running_loop()
-            ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
-        except Exception:
-            logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
-        fut_done = _inflight.pop(key, None)
-        if fut_done and not fut_done.done():
-            fut_done.set_result(ret)
 
     _schedule_closes(closers2)
 
