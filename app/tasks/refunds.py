@@ -5,8 +5,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.core.db import session_scope
 from app.core.models import RefundOutbox, User
 from app.tasks.celery_app import celery, _run
@@ -16,21 +16,20 @@ REFUND_OUTBOX_LEASE_TTL_SECONDS = 300
 REFUND_REQUEUE_BATCH_SIZE = 100
 
 
-async def _refund_balance_for_outbox(owner_id: int, billing_tier: str) -> None:
+async def _refund_balance_for_outbox(db: AsyncSession, owner_id: int, billing_tier: str) -> None:
     if billing_tier not in ("free", "paid"):
         return
-    async with session_scope(stmt_timeout_ms=settings.API_DB_TIMEOUT_MS) as db:
-        res = await db.execute(select(User).where(User.id == owner_id).with_for_update())
-        user = res.scalar_one_or_none()
-        if not user:
-            return
-        if billing_tier == "free":
-            user.free_requests += 1
-        elif billing_tier == "paid":
-            user.paid_requests += 1
-        if user.used_requests > 0:
-            user.used_requests -= 1
-        await db.flush()
+    res = await db.execute(select(User).where(User.id == owner_id).with_for_update())
+    user = res.scalar_one_or_none()
+    if not user:
+        return
+    if billing_tier == "free":
+        user.free_requests += 1
+    elif billing_tier == "paid":
+        user.paid_requests += 1
+    if user.used_requests > 0:
+        user.used_requests -= 1
+    await db.flush()
 
 
 @celery.task(name="refunds.process_outbox")
@@ -50,11 +49,13 @@ def process_refund_outbox_task(outbox_id: int) -> None:
             outbox.leased_at = None
             outbox.lease_token = None
             try:
-                await _refund_balance_for_outbox(int(outbox.owner_id), str(outbox.billing_tier or ""))
-                outbox.status = "applied"
-                outbox.last_error = None
-                outbox.processed_at = datetime.now(timezone.utc)
+                async with db.begin_nested():
+                    await _refund_balance_for_outbox(db, int(outbox.owner_id), str(outbox.billing_tier or ""))
+                    outbox.status = "applied"
+                    outbox.last_error = None
+                    outbox.processed_at = datetime.now(timezone.utc)
             except Exception as exc:
+                outbox.status = "failed"
                 outbox.last_error = repr(exc)
                 logger.exception(
                     "refund_outbox process failed id=%s owner_id=%s request_id=%s",
