@@ -17,6 +17,7 @@ from app.tasks.periodic import (
     cleanup_nonbuyers_task, analytics_daily_task, battle_job_task,
     prices_post_task, group_ping_job_task, personal_ping_job_task,
     tweet_once_task, tg_channel_post_task, payments_requeue_pending_outbox_task,
+    refunds_requeue_pending_outbox_task,
 )
 from app.tasks.kb import (
     gc_orphan_api_key_dirs,
@@ -402,6 +403,17 @@ def start_scheduler() -> None:
         "interval",
         minutes=3,
         id="payments_requeue_pending_outbox_job",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+        next_run_time=eager,
+    )
+
+    _sched.add_job(
+        lambda: refunds_requeue_pending_outbox_task.delay(),
+        "interval",
+        minutes=3,
+        id="refunds_requeue_pending_outbox_job",
         max_instances=1,
         coalesce=True,
         replace_existing=True,

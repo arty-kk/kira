@@ -16,6 +16,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.config import settings
 from app.core.db import session_scope
+from app.core.models import User, ApiKey, RefundOutbox
 from app.core.media_limits import (
     ALLOWED_IMAGE_MIMES,
     ALLOWED_VOICE_MIMES,
@@ -25,7 +26,6 @@ from app.core.media_limits import (
     decode_base64_payload,
 )
 from app.core.memory import get_redis, get_redis_queue, register_api_memory_uid
-from app.core.models import User, ApiKey
 from app.api.api_keys import authenticate_key, inc_stats
 from app.emo_engine.registry import update_cached_personas_for_owner
 from app.emo_engine.persona.constants.user_prefs import normalize_prefs
@@ -34,6 +34,9 @@ from app.tasks.queue_schema import validate_api_job
 router = APIRouter(prefix="/api/v1", tags=["conversation"])
 
 logger = logging.getLogger(__name__)
+
+_REFUND_RETRY_ATTEMPTS = 3
+_REFUND_RETRY_BACKOFF_BASE_SEC = 0.2
 
 _fallback_rl_state: "OrderedDict[str, tuple[int, float]]" = OrderedDict()
 _fallback_rl_lock = asyncio.Lock()
@@ -744,10 +747,20 @@ async def conversation_endpoint(
                 "invalid_payload",
                 "payload_too_large",
             }:
-                await _refund_request(owner_id, billing_tier)
+                await _safe_refund_request(
+                    owner_id,
+                    billing_tier,
+                    request_id=request_id,
+                    reason=f"http_exception:{err_code or e.status_code}",
+                )
             raise
         except asyncio.TimeoutError:
-            await _refund_request(owner_id, billing_tier)
+            await _safe_refund_request(
+                owner_id,
+                billing_tier,
+                request_id=request_id,
+                reason="timeout",
+            )
             logging.exception(
                 "API: worker timeout chat_id=%s owner_id=%s request_id=%s",
                 chat_id,
@@ -763,7 +776,12 @@ async def conversation_endpoint(
                 },
             )
         except Exception:
-            await _refund_request(owner_id, billing_tier)
+            await _safe_refund_request(
+                owner_id,
+                billing_tier,
+                request_id=request_id,
+                reason="unexpected_exception",
+            )
             logging.exception(
                 "API: _send_job_and_wait failed chat_id=%s owner_id=%s request_id=%s",
                 chat_id,
@@ -788,7 +806,12 @@ async def conversation_endpoint(
                 "voice_transcription_failed",
                 "duplicate_request",
             }:
-                await _refund_request(owner_id, billing_tier)
+                await _safe_refund_request(
+                    owner_id,
+                    billing_tier,
+                    request_id=request_id,
+                    reason=f"worker_error:{err_code or status_code}",
+                )
             raise HTTPException(
                 status_code=status_code,
                 detail={
@@ -886,6 +909,84 @@ async def _refund_request(owner_id: int, billing_tier: Optional[str]) -> None:
         if user.used_requests > 0:
             user.used_requests -= 1
         await db.flush()
+
+
+async def _store_refund_outbox_task(
+    owner_id: int,
+    billing_tier: Optional[str],
+    *,
+    request_id: str,
+    reason: str,
+    attempts: int,
+    last_error: Optional[str],
+) -> Optional[int]:
+    try:
+        async with session_scope(
+            stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
+        ) as db:
+            row = RefundOutbox(
+                owner_id=owner_id,
+                billing_tier=billing_tier,
+                request_id=request_id,
+                reason=reason,
+                status="pending",
+                attempts=max(0, int(attempts or 0)),
+                last_error=last_error,
+            )
+            db.add(row)
+            await db.flush()
+            return int(row.id)
+    except Exception:
+        logger.exception(
+            "Failed to store deferred refund task owner_id=%s billing_tier=%s request_id=%s reason=%s",
+            owner_id,
+            billing_tier,
+            request_id,
+            reason,
+        )
+        return None
+
+
+async def _safe_refund_request(
+    owner_id: int,
+    billing_tier: Optional[str],
+    *,
+    request_id: str,
+    reason: str,
+) -> bool:
+    if billing_tier not in ("free", "paid"):
+        return True
+
+    last_error: Optional[str] = None
+    for attempt in range(1, _REFUND_RETRY_ATTEMPTS + 1):
+        try:
+            await _refund_request(owner_id, billing_tier)
+            return True
+        except Exception as exc:
+            last_error = repr(exc)
+            logger.exception(
+                "Refund attempt failed owner_id=%s billing_tier=%s request_id=%s reason=%s attempt=%s",
+                owner_id,
+                billing_tier,
+                request_id,
+                reason,
+                attempt,
+            )
+            if attempt < _REFUND_RETRY_ATTEMPTS:
+                delay = _REFUND_RETRY_BACKOFF_BASE_SEC * (2 ** (attempt - 1))
+                await asyncio.sleep(delay)
+
+    outbox_id = await _store_refund_outbox_task(
+        owner_id,
+        billing_tier,
+        request_id=request_id,
+        reason=reason,
+        attempts=_REFUND_RETRY_ATTEMPTS,
+        last_error=last_error,
+    )
+    if outbox_id is None:
+        return False
+    return False
 
 
 async def _send_job_and_wait(*, request_id: str, job: Dict[str, Any]) -> Dict[str, Any]:

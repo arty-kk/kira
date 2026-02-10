@@ -11,6 +11,7 @@ from app.config import settings
 from app.tasks.celery_app import celery, _run
 from app.tasks.cleanup import cleanup_nonbuyers
 from app.tasks.payments import requeue_pending_outbox
+from app.tasks.refunds import requeue_pending_refund_outbox
 from app.services.addons.analytics import generate_and_send_daily_reports
 from app.services.addons import (
     start_battle_job, price_fetcher,
@@ -133,3 +134,10 @@ def payments_requeue_pending_outbox_task():
     logger.info("payments_requeue_pending_outbox_task start")
     _run(requeue_pending_outbox())
     logger.info("payments_requeue_pending_outbox_task done")
+
+
+@celery.task(name="refunds_requeue_pending_outbox")
+def refunds_requeue_pending_outbox_task():
+    logger.info("refunds_requeue_pending_outbox_task start")
+    _run(requeue_pending_refund_outbox())
+    logger.info("refunds_requeue_pending_outbox_task done")
