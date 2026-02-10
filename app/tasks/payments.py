@@ -105,16 +105,7 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
 
 
 async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int], duplicate: bool) -> None:
-    async with session_scope(stmt_timeout_ms=3000) as db:
-        claim_stmt = (
-            update(PaymentOutbox)
-            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
-            .values(notified_at=func.now())
-            .returning(PaymentOutbox.id)
-        )
-        claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
-
-    if claimed_id is None:
+    if outbox.notified_at is not None:
         return
 
     async def _tr(key: str, default: str, **kwargs) -> str:
@@ -143,6 +134,28 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             text = await _tr("payments.gift_delivered", "✅ Gift delivered.")
 
     sent_message = await send_message_safe(bot, int(outbox.user_id), text, parse_mode="HTML")
+
+    if sent_message is None:
+        logger.warning(
+            "payment_outbox: notify skipped charge_id=%s user_id=%s",
+            outbox.telegram_payment_charge_id,
+            outbox.user_id,
+        )
+        return
+
+    async with session_scope(stmt_timeout_ms=3000) as db:
+        claim_stmt = (
+            update(PaymentOutbox)
+            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
+            .values(notified_at=func.now())
+            .returning(PaymentOutbox.id)
+        )
+        claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
+
+    if claimed_id is None:
+        return
+
+    outbox.notified_at = datetime.now(timezone.utc)
 
     if outbox.kind == "gift" and outbox.gift_title and not duplicate:
         gift_label = f"{outbox.gift_emoji or ''} {outbox.gift_title}".strip()
@@ -175,14 +188,6 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             )
         except Exception:
             logger.exception("payment_outbox: failed to schedule gift reaction")
-
-    if sent_message is None:
-        logger.warning(
-            "payment_outbox: notify skipped charge_id=%s user_id=%s",
-            outbox.telegram_payment_charge_id,
-            outbox.user_id,
-        )
-        return
 
 
 @celery.task(name="payments.process_outbox", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 5})
