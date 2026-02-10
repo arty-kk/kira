@@ -98,6 +98,7 @@ SUCCESS_NOTICE_TTL_BUY = int(getattr(settings, "PAYMENTS_SUCCESS_NOTICE_TTL_BUY"
 SUCCESS_NOTICE_TTL_GIFT = int(getattr(settings, "PAYMENTS_SUCCESS_NOTICE_TTL_GIFT", 90))
 
 CB_DEDUPE_TTL = int(getattr(settings, "PAYMENTS_CB_DEDUPE_TTL", 86400))
+ENQUEUE_ERROR_MAX_LEN = 500
 
 
 # ----------------------------
@@ -1010,15 +1011,37 @@ async def on_payment_success(message: Message) -> None:
             await send_transient_notice(message.chat.id, dup_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
             return
 
-        with suppress(Exception):
+        try:
             celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            processing_txt = await tr(
+                message.from_user.id,
+                "payments.processing",
+                "✅ Payment received. We are processing it now.",
+            )
+            await send_transient_notice(message.chat.id, processing_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
+        except Exception as e:
+            logger.exception("on_payment_success: failed to enqueue outbox processing for charge_id=%s", charge_id)
+            enqueue_error = str(e).strip() or e.__class__.__name__
+            safe_error = enqueue_error[:ENQUEUE_ERROR_MAX_LEN]
 
-        processing_txt = await tr(
-            message.from_user.id,
-            "payments.processing",
-            "✅ Payment received. We are processing it now.",
-        )
-        await send_transient_notice(message.chat.id, processing_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
+            async with session_scope(stmt_timeout_ms=5000) as db:
+                row = (
+                    await db.execute(
+                        select(PaymentOutbox)
+                        .where(PaymentOutbox.telegram_payment_charge_id == str(charge_id))
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if row:
+                    row.status = "failed"
+                    row.last_error = safe_error
+
+            error_txt = await tr(
+                message.from_user.id,
+                "payments.error",
+                "Payment error, please try again.",
+            )
+            await send_transient_notice(message.chat.id, error_txt, parse_mode="HTML", delay=SUCCESS_NOTICE_TTL_BUY)
         return
 
     except ValueError as ve:
