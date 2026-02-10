@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.bot.utils.telegram_safe import send_message_safe
@@ -104,7 +104,16 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
 
 
 async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int], duplicate: bool) -> None:
-    if outbox.notified_at is not None:
+    async with session_scope(stmt_timeout_ms=3000) as db:
+        claim_stmt = (
+            update(PaymentOutbox)
+            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
+            .values(notified_at=func.now())
+            .returning(PaymentOutbox.id)
+        )
+        claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
+
+    if claimed_id is None:
         return
 
     async def _tr(key: str, default: str, **kwargs) -> str:
@@ -173,14 +182,6 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             outbox.user_id,
         )
         return
-
-    async with session_scope(stmt_timeout_ms=3000) as db:
-        res = await db.execute(
-            select(PaymentOutbox).where(PaymentOutbox.id == outbox.id).with_for_update()
-        )
-        row = res.scalar_one_or_none()
-        if row and row.notified_at is None:
-            row.notified_at = datetime.now(timezone.utc)
 
 
 @celery.task(name="payments.process_outbox", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 5})
