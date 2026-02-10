@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.bot.utils.telegram_safe import send_message_safe
@@ -19,12 +20,21 @@ from app.tasks.celery_app import celery, _run
 logger = logging.getLogger(__name__)
 bot = get_bot()
 REQUEUE_PENDING_OUTBOX_BATCH_SIZE = 100
+OUTBOX_LEASE_TTL_SECONDS = 300
+
+
+def _is_active_lease(outbox: PaymentOutbox) -> bool:
+    if outbox.lease_token is None or outbox.leased_at is None:
+        return False
+    return outbox.leased_at >= datetime.now(timezone.utc) - timedelta(seconds=OUTBOX_LEASE_TTL_SECONDS)
 
 
 async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Optional[int], bool]:
     async with session_scope(stmt_timeout_ms=5000) as db:
         res = await db.execute(
-            select(PaymentOutbox).where(PaymentOutbox.telegram_payment_charge_id == charge_id).with_for_update()
+            select(PaymentOutbox)
+            .where(PaymentOutbox.telegram_payment_charge_id == charge_id)
+            .with_for_update()
         )
         outbox = res.scalar_one_or_none()
         if not outbox:
@@ -32,9 +42,16 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
             return None, None, False
 
         if outbox.status == "applied":
+            if outbox.leased_at is not None or outbox.lease_token is not None:
+                outbox.leased_at = None
+                outbox.lease_token = None
             user = await db.get(User, outbox.user_id)
             remaining = compute_remaining(user) if user else None
             return outbox, remaining, True
+
+        if not _is_active_lease(outbox):
+            logger.info("payment_outbox: no active claim charge_id=%s", charge_id)
+            return None, None, False
 
         outbox.attempts = int(outbox.attempts or 0) + 1
         outbox.last_error = None
@@ -95,6 +112,8 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
         remaining = compute_remaining(user)
         outbox.status = "applied"
         outbox.applied_at = datetime.now(timezone.utc)
+        outbox.leased_at = None
+        outbox.lease_token = None
         logger.info(
             "payment_outbox: applied charge_id=%s user_id=%s kind=%s",
             outbox.telegram_payment_charge_id,
@@ -205,32 +224,66 @@ def process_outbox_task(charge_id: str) -> None:
 
 async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:
     safe_batch_size = max(1, int(batch_size))
+    lease_token = uuid.uuid4().hex
     async with session_scope(stmt_timeout_ms=5000) as db:
-        stmt = (
-            select(PaymentOutbox.telegram_payment_charge_id)
-            .where(
-                PaymentOutbox.status == "pending",
-                PaymentOutbox.applied_at.is_(None),
+        claim_stmt = text(
+            """
+            UPDATE payment_outbox
+            SET
+                leased_at = now(),
+                lease_token = :lease_token,
+                lease_attempts = lease_attempts + 1,
+                updated_at = now()
+            WHERE id IN (
+                SELECT id
+                FROM payment_outbox
+                WHERE status = 'pending'
+                  AND applied_at IS NULL
+                  AND (leased_at IS NULL OR leased_at < now() - make_interval(secs => :ttl_seconds))
+                ORDER BY id
+                LIMIT :batch_size
+                FOR UPDATE SKIP LOCKED
             )
-            .order_by(PaymentOutbox.id)
-            .limit(safe_batch_size)
-            .with_for_update(skip_locked=True)
+            RETURNING telegram_payment_charge_id, lease_token
+            """
         )
-        charge_ids = list((await db.execute(stmt)).scalars().all())
+        claimed_rows = (await db.execute(
+            claim_stmt,
+            {
+                "lease_token": lease_token,
+                "ttl_seconds": OUTBOX_LEASE_TTL_SECONDS,
+                "batch_size": safe_batch_size,
+            },
+        )).all()
 
     enqueued = 0
     enqueue_errors = 0
-    for charge_id in charge_ids:
+    for charge_id, row_lease_token in claimed_rows:
         try:
             celery.send_task("payments.process_outbox", args=[str(charge_id)])
             enqueued += 1
-        except Exception:
+        except Exception as exc:
             enqueue_errors += 1
+            async with session_scope(stmt_timeout_ms=3000) as db:
+                release_stmt = (
+                    update(PaymentOutbox)
+                    .where(
+                        PaymentOutbox.telegram_payment_charge_id == str(charge_id),
+                        PaymentOutbox.status == "pending",
+                        PaymentOutbox.lease_token == str(row_lease_token),
+                    )
+                    .values(
+                        leased_at=None,
+                        lease_token=None,
+                        last_error=str(exc),
+                    )
+                )
+                await db.execute(release_stmt)
             logger.exception("payments.requeue_pending_outbox: enqueue failed for charge_id=%s", charge_id)
 
     logger.info(
         "payments.requeue_pending_outbox: scanned=%s enqueued=%s enqueue_errors=%s batch_size=%s",
-        len(charge_ids),
+        len(claimed_rows),
         enqueued,
         enqueue_errors,
         safe_batch_size,

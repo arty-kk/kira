@@ -4,53 +4,20 @@ import sys
 import types
 import unittest
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 
-class _SelectChain:
-    def where(self, *_args, **_kwargs):
-        return self
-
-    def order_by(self, *_args, **_kwargs):
-        return self
-
-    def limit(self, *_args, **_kwargs):
-        return self
-
-    def with_for_update(self, **_kwargs):
-        return self
-
-
-class _ScalarsResult:
-    def __init__(self, values):
-        self._values = values
-
-    def all(self):
-        return list(self._values)
-
-
-class _FakeResult:
-    def __init__(self, values):
-        self._values = values
-
-    def scalars(self):
-        return _ScalarsResult(self._values)
-
-
-class _FakeDB:
-    def __init__(self, charge_ids):
-        self._charge_ids = charge_ids
-
-    async def execute(self, _stmt):
-        return _FakeResult(self._charge_ids)
-
-
 class _FakeColumn:
-    def __eq__(self, _other):
-        return self
+    def __eq__(self, other):
+        return _FakeWhereValue(other)
 
     def is_(self, _other):
+        return self
+
+    def is_not(self, _other):
+        return self
+
+    def __ge__(self, _other):
         return self
 
 
@@ -59,6 +26,89 @@ class _FakePaymentOutbox:
     status = _FakeColumn()
     applied_at = _FakeColumn()
     id = _FakeColumn()
+    leased_at = _FakeColumn()
+    lease_token = _FakeColumn()
+
+
+
+
+class _FakeWhereValue:
+    def __init__(self, value):
+        self.right = type("_Right", (), {"value": value})()
+
+
+class _FakeReleaseStmt:
+    table = _FakePaymentOutbox
+
+    def __init__(self):
+        self._where_criteria = []
+        self._values = {}
+
+    def where(self, *criteria):
+        self._where_criteria = criteria
+        return self
+
+    def values(self, **values):
+        self._values = values
+        return self
+
+
+def _fake_update(_model):
+    return _FakeReleaseStmt()
+
+
+class _FakeClaimResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeDB:
+    def __init__(self, state):
+        self._state = state
+
+    async def execute(self, stmt, params=None):
+        stmt_text = str(stmt)
+        if "RETURNING telegram_payment_charge_id, lease_token" in stmt_text:
+            batch_size = int(params["batch_size"])
+            lease_token = params["lease_token"]
+            claimed = []
+            for row in self._state:
+                if row["status"] != "pending":
+                    continue
+                if row["lease_token"] is not None:
+                    continue
+                row["lease_token"] = lease_token
+                row["leased_at"] = "now"
+                row["lease_attempts"] += 1
+                claimed.append((row["charge_id"], row["lease_token"]))
+                if len(claimed) >= batch_size:
+                    break
+            return _FakeClaimResult(claimed)
+
+        if getattr(stmt, "table", None) is _FakePaymentOutbox:
+            charge_id = str(stmt._where_criteria[0].right.value)
+            lease_token = str(stmt._where_criteria[2].right.value)
+            values = stmt._values
+            for row in self._state:
+                if row["charge_id"] == charge_id and row["status"] == "pending" and row["lease_token"] == lease_token:
+                    row["leased_at"] = values.get("leased_at")
+                    row["lease_token"] = values.get("lease_token")
+                    row["last_error"] = values.get("last_error")
+            return _FakeClaimResult([])
+
+        raise AssertionError(f"Unexpected statement: {stmt_text}")
+
+
+class _FakeSessionFactory:
+    def __init__(self, state):
+        self._state = state
+
+    @asynccontextmanager
+    async def __call__(self, *_args, **_kwargs):
+        yield _FakeDB(self._state)
 
 
 def _load_payments_module():
@@ -134,26 +184,49 @@ def _load_payments_module():
 
 
 class RequeuePendingOutboxTests(unittest.IsolatedAsyncioTestCase):
-    async def test_requeue_pending_outbox_enqueues_process_task_for_pending_rows(self):
+    async def test_requeue_pending_outbox_does_not_enqueue_same_charge_twice_without_ttl_expiry(self):
         payments = _load_payments_module()
-        fake_db = _FakeDB(["charge_1", "charge_2"])
-
-        @asynccontextmanager
-        async def _fake_session_scope(*_args, **_kwargs):
-            yield fake_db
+        state = [
+            {"charge_id": "charge_1", "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None}
+        ]
 
         with (
-            patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "select", lambda *_args, **_kwargs: _SelectChain()),
+            patch.object(payments, "session_scope", _FakeSessionFactory(state)),
             patch.object(payments.celery, "send_task") as send_task_mock,
+            patch.object(payments, "update", _fake_update),
         ):
-            enqueued, enqueue_errors = await payments.requeue_pending_outbox(batch_size=20)
+            first_enqueued, first_errors = await payments.requeue_pending_outbox(batch_size=20)
+            second_enqueued, second_errors = await payments.requeue_pending_outbox(batch_size=20)
 
-        self.assertEqual(enqueued, 2)
-        self.assertEqual(enqueue_errors, 0)
+        self.assertEqual(first_enqueued, 1)
+        self.assertEqual(first_errors, 0)
+        self.assertEqual(second_enqueued, 0)
+        self.assertEqual(second_errors, 0)
+        self.assertEqual(send_task_mock.call_count, 1)
+        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_1"])
+
+    async def test_requeue_pending_outbox_releases_lease_after_enqueue_error(self):
+        payments = _load_payments_module()
+        state = [
+            {"charge_id": "charge_2", "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None}
+        ]
+
+        with (
+            patch.object(payments, "session_scope", _FakeSessionFactory(state)),
+            patch.object(payments.celery, "send_task", side_effect=[Exception("broker down"), None]) as send_task_mock,
+            patch.object(payments, "update", _fake_update),
+        ):
+            first_enqueued, first_errors = await payments.requeue_pending_outbox(batch_size=20)
+            second_enqueued, second_errors = await payments.requeue_pending_outbox(batch_size=20)
+
+        self.assertEqual(first_enqueued, 0)
+        self.assertEqual(first_errors, 1)
+        self.assertEqual(second_enqueued, 1)
+        self.assertEqual(second_errors, 0)
         self.assertEqual(send_task_mock.call_count, 2)
-        send_task_mock.assert_any_call("payments.process_outbox", args=["charge_1"])
-        send_task_mock.assert_any_call("payments.process_outbox", args=["charge_2"])
+        self.assertEqual(state[0]["lease_attempts"], 2)
+        self.assertIsNotNone(state[0]["lease_token"])
+        self.assertEqual(state[0]["last_error"], "broker down")
 
 
 if __name__ == "__main__":
