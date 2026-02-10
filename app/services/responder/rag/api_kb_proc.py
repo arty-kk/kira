@@ -125,12 +125,12 @@ async def _has_ready_kb(owner_id: int, model: str) -> bool:
             return bool(exists)
     except Exception:
         logger.exception(
-            "API-KB: DB check for ready KB failed (owner_id=%s model=%s), "
-            "falling back to NPZ presence",
+            "API-KB: DB check for ready KB failed; fail-closed for owner_id=%s model=%s",
             owner_id,
             model,
+            extra={"owner_id": owner_id, "model": model, "mode": "fail_closed"},
         )
-        return True
+        return False
 
 
 async def _ensure_state(owner_id: int, model: str) -> Optional[Dict[str, Any]]:
@@ -147,16 +147,36 @@ async def _ensure_state(owner_id: int, model: str) -> Optional[Dict[str, Any]]:
 
     st = _API_KB_STATE.get(key)
     if st and st.get("_mtime") == current_mtime:
-        return st
+        has_ready = await _has_ready_kb(owner_id, model)
+        if has_ready:
+            return st
+
+        _API_KB_STATE.pop(key, None)
+        logger.info(
+            "API-KB: no ready KB in DB for owner_id=%s model=%s; cleared stale cache",
+            owner_id,
+            model,
+        )
+        return None
 
     async with _API_KB_LOCK:
         st = _API_KB_STATE.get(key)
         if st and st.get("_mtime") == current_mtime:
-            return st
+            has_ready = await _has_ready_kb(owner_id, model)
+            if has_ready:
+                return st
+
+            _API_KB_STATE.pop(key, None)
+            logger.info(
+                "API-KB: no ready KB in DB for owner_id=%s model=%s; cleared stale cache",
+                owner_id,
+                model,
+            )
+            return None
 
         has_ready = await _has_ready_kb(owner_id, model)
         if not has_ready:
-            _API_KB_STATE[key] = {}
+            _API_KB_STATE.pop(key, None)
             logger.info(
                 "API-KB: no ready KB in DB for owner_id=%s model=%s; "
                 "skipping NPZ load for now",
