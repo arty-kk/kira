@@ -48,12 +48,21 @@ def _idempotency_redis_key(api_key_id: int, idem_key: str) -> str:
 
 
 def _normalize_idempotency_key(value: Optional[str]) -> Optional[str]:
+    max_len = 256
     if value is None:
         return None
     key = value.strip()
     if not key:
         return None
-    return key[:128]
+    if len(key) > max_len:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "invalid_idempotency_key",
+                "message": f"Idempotency-Key length must be <= {max_len} characters.",
+            },
+        )
+    return key
 
 
 def _build_idempotency_request_hash(payload: "ConversationRequest") -> str:
