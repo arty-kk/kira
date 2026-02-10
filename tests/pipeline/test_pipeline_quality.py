@@ -81,6 +81,32 @@ class PipelineQualityTests(unittest.TestCase):
             with self.assertRaises(HTTPException):
                 asyncio.run(_check_rate_limit(request, api_key_id=1))
 
+    def test_rate_limit_fallback_when_redis_unavailable(self) -> None:
+        request = types.SimpleNamespace(
+            headers={},
+            client=types.SimpleNamespace(host="1.2.3.4"),
+        )
+        conversation._fallback_rl_state.clear()
+        with (
+            mock.patch.object(conversation, "get_redis", return_value=None),
+            mock.patch.object(
+                conversation,
+                "settings",
+                types.SimpleNamespace(
+                    API_RATELIMIT_FALLBACK_PER_MIN=2,
+                    API_RATELIMIT_FALLBACK_PER_IP_PER_MIN=10,
+                ),
+            ),
+        ):
+            asyncio.run(_check_rate_limit(request, api_key_id=1))
+            asyncio.run(_check_rate_limit(request, api_key_id=1))
+            with self.assertRaises(HTTPException) as ctx:
+                asyncio.run(_check_rate_limit(request, api_key_id=1))
+
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.detail["code"], "rate_limited_fallback")
+        self.assertEqual(ctx.exception.headers.get("Retry-After"), "60")
+
     def test_long_context_rejected(self) -> None:
         long_text = "a" * 4001
         with self.assertRaises(ValidationError):
