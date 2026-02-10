@@ -27,8 +27,10 @@ class _FakeResult:
 class _FakeDB:
     def __init__(self, row):
         self.row = row
+        self.execute_calls = 0
 
     async def execute(self, _stmt):
+        self.execute_calls += 1
         return _FakeResult(self.row)
 
 
@@ -135,7 +137,7 @@ def _load_payments_module():
 
 
 class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
-    async def test_notify_sends_message_when_claim_succeeds(self):
+    async def test_notify_retries_after_send_failure_and_stops_after_success(self):
         payments = _load_payments_module()
         outbox = SimpleNamespace(
             id=1,
@@ -155,7 +157,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         async def _fake_session_scope(*_args, **_kwargs):
             yield fake_db
 
-        send_mock = AsyncMock(return_value=object())
+        send_mock = AsyncMock(side_effect=[None, object()])
 
         with (
             patch.object(payments, "send_message_safe", send_mock),
@@ -165,43 +167,19 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "func", _Func()),
         ):
             await payments._notify_payment_result(outbox, remaining=10, duplicate=False)
+            self.assertIsNone(outbox.notified_at)
+            self.assertEqual(fake_db.execute_calls, 0)
 
-        send_mock.assert_awaited_once()
+            await payments._notify_payment_result(outbox, remaining=10, duplicate=False)
+            self.assertIsNotNone(outbox.notified_at)
+            self.assertEqual(fake_db.execute_calls, 1)
 
-    async def test_notify_does_not_send_when_claim_fails(self):
-        payments = _load_payments_module()
-        outbox = SimpleNamespace(
-            id=2,
-            user_id=84,
-            kind="buy",
-            requests_amount=5,
-            gift_title=None,
-            gift_emoji=None,
-            gift_code=None,
-            stars_amount=100,
-            telegram_payment_charge_id="charge_none",
-            notified_at=None,
-        )
-        fake_db = _FakeDB(None)
+            await payments._notify_payment_result(outbox, remaining=10, duplicate=False)
 
-        @asynccontextmanager
-        async def _fake_session_scope(*_args, **_kwargs):
-            yield fake_db
+        self.assertEqual(send_mock.await_count, 2)
+        self.assertEqual(fake_db.execute_calls, 1)
 
-        send_mock = AsyncMock(return_value=object())
-
-        with (
-            patch.object(payments, "send_message_safe", send_mock),
-            patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "t", AsyncMock(return_value="sent")),
-            patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
-            patch.object(payments, "func", _Func()),
-        ):
-            await payments._notify_payment_result(outbox, remaining=20, duplicate=False)
-
-        send_mock.assert_not_called()
-
-    async def test_gift_notification_is_not_repeated_when_second_claim_fails(self):
+    async def test_gift_side_effects_run_only_after_notified_claim(self):
         payments = _load_payments_module()
         outbox = SimpleNamespace(
             id=3,
@@ -216,37 +194,29 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             notified_at=None,
         )
 
-        db_results = iter([1, None])
-
-        class _SeqDB:
-            async def execute(self, _stmt):
-                return _FakeResult(next(db_results))
+        fake_db = _FakeDB(None)
 
         @asynccontextmanager
         async def _fake_session_scope(*_args, **_kwargs):
-            yield _SeqDB()
+            yield fake_db
 
         send_mock = AsyncMock(return_value=object())
+        push_mock = AsyncMock(return_value=None)
 
         with (
             patch.object(payments, "session_scope", _fake_session_scope),
             patch.object(payments, "send_message_safe", send_mock),
-            patch.object(payments, "push_message", AsyncMock(return_value=None)),
+            patch.object(payments, "push_message", push_mock),
             patch.object(payments, "t", AsyncMock(return_value="gift sent")),
             patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
             patch.object(payments, "func", _Func()),
-            patch.object(payments.celery, "send_task", side_effect=SystemExit("post-send failure")) as send_task_mock,
+            patch.object(payments.celery, "send_task") as send_task_mock,
         ):
-            with self.assertRaises(SystemExit):
-                await payments._notify_payment_result(outbox, remaining=30, duplicate=False)
-
             await payments._notify_payment_result(outbox, remaining=30, duplicate=False)
 
-        self.assertEqual(send_mock.await_count, 1)
-        send_task_mock.assert_called_once()
-        args, kwargs = send_task_mock.call_args
-        self.assertEqual(args[0], "gifts.react")
-        self.assertEqual(kwargs["args"][0], 11)
+        send_mock.assert_awaited_once()
+        push_mock.assert_not_awaited()
+        send_task_mock.assert_not_called()
 
 
 if __name__ == "__main__":
