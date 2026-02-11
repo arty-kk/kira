@@ -213,12 +213,18 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         mod.bot = bot
 
         start_task = SimpleNamespace(apply_async=Mock())
+        prev_battle_module = sys.modules.get("app.tasks.battle")
         sys.modules["app.tasks.battle"] = types.SimpleNamespace(
             battle_start_timeout_check_task=start_task,
             battle_move_timeout_check_task=SimpleNamespace(apply_async=Mock()),
         )
-
-        await mod.launch_battle("1", "2", chat_id=999)
+        try:
+            await mod.launch_battle("1", "2", chat_id=999)
+        finally:
+            if prev_battle_module is None:
+                sys.modules.pop("app.tasks.battle", None)
+            else:
+                sys.modules["app.tasks.battle"] = prev_battle_module
 
         start_task.apply_async.assert_called_once()
         kwargs = start_task.apply_async.call_args.kwargs
@@ -252,6 +258,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis.kv[f"ready:{gid}:2"] = "1"
 
         move_task = SimpleNamespace(apply_async=Mock())
+        prev_battle_module = sys.modules.get("app.tasks.battle")
         sys.modules["app.tasks.battle"] = types.SimpleNamespace(
             battle_start_timeout_check_task=SimpleNamespace(apply_async=Mock()),
             battle_move_timeout_check_task=move_task,
@@ -269,7 +276,13 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
 
         query.answer = _answer
 
-        await mod.on_battle_start(query)
+        try:
+            await mod.on_battle_start(query)
+        finally:
+            if prev_battle_module is None:
+                sys.modules.pop("app.tasks.battle", None)
+            else:
+                sys.modules["app.tasks.battle"] = prev_battle_module
 
         move_task.apply_async.assert_called_once()
         kwargs = move_task.apply_async.call_args.kwargs

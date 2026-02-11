@@ -58,10 +58,17 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
     def test_dispatch_passive_moderation_strips_oversized_image(self) -> None:
         message = types.SimpleNamespace(chat=types.SimpleNamespace(id=123), message_id=778)
         payload = {"image_b64": "abcd", "image_mime": "image/jpeg"}
+        prepare_globals = group.prepare_moderation_payload.__globals__
 
         with (
-            patch("app.tasks.moderation.MODERATION_MAX_IMAGE_BYTES", 1),
-            patch("app.tasks.moderation.MODERATION_MAX_PAYLOAD_BYTES", 1024),
+            patch.dict(
+                prepare_globals,
+                {
+                    "MODERATION_MAX_IMAGE_BYTES": 1,
+                    "MODERATION_MAX_PAYLOAD_BYTES": 1024,
+                    "decode_base64_payload": lambda _value: b"abc",
+                },
+            ),
             patch.object(group.passive_moderate, "delay") as delay_mock,
         ):
             group._dispatch_passive_moderation(

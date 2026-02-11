@@ -34,22 +34,33 @@ def _load_api_worker():
     fake_memory.close_redis_pools = lambda: None
     fake_responder.respond_to_user = lambda **kwargs: None
 
-    sys.modules["app"] = fake_app
-    sys.modules["app.config"] = fake_config
-    sys.modules["app.clients"] = fake_clients
-    sys.modules["app.clients.openai_client"] = fake_openai_client
-    sys.modules["app.core"] = fake_core
-    sys.modules["app.core.media_limits"] = fake_media_limits
-    sys.modules["app.core.memory"] = fake_memory
-    sys.modules["app.services"] = fake_services
-    sys.modules["app.services.responder"] = fake_responder
+    patch_modules = {
+        "app": fake_app,
+        "app.config": fake_config,
+        "app.clients": fake_clients,
+        "app.clients.openai_client": fake_openai_client,
+        "app.core": fake_core,
+        "app.core.media_limits": fake_media_limits,
+        "app.core.memory": fake_memory,
+        "app.services": fake_services,
+        "app.services.responder": fake_responder,
+    }
+    previous = {name: sys.modules.get(name) for name in patch_modules}
 
-    worker_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "api_worker.py"
-    spec = importlib.util.spec_from_file_location("api_worker_inflight_under_test", worker_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["api_worker_inflight_under_test"] = module
-    spec.loader.exec_module(module)
-    return module
+    try:
+        sys.modules.update(patch_modules)
+        worker_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "api_worker.py"
+        spec = importlib.util.spec_from_file_location("api_worker_inflight_under_test", worker_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["api_worker_inflight_under_test"] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, old in previous.items():
+            if old is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old
 
 
 api_worker = _load_api_worker()

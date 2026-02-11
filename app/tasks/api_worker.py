@@ -49,6 +49,7 @@ RESPOND_TIMEOUT = int(
 )
 JOB_HEARTBEAT_INTERVAL_SEC = int(getattr(settings, "API_JOB_HEARTBEAT_INTERVAL_SEC", 10))
 API_QUEUE_SNAPSHOT_SEC = int(getattr(settings, "API_QUEUE_SNAPSHOT_SEC", 60))
+API_PROCESSING_SWEEP_BATCH = int(getattr(settings, "API_PROCESSING_SWEEP_BATCH", 200))
 
 PROCESSING_TASKS: Set[asyncio.Task] = set()
 
@@ -885,9 +886,23 @@ async def _handle_job(raw: str, redis_queue) -> None:
 
 
 async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
+    sweep_cursor = 0
     while not stop_evt.is_set():
         try:
-            items = await redis_queue.lrange(PROCESSING_KEY, 0, -1)
+            batch_size = max(1, API_PROCESSING_SWEEP_BATCH)
+            list_len = await redis_queue.llen(PROCESSING_KEY)
+            if list_len <= 0:
+                sweep_cursor = 0
+                await asyncio.sleep(5)
+                continue
+
+            window_count = max(1, (list_len + batch_size - 1) // batch_size)
+            sweep_cursor %= window_count
+            window_from_end = sweep_cursor
+            end = list_len - 1 - (window_from_end * batch_size)
+            start = max(0, end - batch_size + 1)
+            items = await redis_queue.lrange(PROCESSING_KEY, start, end)
+            sweep_cursor = (sweep_cursor + 1) % window_count
             if not items:
                 await asyncio.sleep(5)
                 continue

@@ -10,6 +10,7 @@ export DATABASE_URL="${DATABASE_URL:-postgresql+asyncpg://user:pass@localhost/db
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 export REDIS_URL_QUEUE="${REDIS_URL_QUEUE:-redis://localhost:6379/1}"
 export REDIS_URL_VECTOR="${REDIS_URL_VECTOR:-redis://localhost:6379/2}"
+export CELERY_BROKER_URL="${CELERY_BROKER_URL:-redis://localhost:6379/3}"
 export TWITTER_API_KEY="${TWITTER_API_KEY:-test}"
 export TWITTER_API_SECRET="${TWITTER_API_SECRET:-test}"
 export TWITTER_ACCESS_TOKEN="${TWITTER_ACCESS_TOKEN:-test}"
