@@ -532,6 +532,11 @@ async def _delete_if_value(redis: Redis, key: str, expected_value: str) -> int:
         return 0
 
 
+# anchor: chatbusy lock release helper
+async def _delete_if_chatbusy_owner(redis: Redis, key: str, expected_value: str) -> int:
+    return await _delete_if_value(redis, key, expected_value)
+
+
 async def _claim_if_reclaimed(redis: Redis, key: str, new_value: str, ttl: int) -> int:
 
     script = """
@@ -657,10 +662,11 @@ async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, inter
         pass
 
 
+# anchor: _heartbeat_key
 async def _heartbeat_key(redis: Redis, key: str, expected_value: str, interval: int, ttl: int) -> None:
     script = """
     if redis.call('GET', KEYS[1]) == ARGV[1] then
-        return redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+        return redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]))
     else
         return 0
     end
@@ -672,7 +678,7 @@ async def _heartbeat_key(redis: Redis, key: str, expected_value: str, interval: 
             if time.time() - start > ttl:
                 return
             try:
-                res = await redis.eval(script, 1, key, expected_value, ttl)
+                res = await redis.eval(script, 1, key, expected_value, ttl * 1000)
                 if not res:
                     return
             except Exception as e:
@@ -918,6 +924,7 @@ async def _try_start_task_or_requeue(raw, queue_key: str, processing_key: str) -
     return True
 
 
+# anchor: handle_job
 async def handle_job(raw, processing_key: str) -> None:
 
     if isinstance(raw, (bytes, bytearray)):
@@ -1433,7 +1440,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     )
 
             if busy_key:
-                await _delete_if_value(REDIS_QUEUE, busy_key, busy_token)
+                await _delete_if_chatbusy_owner(REDIS_QUEUE, busy_key, busy_token)
 
 
 async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
