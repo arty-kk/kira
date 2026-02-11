@@ -7,7 +7,6 @@ import json
 import secrets
 import ipaddress
 
-from collections import OrderedDict
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, constr, field_validator, model_validator
@@ -38,8 +37,8 @@ logger = logging.getLogger(__name__)
 _REFUND_RETRY_ATTEMPTS = 3
 _REFUND_RETRY_BACKOFF_BASE_SEC = 0.2
 
-_fallback_rl_state: "OrderedDict[str, tuple[int, float]]" = OrderedDict()
-_fallback_rl_lock = asyncio.Lock()
+_RATE_LIMIT_REDIS_RETRIES = 2
+_RATE_LIMIT_REDIS_RETRY_DELAY_SEC = 0.05
 
 
 def _get_api_queue_key() -> str:
@@ -110,33 +109,6 @@ def _read_final_idempotency_record(raw_value: str, current_request_hash: Optiona
         )
 
     return status_code, body
-
-
-async def _fallback_rate_limit(key: str, limit: int, window_sec: int) -> bool:
-    now = time.time()
-    async with _fallback_rl_lock:
-        expired_keys = [k for k, (_, exp) in _fallback_rl_state.items() if exp <= now]
-        for expired_key in expired_keys:
-            _fallback_rl_state.pop(expired_key, None)
-
-        if limit <= 0:
-            return True
-
-        count, exp = _fallback_rl_state.get(key, (0, 0.0))
-        if exp <= now:
-            count = 0
-            exp = now + window_sec
-        count += 1
-        _fallback_rl_state[key] = (count, exp)
-        _fallback_rl_state.move_to_end(key)
-
-        max_keys = getattr(settings, "API_FALLBACK_RL_MAX_KEYS", None)
-        if max_keys is None or max_keys <= 0:
-            max_keys = 10000
-
-        while len(_fallback_rl_state) > max_keys:
-            _fallback_rl_state.popitem(last=False)
-        return count <= limit
 
 
 def _is_trusted_proxy(client_host: Optional[str]) -> bool:
@@ -420,75 +392,76 @@ def _get_persona_owner_id(owner_user_id: int, api_key_id: int) -> int:
 
 
 async def _check_rate_limit(request: Request, api_key_id: int) -> None:
-    redis = get_redis()
-    use_fallback = redis is None
+    for attempt in range(1, _RATE_LIMIT_REDIS_RETRIES + 2):
+        redis = get_redis()
+        if redis is None:
+            last_error: Exception = RuntimeError("redis client unavailable")
+        else:
+            try:
+                now = int(time.time())
+                window = now // 60
 
-    if not use_fallback:
-        try:
-            now = int(time.time())
-            window = now // 60
-
-            per_min = settings.API_RATELIMIT_PER_MIN
-            burst_factor = settings.API_RATELIMIT_BURST_FACTOR
-            if per_min <= 0 or burst_factor <= 0:
-                return
-            key = f"rl:api:key:{api_key_id}:{window}"
-
-            count = await redis.incr(key)
-            if count == 1:
-                await redis.expire(key, 70)
-            if count > per_min * burst_factor:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail={"code": "rate_limited", "message": "Too many requests for this API key"},
-                    headers={"Retry-After": "60"},
-                )
-
-            ip = _resolve_rate_limit_ip(request)
-            if ip != "unknown":
-                ip_key = f"rl:api:ip:{ip}:{window}"
-                ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
-                if ip_limit <= 0:
+                per_min = settings.API_RATELIMIT_PER_MIN
+                burst_factor = settings.API_RATELIMIT_BURST_FACTOR
+                if per_min <= 0 or burst_factor <= 0:
                     return
-                ic = await redis.incr(ip_key)
-                if ic == 1:
-                    await redis.expire(ip_key, 70)
-                if ic > ip_limit:
+                key = f"rl:api:key:{api_key_id}:{window}"
+
+                count = await redis.incr(key)
+                if count == 1:
+                    await redis.expire(key, 70)
+                if count > per_min * burst_factor:
                     raise HTTPException(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
+                        detail={"code": "rate_limited", "message": "Too many requests for this API key"},
                         headers={"Retry-After": "60"},
                     )
-            return
-        except HTTPException:
-            raise
-        except Exception:
-            logging.warning("Rate limiter failed; using fallback limiter.", exc_info=True)
-            use_fallback = True
 
-    if use_fallback:
-        per_min = int(getattr(settings, "API_RATELIMIT_FALLBACK_PER_MIN", 10))
-        ip_limit = int(getattr(settings, "API_RATELIMIT_FALLBACK_PER_IP_PER_MIN", 30))
-        window_sec = 60
+                ip = _resolve_rate_limit_ip(request)
+                if ip != "unknown":
+                    ip_key = f"rl:api:ip:{ip}:{window}"
+                    ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
+                    if ip_limit <= 0:
+                        return
+                    ic = await redis.incr(ip_key)
+                    if ic == 1:
+                        await redis.expire(ip_key, 70)
+                    if ic > ip_limit:
+                        raise HTTPException(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
+                            headers={"Retry-After": "60"},
+                        )
+                return
+            except HTTPException:
+                raise
+            except Exception as exc:
+                last_error = exc
 
-        key_ok = await _fallback_rate_limit(f"key:{api_key_id}", per_min, window_sec)
-        if not key_ok:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail={"code": "rate_limited_fallback", "message": "Too many requests"},
-                headers={"Retry-After": "60"},
+        if attempt <= _RATE_LIMIT_REDIS_RETRIES:
+            exc_info = (type(last_error), last_error, last_error.__traceback__)
+            logger.warning(
+                "Rate limiter redis attempt %s/%s failed; retrying",
+                attempt,
+                _RATE_LIMIT_REDIS_RETRIES + 1,
+                exc_info=exc_info,
             )
+            await asyncio.sleep(_RATE_LIMIT_REDIS_RETRY_DELAY_SEC)
+            continue
 
-        ip = _resolve_rate_limit_ip(request)
-        if ip != "unknown":
-            ip_ok = await _fallback_rate_limit(f"ip:{ip}", ip_limit, window_sec)
-            if not ip_ok:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
-                    headers={"Retry-After": "60"},
-                )
-        return
+        exc_info = (type(last_error), last_error, last_error.__traceback__)
+        logger.error(
+            "Rate limiter redis unavailable after %s attempts",
+            _RATE_LIMIT_REDIS_RETRIES + 1,
+            exc_info=exc_info,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "rate_limiter_unavailable",
+                "message": "Rate limiter is temporarily unavailable",
+            },
+        )
 
 @router.post(
     "/conversation",
