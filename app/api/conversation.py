@@ -321,16 +321,31 @@ class ConversationRequest(BaseModel):
             return cleaned, max(approx, 0)
 
         msg = (self.message or "").strip()
-        has_img = bool(self.image_b64)
-        has_voice = bool(self.voice_b64)
+
+        cleaned_image_b64 = None
+        image_was_provided = self.image_b64 is not None
+        if image_was_provided:
+            cleaned_image_b64 = clean_base64_payload(self.image_b64)
+            if not cleaned_image_b64:
+                _payload_error("image_b64 payload is empty or invalid after cleanup.")
+
+        cleaned_voice_b64 = None
+        voice_was_provided = self.voice_b64 is not None
+        if voice_was_provided:
+            cleaned_voice_b64 = clean_base64_payload(self.voice_b64)
+            if not cleaned_voice_b64:
+                _payload_error("voice_b64 payload is empty or invalid after cleanup.")
+
+        has_img = bool(cleaned_image_b64)
+        has_voice = bool(cleaned_voice_b64)
 
         if not (msg or has_img or has_voice):
             _payload_error("At least one of message, image_b64 or voice_b64 must be provided.")
 
         img_mime = (self.image_mime or "").strip()
-        if self.image_b64 and not img_mime:
+        if has_img and not img_mime:
             _payload_error("image_mime is required when image_b64 is provided.")
-        if img_mime and not self.image_b64:
+        if img_mime and not has_img:
             _payload_error("image_b64 must be provided when image_mime is set.")
         if img_mime:
             normalized_img_mime = img_mime.lower()
@@ -352,8 +367,8 @@ class ConversationRequest(BaseModel):
             self.voice_mime = normalized_voice_mime
 
         strict_validation = bool(getattr(settings, "API_STRICT_BASE64_VALIDATION", False))
-        if self.image_b64:
-            img_b64_clean, img_size = _approx_b64_size(self.image_b64)
+        if has_img and cleaned_image_b64:
+            img_b64_clean, img_size = _approx_b64_size(cleaned_image_b64)
             if img_size > API_MAX_IMAGE_BYTES:
                 _payload_error(f"image_b64 exceeds {API_MAX_IMAGE_BYTES} bytes after decoding.")
             if strict_validation:
@@ -361,8 +376,8 @@ class ConversationRequest(BaseModel):
                     _payload_error("image_b64 must be valid base64.")
             self.image_b64 = img_b64_clean
 
-        if self.voice_b64:
-            voice_b64_clean, voice_size = _approx_b64_size(self.voice_b64)
+        if has_voice and cleaned_voice_b64:
+            voice_b64_clean, voice_size = _approx_b64_size(cleaned_voice_b64)
             if voice_size > API_MAX_VOICE_BYTES:
                 _payload_error(f"voice_b64 exceeds {API_MAX_VOICE_BYTES} bytes after decoding.")
             if strict_validation:
