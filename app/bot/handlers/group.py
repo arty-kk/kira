@@ -2,23 +2,18 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 import html
-import io
 import json
 import logging
-import os
 import random
 import re
-import tempfile
 import time as time_module
 
 from datetime import datetime, timedelta, time, timezone
 from typing import Any, List
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageOps, UnidentifiedImageError
 from redis.exceptions import RedisError
 
 from aiogram import F, types
@@ -38,6 +33,7 @@ from app.core.memory import MEMORY_TTL, append_group_recent, inc_msg_count, push
 from app.services.addons.analytics import record_user_message
 from app.services.addons.passive_moderation import split_context_text
 from app.tasks.battle import battle_launch_task
+from app.tasks.media import preprocess_group_image
 from app.tasks.moderation import passive_moderate
 
 logger = logging.getLogger(__name__)
@@ -47,26 +43,9 @@ if not getattr(consts, "BOT_USERNAME", None):
     logger.warning("BOT_USERNAME is not set; commands with @target may be treated as addressed to other bots.")
 
 # ---------------------------
-# Pillow compatibility
-# ---------------------------
-try:
-    RESAMPLING = Image.Resampling.LANCZOS
-except AttributeError:
-    RESAMPLING = Image.LANCZOS
-
-# ---------------------------
 # Settings / constants
 # ---------------------------
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_SIDE = 2048
-ALLOWED_FORMATS = {"JPEG", "JPG", "PNG", "WEBP"}
-MAX_FRAMES = 1
-
 MAX_DOCUMENT_BYTES = int(getattr(settings, "MAX_DOC_IMAGE_BYTES", 30 * 1024 * 1024))
-MIN_JPEG_QUALITY = int(getattr(settings, "MIN_JPEG_QUALITY", 35))
-MIN_SIDE = int(getattr(settings, "MIN_IMAGE_SIDE", 720))
-
-Image.MAX_IMAGE_PIXELS = int(getattr(settings, "MAX_IMAGE_PIXELS", 36_000_000))
 
 BATTLE_CMD_RE = re.compile(r"(^|\s)/battle(?:@[A-Za-z0-9_]{3,})?(?=\s|$|[.,!?])", re.IGNORECASE)
 IS_MENTION_RE = re.compile(r"(?<!\S)@\w+\b")
@@ -519,116 +498,8 @@ def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, 
 
 
 # ---------------------------
-# Image helpers (same ideas as private_new.py)
+# Image helpers
 # ---------------------------
-async def download_to_tmp(tg_obj: Any, suffix: str) -> str | None:
-    tmp_path: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp_path = tmp.name
-        await bot.download(tg_obj, tmp_path)
-        return tmp_path
-    except Exception:
-        logger.exception("Failed to download image")
-        if tmp_path and os.path.exists(tmp_path):
-            with contextlib.suppress(Exception):
-                os.remove(tmp_path)
-        return None
-
-
-async def strict_image_load(tmp_path: str) -> Image.Image:
-    try:
-        with Image.open(tmp_path) as im:
-            fmt = (im.format or "").upper()
-            if fmt == "JPG":
-                fmt = "JPEG"
-            if fmt not in ALLOWED_FORMATS:
-                raise ValueError(f"Unsupported image format: {fmt}")
-            im.verify()
-
-        with Image.open(tmp_path) as im2:
-            im2.load()
-            with contextlib.suppress(Exception):
-                im2 = ImageOps.exif_transpose(im2)
-            return im2.copy()
-
-    except UnidentifiedImageError:
-        raise ValueError("Not an image or corrupted file")
-    except Image.DecompressionBombError:
-        raise ValueError("Image too large (decompression bomb)")
-    except Exception as e:
-        raise ValueError(str(e))
-
-
-def sanitize_and_compress(img: Image.Image) -> bytes:
-    n_frames = int(getattr(img, "n_frames", 1) or 1)
-    if n_frames > MAX_FRAMES:
-        raise ValueError("Animated or multi-frame images are not allowed")
-
-    with contextlib.suppress(Exception):
-        img = ImageOps.exif_transpose(img)
-
-    if img.mode in ("RGBA", "LA"):
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        bg.paste(img, mask=img.split()[-1])
-        img = bg
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
-
-    w, h = img.size
-    if max(w, h) > MAX_SIDE:
-        s = MAX_SIDE / float(max(w, h))
-        img = img.resize((int(w * s), int(h * s)), resample=RESAMPLING)
-
-    def _save_as_jpeg(jimg: Image.Image, q: int) -> bytes:
-        buf = io.BytesIO()
-        for progressive in (True, False):
-            try:
-                buf.seek(0)
-                buf.truncate(0)
-                jimg.save(
-                    buf,
-                    format="JPEG",
-                    quality=q,
-                    optimize=True,
-                    progressive=progressive,
-                    subsampling=2,
-                    exif=b"",
-                )
-                return buf.getvalue()
-            except OSError:
-                continue
-
-        buf.seek(0)
-        buf.truncate(0)
-        jimg.save(buf, format="JPEG", quality=q, progressive=False, subsampling=2, exif=b"")
-        return buf.getvalue()
-
-    quality_steps = [85, 80, 75, 70, 65, 60, 55, 50, 45, 40, MIN_JPEG_QUALITY]
-    for _ in range(6):
-        for q in quality_steps:
-            data = _save_as_jpeg(img, q)
-            if len(data) <= MAX_IMAGE_BYTES:
-                return data
-
-        cur_max = max(img.size)
-        if cur_max <= MIN_SIDE:
-            break
-
-        new_max = max(MIN_SIDE, int(cur_max * 0.85))
-        s = new_max / float(cur_max)
-        img = img.resize(
-            (max(1, int(img.size[0] * s)), max(1, int(img.size[1] * s))),
-            resample=RESAMPLING,
-        )
-
-    img = img.resize((max(1, img.size[0] // 2), max(1, img.size[1] // 2)), resample=RESAMPLING)
-    data = _save_as_jpeg(img, max(60, MIN_JPEG_QUALITY))
-    if len(data) > MAX_IMAGE_BYTES:
-        raise ValueError("Image too large after compression")
-    return data
-
-
 async def localized_group_image_error(chat_id: int, reason: str, reply_to: int | None) -> None:
     safe_reason = html.escape(reason or "", quote=True)
     msg = await tr(
@@ -652,41 +523,6 @@ def _doc_suffix(mime_lower: str) -> str:
     if mime_lower in ("image/png", "image/x-png"):
         return ".png"
     return ".png"
-
-
-async def _handle_group_image_file(
-    message: Message,
-    tg_obj: Any,
-    *,
-    suffix: str,
-    reply_to: int | None,
-) -> bytes | None:
-    tmp_path: str | None = None
-    try:
-        tmp_path = await download_to_tmp(tg_obj, suffix=suffix)
-        if not tmp_path:
-            reject_image_and_reply(message.chat.id, "download failed", reply_to=reply_to)
-            return None
-
-        img = await strict_image_load(tmp_path)
-        safe_jpeg = sanitize_and_compress(img)
-        if len(safe_jpeg) > MAX_IMAGE_BYTES:
-            reject_image_and_reply(message.chat.id, "file is larger than 5 MB after compression", reply_to=reply_to)
-            return None
-
-        return safe_jpeg
-    except ValueError as ve:
-        logger.warning("Image validation failed (group): %s", ve)
-        reject_image_and_reply(message.chat.id, str(ve), reply_to=reply_to)
-        return None
-    except Exception:
-        logger.exception("Image processing failed (group)")
-        reject_image_and_reply(message.chat.id, "internal error", reply_to=reply_to)
-        return None
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            with contextlib.suppress(Exception):
-                os.remove(tmp_path)
 
 
 # ---------------------------
@@ -1107,8 +943,10 @@ async def on_group_voice(message: Message) -> None:
 async def _handle_group_image_message_common(
     message: Message,
     *,
-    tg_obj: Any,
-    suffix: str,
+    file_id: str | None,
+    document_id: str | None,
+    mime_type: str | None,
+    suffix: str | None,
     content_type_for_analytics: str,
 ) -> None:
     cid = message.chat.id
@@ -1163,10 +1001,6 @@ async def _handle_group_image_message_common(
     if not await _ensure_daily_limit(cid, message.message_id):
         return
 
-    safe_jpeg = await _handle_group_image_file(message, tg_obj, suffix=suffix, reply_to=message.message_id)
-    if not safe_jpeg:
-        return
-
     reply_to_id = (message.reply_to_message.message_id if message.reply_to_message else None)
     user_id_val = _user_id_val(message, is_channel)
 
@@ -1178,49 +1012,32 @@ async def _handle_group_image_message_common(
                 bot_sid = int(getattr(consts, "BOT_ID", None) or 0) or None
             await _store_quote_context(cid, reply_to_id, quoted, role="assistant", speaker_id=bot_sid)
 
-    await _store_context(
-        cid,
-        message.message_id,
-        "[Image]" + (f" {log_caption}" if log_caption else ""),
-        role="user",
-        speaker_id=user_id_val,
-        source=("channel" if is_channel else "user"),
-    )
-
     channel = _channel_obj(message)
 
-    payload = {
+    preprocess_payload = {
         "chat_id": cid,
-        "text": model_caption,
+        "message_id": message.message_id,
         "user_id": user_id_val,
+        "trigger": trigger,
         "reply_to": reply_to_id,
-        "is_group": True,
-        "msg_id": message.message_id,
         "is_channel_post": is_channel,
         "channel_id": channel.id if channel else None,
         "channel_title": getattr(channel, "title", None) if channel else None,
-        "image_b64": base64.b64encode(safe_jpeg).decode("ascii"),
-        "image_mime": "image/jpeg",
-        "trigger": trigger,
-        "enforce_on_topic": (trigger == "check_on_topic"),
         "entities": ents,
+        "caption": model_caption,
+        "caption_log": log_caption,
+        "file_id": file_id,
+        "document_id": document_id,
+        "mime_type": mime_type,
+        "suffix": suffix,
+        "enforce_on_topic": (trigger == "check_on_topic"),
+        "allow_web": False,
+        "content_type_for_analytics": content_type_for_analytics,
     }
 
     if message.from_user:
         with contextlib.suppress(Exception):
             await redis_client.sadd(f"all_users:{cid}", message.from_user.id)
-
-    text_for_stm = (log_caption or "").strip() or "[Image]"
-    text_for_recent = (log_caption or "[Image]").strip()
-
-    await _push_group_stm_and_recent(
-        cid,
-        trigger=trigger,
-        is_channel=is_channel,
-        user_id_val=user_id_val,
-        text_for_stm=text_for_stm,
-        text_for_recent=text_for_recent,
-    )
 
     has_link = any((e.get("type", "").lower() in ("url", "text_link")) for e in ents)
     _analytics_best_effort(
@@ -1231,16 +1048,7 @@ async def _handle_group_image_message_common(
         has_link=bool(has_link),
         is_channel=is_channel,
     )
-
-    buffer_message_for_response(payload)
-    _dispatch_passive_moderation(
-        message,
-        payload,
-        text=log_caption,
-        ents=ents,
-        is_channel=is_channel,
-        user_id_val=user_id_val,
-    )
+    preprocess_group_image.delay(preprocess_payload)
 
 
 @dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]), F.content_type == ContentType.PHOTO)
@@ -1270,7 +1078,9 @@ async def on_group_photo(message: Message) -> None:
 
         await _handle_group_image_message_common(
             message,
-            tg_obj=biggest,
+            file_id=getattr(biggest, "file_id", None),
+            document_id=None,
+            mime_type="image/jpeg",
             suffix=".jpg",
             content_type_for_analytics="photo",
         )
@@ -1320,7 +1130,9 @@ async def on_group_document_image(message: Message) -> None:
 
         await _handle_group_image_message_common(
             message,
-            tg_obj=doc,
+            file_id=None,
+            document_id=getattr(doc, "file_id", None),
+            mime_type=doc.mime_type,
             suffix=_doc_suffix(mime_lower),
             content_type_for_analytics="document",
         )
