@@ -145,14 +145,15 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
         for anchor in (
             "async def handle_job",
             "async def _heartbeat_key",
-            "async def _delete_if_value",
+            "async def _delete_if_chatbusy_owner",
         ):
             self.assertIn(anchor, source)
 
     async def test_release_does_not_delete_lock_of_new_owner(self) -> None:
-        redis = _FakeRedis({"chatbusy:42": "busy:B"})
+        redis = _FakeRedis({"chatbusy:42": "busy:A"})
+        redis.store["chatbusy:42"] = "busy:B"
 
-        deleted = await queue_worker._delete_if_value(redis, "chatbusy:42", "busy:A")
+        deleted = await queue_worker._delete_if_chatbusy_owner(redis, "chatbusy:42", "busy:A")
 
         self.assertEqual(deleted, 0)
         self.assertEqual(redis.store.get("chatbusy:42"), "busy:B")
@@ -175,6 +176,7 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(numkeys, 1)
         self.assertEqual(key, "chatbusy:42")
         self.assertEqual(args[0], "busy:A")
+        self.assertEqual(args[1], 5000)
 
 
 if __name__ == "__main__":
