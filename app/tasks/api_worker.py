@@ -982,6 +982,10 @@ async def _queue_depth_loop(stop_evt: asyncio.Event, redis_queue) -> None:
 
 async def _worker_loop(stop_evt: asyncio.Event) -> None:
     redis_queue = get_redis_queue()
+    if redis_queue is None:
+        logger.error("api_worker: redis queue client is not available")
+        raise RuntimeError("api_worker: redis queue client is not available")
+
     logger.info("api_worker: starting; queue=%s", API_QUEUE_KEY)
     requeue_lock_key = f"{PROCESSING_KEY}:requeue_lock"
 

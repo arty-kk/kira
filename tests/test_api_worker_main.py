@@ -83,6 +83,32 @@ class ApiWorkerMainFailFastTests(unittest.IsolatedAsyncioTestCase):
         close_mock.assert_awaited_once()
         exception_log.assert_called_once()
 
+    async def test_worker_fails_fast_when_redis_queue_client_is_missing(self) -> None:
+        close_mock = unittest.mock.AsyncMock()
+        sweeper_mock = unittest.mock.AsyncMock()
+        depth_mock = unittest.mock.AsyncMock()
+
+        with unittest.mock.patch.object(api_worker, "get_redis_queue", return_value=None), unittest.mock.patch.object(
+            api_worker, "_sweeper_loop", sweeper_mock
+        ), unittest.mock.patch.object(api_worker, "_queue_depth_loop", depth_mock), unittest.mock.patch.object(
+            api_worker, "close_redis_pools", close_mock
+        ), unittest.mock.patch.object(api_worker.logger, "exception") as exception_log:
+            with self.assertRaises(SystemExit) as ctx:
+                await api_worker._async_main()
+
+        self.assertEqual(ctx.exception.code, 1)
+        close_mock.assert_awaited_once()
+        exception_log.assert_called_once()
+        self.assertEqual(
+            exception_log.call_args.args[0],
+            "api_worker: worker crashed unexpectedly",
+        )
+        self.assertIn("exc_info", exception_log.call_args.kwargs)
+        sweeper_mock.assert_not_called()
+        sweeper_mock.assert_not_awaited()
+        depth_mock.assert_not_called()
+        depth_mock.assert_not_awaited()
+
 
 class _FakeRedisQueueWithRequeueLock:
     def __init__(self) -> None:
