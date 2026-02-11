@@ -728,6 +728,27 @@ async def conversation_endpoint(
         }
 
         start = time.perf_counter()
+
+        async def _handle_refund_compensation_failure(
+            original_error_code: str,
+            compensation_error: RuntimeError,
+        ) -> None:
+            logger.critical(
+                "Refund compensation failed request_id=%s owner_id=%s original_error_code=%s",
+                request_id,
+                owner_id,
+                original_error_code,
+                exc_info=compensation_error,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "refund_compensation_failed",
+                    "message": "Request failed with a risk of billing desynchronization.",
+                    "request_id": request_id,
+                },
+            )
+
         try:
             result = await _send_job_and_wait(request_id=request_id, job=job)
         except HTTPException as e:
@@ -737,20 +758,33 @@ async def conversation_endpoint(
                 "invalid_payload",
                 "payload_too_large",
             }:
+                original_error_code = str(err_code or e.status_code)
+                try:
+                    await _safe_refund_request(
+                        owner_id,
+                        billing_tier,
+                        request_id=request_id,
+                        reason=f"http_exception:{original_error_code}",
+                    )
+                except RuntimeError as compensation_error:
+                    await _handle_refund_compensation_failure(
+                        original_error_code,
+                        compensation_error,
+                    )
+            raise
+        except asyncio.TimeoutError:
+            try:
                 await _safe_refund_request(
                     owner_id,
                     billing_tier,
                     request_id=request_id,
-                    reason=f"http_exception:{err_code or e.status_code}",
+                    reason="timeout",
                 )
-            raise
-        except asyncio.TimeoutError:
-            await _safe_refund_request(
-                owner_id,
-                billing_tier,
-                request_id=request_id,
-                reason="timeout",
-            )
+            except RuntimeError as compensation_error:
+                await _handle_refund_compensation_failure(
+                    "upstream_timeout",
+                    compensation_error,
+                )
             logging.exception(
                 "API: worker timeout chat_id=%s owner_id=%s request_id=%s",
                 chat_id,
@@ -766,12 +800,18 @@ async def conversation_endpoint(
                 },
             )
         except Exception:
-            await _safe_refund_request(
-                owner_id,
-                billing_tier,
-                request_id=request_id,
-                reason="unexpected_exception",
-            )
+            try:
+                await _safe_refund_request(
+                    owner_id,
+                    billing_tier,
+                    request_id=request_id,
+                    reason="unexpected_exception",
+                )
+            except RuntimeError as compensation_error:
+                await _handle_refund_compensation_failure(
+                    "internal_error",
+                    compensation_error,
+                )
             logging.exception(
                 "API: _send_job_and_wait failed chat_id=%s owner_id=%s request_id=%s",
                 chat_id,
@@ -796,12 +836,19 @@ async def conversation_endpoint(
                 "voice_transcription_failed",
                 "duplicate_request",
             }:
-                await _safe_refund_request(
-                    owner_id,
-                    billing_tier,
-                    request_id=request_id,
-                    reason=f"worker_error:{err_code or status_code}",
-                )
+                original_error_code = str(err_code or status_code)
+                try:
+                    await _safe_refund_request(
+                        owner_id,
+                        billing_tier,
+                        request_id=request_id,
+                        reason=f"worker_error:{original_error_code}",
+                    )
+                except RuntimeError as compensation_error:
+                    await _handle_refund_compensation_failure(
+                        original_error_code,
+                        compensation_error,
+                    )
             raise HTTPException(
                 status_code=status_code,
                 detail={
@@ -975,7 +1022,10 @@ async def _safe_refund_request(
         last_error=last_error,
     )
     if outbox_id is None:
-        return False
+        raise RuntimeError(
+            "Refund compensation failed after retry and outbox-save failure "
+            f"owner_id={owner_id} request_id={request_id} reason={reason}"
+        )
     return False
 
 
