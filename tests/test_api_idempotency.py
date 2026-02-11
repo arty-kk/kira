@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 import json
 import unittest
 import unittest.mock
@@ -53,6 +54,37 @@ class _ExpiringFakeRedis:
 
 
 class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_auth_api_key_falls_back_to_x_api_key_for_non_bearer_auth(self) -> None:
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield object()
+
+        api_key_obj = unittest.mock.Mock(id=10, user_id=20)
+
+        with (
+            unittest.mock.patch.object(conversation, "session_scope", _fake_session_scope),
+            unittest.mock.patch.object(
+                conversation,
+                "authenticate_key",
+                new=unittest.mock.AsyncMock(return_value=api_key_obj),
+            ) as auth_mock,
+        ):
+            result = await conversation._auth_api_key(
+                x_api_key="  fallback-key  ",
+                authorization="Basic abc",
+            )
+
+        self.assertEqual(result, {"id": 10, "user_id": 20})
+        self.assertEqual(auth_mock.await_count, 1)
+        self.assertEqual(auth_mock.await_args.args[1], "fallback-key")
+
+    async def test_auth_api_key_rejects_empty_bearer_token(self) -> None:
+        with self.assertRaises(conversation.HTTPException) as exc:
+            await conversation._auth_api_key(x_api_key=None, authorization="Bearer ")
+
+        self.assertEqual(exc.exception.status_code, 401)
+        self.assertEqual(exc.exception.detail.get("code"), "missing_api_key")
+
     def test_normalize_idempotency_key_trim_and_empty_behavior(self) -> None:
         self.assertEqual(conversation._normalize_idempotency_key("  abc  "), "abc")
         self.assertIsNone(conversation._normalize_idempotency_key("   "))
