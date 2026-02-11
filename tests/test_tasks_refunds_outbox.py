@@ -102,7 +102,50 @@ class _FakeSessionFactory:
             self._committed_state.update(tx_state)
 
 
+def _load_user_service_module(fake_user_model):
+    module_name = "user_service_under_test"
+    target_modules = {
+        "app": types.ModuleType("app"),
+        "app.core": types.ModuleType("app.core"),
+        "app.core.db": types.ModuleType("app.core.db"),
+        "app.core.models": types.ModuleType("app.core.models"),
+        "aiogram": types.ModuleType("aiogram"),
+        "aiogram.types": types.ModuleType("aiogram.types"),
+    }
+
+    @asynccontextmanager
+    async def _dummy_session_scope(*_args, **_kwargs):
+        yield None
+
+    target_modules["app.core.db"].session_scope = _dummy_session_scope
+    target_modules["app.core.models"].User = fake_user_model
+    target_modules["app.core.models"].RequestReservation = type("_FakeReservation", (), {})
+    target_modules["aiogram.types"].User = type("_FakeTelegramUser", (), {})
+
+    previous = {}
+    names = set(target_modules) | {module_name}
+    for name in names:
+        previous[name] = sys.modules.get(name)
+        sys.modules.pop(name, None)
+
+    try:
+        sys.modules.update(target_modules)
+        path = pathlib.Path(__file__).resolve().parents[1] / "app" / "services" / "user" / "user_service.py"
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        module.select = lambda model: _SelectStmt(model)
+        return module
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
+            if previous[name] is not None:
+                sys.modules[name] = previous[name]
+
+
 def _load_refunds_module():
+    user_service = _load_user_service_module(_FakeUserModel)
     module_name = "tasks_refunds_under_test"
     target_modules = {
         "app": types.ModuleType("app"),
@@ -111,6 +154,8 @@ def _load_refunds_module():
         "app.core.models": types.ModuleType("app.core.models"),
         "app.tasks": types.ModuleType("app.tasks"),
         "app.tasks.celery_app": types.ModuleType("app.tasks.celery_app"),
+        "app.services": types.ModuleType("app.services"),
+        "app.services.user": types.ModuleType("app.services.user"),
     }
 
 
@@ -134,6 +179,7 @@ def _load_refunds_module():
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
     target_modules["app.tasks.celery_app"]._run = lambda _coro: None
+    target_modules["app.services.user.user_service"] = user_service
 
     previous = {}
     names = set(target_modules) | {module_name}
@@ -217,6 +263,33 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertEqual(state["outbox"].status, "applied")
         self.assertIsNotNone(state["outbox"].processed_at)
 
+
+
+    def test_direct_and_outbox_refund_paths_are_equivalent(self):
+        refunds = _load_refunds_module()
+
+        for billing_tier in ("free", "paid"):
+            direct_state = {
+                "user": SimpleNamespace(id=10, free_requests=2, paid_requests=3, used_requests=0),
+                "outbox": None,
+            }
+            outbox_state = copy.deepcopy(direct_state)
+
+            asyncio.run(refunds.refund_user_balance(_FakeDB(direct_state), 10, billing_tier))
+            asyncio.run(refunds._refund_balance_for_outbox(_FakeDB(outbox_state), 10, billing_tier))
+
+            self.assertEqual(direct_state["user"].free_requests, outbox_state["user"].free_requests)
+            self.assertEqual(direct_state["user"].paid_requests, outbox_state["user"].paid_requests)
+            self.assertEqual(direct_state["user"].used_requests, outbox_state["user"].used_requests)
+
+        missing_user_state = {"user": None, "outbox": None}
+        asyncio.run(refunds.refund_user_balance(_FakeDB(missing_user_state), 999, "free"))
+        asyncio.run(refunds._refund_balance_for_outbox(_FakeDB({"user": None, "outbox": None}), 999, "free"))
+
+        with self.assertRaises(refunds.InvalidBillingTierError):
+            asyncio.run(refunds.refund_user_balance(_FakeDB({"user": None, "outbox": None}), 10, "bad"))
+        with self.assertRaises(refunds.InvalidBillingTierError):
+            asyncio.run(refunds._refund_balance_for_outbox(_FakeDB({"user": None, "outbox": None}), 10, "bad"))
 
     def test_invalid_billing_tier_marks_failed_without_balance_mutation(self):
         refunds = _load_refunds_module()

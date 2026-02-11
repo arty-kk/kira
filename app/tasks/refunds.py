@@ -8,7 +8,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import session_scope
-from app.core.models import RefundOutbox, User
+from app.core.models import RefundOutbox
+from app.services.user.user_service import InvalidBillingTierError, refund_user_balance
 from app.tasks.celery_app import celery, _run
 
 logger = logging.getLogger(__name__)
@@ -16,25 +17,8 @@ REFUND_OUTBOX_LEASE_TTL_SECONDS = 300
 REFUND_OUTBOX_MAX_ATTEMPTS = 3
 REFUND_REQUEUE_BATCH_SIZE = 100
 
-
-class InvalidBillingTierError(ValueError):
-    pass
-
-
 async def _refund_balance_for_outbox(db: AsyncSession, owner_id: int, billing_tier: str) -> None:
-    if billing_tier not in ("free", "paid"):
-        raise InvalidBillingTierError("invalid_billing_tier")
-    res = await db.execute(select(User).where(User.id == owner_id).with_for_update())
-    user = res.scalar_one_or_none()
-    if not user:
-        return
-    if billing_tier == "free":
-        user.free_requests += 1
-    elif billing_tier == "paid":
-        user.paid_requests += 1
-    if user.used_requests > 0:
-        user.used_requests -= 1
-    await db.flush()
+    await refund_user_balance(db, owner_id, billing_tier)
 
 
 @celery.task(name="refunds.process_outbox")

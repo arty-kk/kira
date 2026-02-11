@@ -4,21 +4,27 @@ from __future__ import annotations
 import logging
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import func, update
-
-from aiogram.types import User as TelegramUser
+from sqlalchemy import func, select, update
 
 from app.core.models import RequestReservation, User
+
+if TYPE_CHECKING:
+    from aiogram.types import User as TelegramUser
 from app.core.db import session_scope
 
 logger = logging.getLogger(__name__)
 
 PRICE_PER_REQUEST_MILLS = 56
 
-async def get_or_create_user(db: AsyncSession, tg_user: TelegramUser) -> User:
+
+class InvalidBillingTierError(ValueError):
+    pass
+
+async def get_or_create_user(db: AsyncSession, tg_user: "TelegramUser") -> User:
     stmt = (
         insert(User)
         .values(
@@ -196,6 +202,29 @@ async def refund_reservation_by_id(reservation_id: int) -> None:
         return
     async with session_scope(stmt_timeout_ms=2000) as db:
         await refund_reservation(db, reservation_id)
+
+
+async def refund_user_balance(db: AsyncSession, owner_id: int, billing_tier: str | None) -> None:
+    """Refund one consumed request for a user.
+
+    Invariants: only "free"/"paid" billing tiers are valid; missing user is a no-op;
+    used_requests never goes below zero.
+    """
+    if billing_tier not in ("free", "paid"):
+        raise InvalidBillingTierError("invalid_billing_tier")
+
+    res = await db.execute(select(User).where(User.id == owner_id).with_for_update())
+    user = res.scalar_one_or_none()
+    if not user:
+        return
+
+    if billing_tier == "free":
+        user.free_requests += 1
+    else:
+        user.paid_requests += 1
+    if user.used_requests > 0:
+        user.used_requests -= 1
+    await db.flush()
 
 async def increment_usage(db: AsyncSession, user_id: int) -> None:
     r = await consume_request(db, user_id, prefer_paid=False)
