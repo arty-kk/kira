@@ -54,5 +54,28 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("image_b64", payload)
 
 
+
+    def test_dispatch_passive_moderation_strips_oversized_image(self) -> None:
+        message = types.SimpleNamespace(chat=types.SimpleNamespace(id=123), message_id=778)
+        payload = {"image_b64": "abcd", "image_mime": "image/jpeg"}
+
+        with (
+            patch("app.tasks.moderation.MODERATION_MAX_IMAGE_BYTES", 1),
+            patch("app.tasks.moderation.MODERATION_MAX_PAYLOAD_BYTES", 1024),
+            patch.object(group.passive_moderate, "delay") as delay_mock,
+        ):
+            group._dispatch_passive_moderation(
+                message,
+                payload,
+                text="hello",
+                ents=[],
+                is_channel=False,
+                user_id_val=42,
+            )
+
+        moderation_payload = delay_mock.call_args.args[0]
+        self.assertNotIn("image_b64", moderation_payload)
+        self.assertNotIn("image_mime", moderation_payload)
+
 if __name__ == "__main__":
     unittest.main()

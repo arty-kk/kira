@@ -20,7 +20,7 @@ from app.config import settings
 from app.core.memory import append_group_recent, inc_msg_count, push_group_stm
 from app.services.user.user_service import refund_reservation_by_id
 from app.tasks.celery_app import _run
-from app.tasks.moderation import passive_moderate
+from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 from app.tasks.queue_schema import validate_bot_job
 from app.core.media_utils import MAX_IMAGE_BYTES, sanitize_and_compress, strict_image_load
 
@@ -185,7 +185,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
 
         await _store_context_and_recent(payload, log_caption=log_caption)
 
-        passive_moderate.delay(
+        moderation_payload = prepare_moderation_payload(
             {
                 "chat_id": chat_id,
                 "user_id": _safe_int(payload.get("user_id"), chat_id),
@@ -195,8 +195,10 @@ async def _preprocess(payload: dict[str, Any]) -> str:
                 "image_b64": store_payload["jpeg_b64"],
                 "image_mime": "image/jpeg",
                 "source": "channel" if bool(payload.get("is_channel_post")) else "user",
-            }
+            },
+            context="media.preprocess_group_image",
         )
+        passive_moderate.delay(moderation_payload)
         return "ok"
     except ValueError as exc:
         logger.warning("media.preprocess_group_image validation failed chat=%s msg=%s err=%s", chat_id, message_id, exc)

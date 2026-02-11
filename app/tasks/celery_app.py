@@ -42,6 +42,7 @@ celery = Celery(
         "app.tasks.api_cleanup",
         "app.tasks.kb",
         "app.tasks.payments",
+        "app.tasks.refunds",
         "app.tasks.battle",
         "app.tasks.media",
     ],
@@ -68,6 +69,7 @@ celery.conf.update(
     broker_connection_retry_on_startup=True,
     task_routes={
         "media.preprocess_group_image": {"queue": settings.CELERY_MEDIA_QUEUE},
+        "moderation.*": {"queue": settings.CELERY_MODERATION_QUEUE},
     },
 )
 
