@@ -74,20 +74,57 @@ class _FakePipeline:
 
 
 class _FakeRedisQueue:
-    def __init__(self, existing_value):
-        self.existing_value = existing_value
+    def __init__(self, existing_value, *, scripted_get_values=None):
+        self.values = {"api:job:req-123": existing_value}
+        self.scripted_get_values = list(scripted_get_values or [])
         self.set_calls = []
         self.pipeline_calls = []
         self.lrem_calls = []
 
     async def set(self, key, value, ex=None, nx=None):
         self.set_calls.append({"key": key, "value": value, "ex": ex, "nx": nx})
-        if nx:
+        if nx and key in self.values:
             return False
+        self.values[key] = value
         return True
 
-    async def get(self, _key):
-        return self.existing_value
+    async def get(self, key):
+        if self.scripted_get_values:
+            return self.scripted_get_values.pop(0)
+        return self.values.get(key)
+
+    async def eval(self, script, numkeys, key, observed_value, now_ts, stale_after, ttl):
+        self.set_calls.append(
+            {
+                "key": key,
+                "value": "<eval>",
+                "ex": int(ttl),
+                "nx": None,
+                "observed_value": observed_value,
+            }
+        )
+        assert numkeys == 1
+        assert "inflight:" in script
+
+        current_value = self.values.get(key)
+        if current_value != observed_value:
+            return 0
+        if not isinstance(current_value, str) or not current_value.startswith("inflight:"):
+            return 0
+
+        try:
+            inflight_ts = int(current_value.split(":", 1)[1])
+        except (TypeError, ValueError):
+            return 0
+
+        now_ts = int(now_ts)
+        stale_after = int(stale_after)
+        ttl = int(ttl)
+        if now_ts - inflight_ts <= stale_after:
+            return 0
+
+        self.values[key] = f"inflight:{now_ts}"
+        return 1
 
     def pipeline(self):
         return _FakePipeline(self)
@@ -129,7 +166,7 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         with unittest.mock.patch.object(api_worker.time, "time", return_value=now):
             await api_worker._handle_job(json.dumps(job), redis_queue)
 
-        self.assertEqual(len(redis_queue.set_calls), 1)
+        self.assertEqual(len(redis_queue.set_calls), 2)
         self.assertTrue(redis_queue.set_calls[0]["nx"])
 
         self.assertEqual(len(redis_queue.pipeline_calls), 1)
@@ -141,6 +178,57 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["error"]["status"], 409)
 
         self.assertEqual(len(redis_queue.lrem_calls), 1)
+
+    async def test_two_workers_race_on_stale_inflight_only_first_claims(self) -> None:
+        now = 20_000
+        stale_ts = now - api_worker.INFLIGHT_STALE_AFTER_SEC - 20
+        stale_value = f"inflight:{stale_ts}"
+        redis_queue = _FakeRedisQueue(
+            existing_value=stale_value,
+            scripted_get_values=[stale_value, stale_value],
+        )
+        job = {
+            "request_id": "req-123",
+            "result_key": "result:req-123",
+            "chat_id": 1,
+            "memory_uid": 2,
+            "persona_owner_id": 3,
+            "persona_profile_id": "profile",
+            "msg_id": 4,
+            "text": "hello",
+        }
+        release_first = api_worker.asyncio.Event()
+        first_started = api_worker.asyncio.Event()
+
+        async def _fake_respond_to_user(**_kwargs):
+            first_started.set()
+            await release_first.wait()
+            return "ok"
+
+        with (
+            unittest.mock.patch.object(api_worker.time, "time", return_value=now),
+            unittest.mock.patch.object(
+                api_worker,
+                "respond_to_user",
+                new=unittest.mock.AsyncMock(side_effect=_fake_respond_to_user),
+            ) as responder_mock,
+        ):
+            first_task = api_worker.asyncio.create_task(api_worker._handle_job(json.dumps(job), redis_queue))
+            await first_started.wait()
+            await api_worker._handle_job(json.dumps(job), redis_queue)
+            second_seen_calls = responder_mock.await_count
+            release_first.set()
+            await first_task
+
+        self.assertGreaterEqual(second_seen_calls, 1)
+        self.assertEqual(second_seen_calls, responder_mock.await_count)
+
+        self.assertEqual(len(redis_queue.pipeline_calls), 2)
+        payloads = [json.loads(commands[0][2]) for commands in redis_queue.pipeline_calls]
+        duplicate_payload = next(payload for payload in payloads if not payload.get("ok"))
+        self.assertEqual(duplicate_payload["error"]["code"], "duplicate_request")
+        self.assertEqual(duplicate_payload["error"]["status"], 409)
+        self.assertEqual(duplicate_payload["error"]["message"], "Request is already in progress")
 
 
 if __name__ == "__main__":
