@@ -42,6 +42,7 @@ celery = Celery(
         "app.tasks.api_cleanup",
         "app.tasks.kb",
         "app.tasks.payments",
+        "app.tasks.battle",
     ],
 )
 

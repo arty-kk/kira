@@ -15,10 +15,14 @@ from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client, BOT_ID as SELF_BOT_ID, BOT_USERNAME as SELF_BOT_USERNAME
 from app.services.addons import group_battle as battle_service
+from app.tasks.battle import battle_launch_task
 
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
+
+BATTLE_ENQUEUE_DEDUP_TTL_SECONDS = 20
+
 
 async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
 
@@ -108,14 +112,18 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
         await message.reply("🚫 You opted out of Battles. Use /battle_on to opt in.", quote=True)
         return
 
+    dedup_key = f"battle:req:{chat_id}:{challenger_id}:{opponent_id}"
     try:
-        await battle_service.launch_battle(challenger_id, opponent_id, chat_id=chat_id)
+        queued = await redis_client.set(dedup_key, 1, nx=True, ex=BATTLE_ENQUEUE_DEDUP_TTL_SECONDS)
+        if not queued:
+            return
+        battle_launch_task.delay(challenger_id, opponent_id, chat_id)
         try:
             await message.delete()
         except Exception:
             pass
     except Exception:
-        logger.exception("launch_battle failed")
+        logger.exception("battle enqueue failed")
         await message.reply(
             "❌ Failed to start the battle (opponent may have left or an internal error occurred).",
             quote=True,
