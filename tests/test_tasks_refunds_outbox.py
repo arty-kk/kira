@@ -177,38 +177,43 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         }
 
         original_refund = refunds._refund_balance_for_outbox
+        call_count = 0
 
-        async def _refund_then_fail(db, owner_id, billing_tier):
+        async def _refund_then_fail_once(db, owner_id, billing_tier):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                await original_refund(db, owner_id, billing_tier)
+                raise RuntimeError("after refund")
             await original_refund(db, owner_id, billing_tier)
-            raise RuntimeError("after refund")
 
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
-            patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail),
+            patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
             refunds.process_refund_outbox_task(7)
 
         self.assertEqual(state["user"].free_requests, 0)
         self.assertEqual(state["user"].used_requests, 1)
-        self.assertEqual(state["outbox"].status, "failed")
+        self.assertEqual(state["outbox"].status, "pending")
+        self.assertEqual(state["outbox"].attempts, 1)
+        self.assertIsNone(state["outbox"].leased_at)
+        self.assertIsNone(state["outbox"].lease_token)
         self.assertIsNotNone(state["outbox"].last_error)
-
-        # Эмулируем повторную постановку в обработку после устранения ошибки.
-        state["outbox"].status = "pending"
-        state["outbox"].last_error = None
-        state["outbox"].processed_at = None
 
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
             refunds.process_refund_outbox_task(7)
 
         self.assertEqual(state["user"].free_requests, 1)
         self.assertEqual(state["user"].used_requests, 0)
+        self.assertEqual(state["outbox"].attempts, 2)
         self.assertEqual(state["outbox"].status, "applied")
         self.assertIsNotNone(state["outbox"].processed_at)
 
@@ -245,6 +250,41 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertEqual(state["user"].free_requests, 2)
         self.assertEqual(state["user"].paid_requests, 3)
         self.assertEqual(state["user"].used_requests, 4)
+
+    def test_transient_error_exceeding_attempt_limit_marks_failed(self):
+        refunds = _load_refunds_module()
+        state = {
+            "user": SimpleNamespace(id=10, free_requests=0, paid_requests=0, used_requests=1),
+            "outbox": SimpleNamespace(
+                id=9,
+                owner_id=10,
+                billing_tier="free",
+                request_id="req-retry-limit",
+                status="pending",
+                attempts=refunds.REFUND_OUTBOX_MAX_ATTEMPTS - 1,
+                lease_attempts=0,
+                leased_at="lease",
+                lease_token="token",
+                last_error=None,
+                processed_at=None,
+            ),
+        }
+
+        async def _always_fail(*_args, **_kwargs):
+            raise RuntimeError("transient")
+
+        with (
+            patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
+            patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
+            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "_refund_balance_for_outbox", side_effect=_always_fail),
+        ):
+            refunds.process_refund_outbox_task(9)
+
+        self.assertEqual(state["outbox"].attempts, refunds.REFUND_OUTBOX_MAX_ATTEMPTS)
+        self.assertEqual(state["outbox"].status, "failed")
+        self.assertEqual(state["outbox"].last_error, "RuntimeError('transient')")
+        self.assertIsNone(state["outbox"].processed_at)
 
 
 if __name__ == "__main__":

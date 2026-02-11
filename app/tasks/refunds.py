@@ -13,6 +13,7 @@ from app.tasks.celery_app import celery, _run
 
 logger = logging.getLogger(__name__)
 REFUND_OUTBOX_LEASE_TTL_SECONDS = 300
+REFUND_OUTBOX_MAX_ATTEMPTS = 3
 REFUND_REQUEUE_BATCH_SIZE = 100
 
 
@@ -69,8 +70,14 @@ def process_refund_outbox_task(outbox_id: int) -> None:
                     outbox.request_id,
                 )
             except Exception as exc:
-                outbox.status = "failed"
+                if int(outbox.attempts or 0) < REFUND_OUTBOX_MAX_ATTEMPTS:
+                    outbox.status = "pending"
+                    outbox.leased_at = None
+                    outbox.lease_token = None
+                else:
+                    outbox.status = "failed"
                 outbox.last_error = repr(exc)
+                outbox.processed_at = None
                 logger.exception(
                     "refund_outbox process failed id=%s owner_id=%s request_id=%s",
                     outbox.id,
