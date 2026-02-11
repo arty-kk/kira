@@ -26,6 +26,7 @@ from app.core.media_limits import (
 )
 from app.core.memory import get_redis, get_redis_queue, register_api_memory_uid
 from app.api.api_keys import authenticate_key, inc_stats
+from app.services.user.user_service import refund_user_balance
 from app.emo_engine.registry import update_cached_personas_for_owner
 from app.emo_engine.persona.constants.user_prefs import normalize_prefs
 from app.tasks.queue_schema import validate_api_job
@@ -998,25 +999,10 @@ async def conversation_endpoint(
 
 
 async def _refund_request(owner_id: int, billing_tier: Optional[str]) -> None:
-
-    if billing_tier not in ("free", "paid"):
-        return
     async with session_scope(
         stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
     ) as db:
-        res = await db.execute(
-            select(User).where(User.id == owner_id).with_for_update()
-        )
-        user = res.scalar_one_or_none()
-        if not user:
-            return
-        if billing_tier == "free":
-            user.free_requests += 1
-        elif billing_tier == "paid":
-            user.paid_requests += 1
-        if user.used_requests > 0:
-            user.used_requests -= 1
-        await db.flush()
+        await refund_user_balance(db, owner_id, billing_tier)
 
 
 async def _store_refund_outbox_task(
