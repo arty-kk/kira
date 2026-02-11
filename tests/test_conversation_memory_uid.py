@@ -125,6 +125,47 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload.user_id, "user-1")
 
+    async def test_image_payload_with_only_whitespace_rejected(self):
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_job_mock = unittest.mock.AsyncMock()
+        with unittest.mock.patch.object(conversation, "_send_job_and_wait", send_job_mock):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={
+                    "user_id": "user-1",
+                    "image_b64": "   \n\t  ",
+                    "image_mime": "image/png",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"].get("code"), "invalid_payload")
+        send_job_mock.assert_not_called()
+
+    async def test_voice_payload_with_only_whitespace_rejected(self):
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_job_mock = unittest.mock.AsyncMock()
+        with unittest.mock.patch.object(conversation, "_send_job_and_wait", send_job_mock):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={
+                    "user_id": "user-1",
+                    "voice_b64": "\n  \t   ",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"].get("code"), "invalid_payload")
+        send_job_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
