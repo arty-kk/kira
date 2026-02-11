@@ -33,18 +33,29 @@ def _load_scheduler():
     fake_periodic.refunds_requeue_pending_outbox_task = dummy_task
     fake_kb.gc_orphan_api_key_dirs = dummy_task
 
-    sys.modules["app"] = fake_app
-    sys.modules["app.tasks"] = fake_tasks
-    sys.modules["app.tasks.periodic"] = fake_periodic
-    sys.modules["app.tasks.kb"] = fake_kb
-    sys.modules["app.config"] = fake_config
+    patch_modules = {
+        "app": fake_app,
+        "app.tasks": fake_tasks,
+        "app.tasks.periodic": fake_periodic,
+        "app.tasks.kb": fake_kb,
+        "app.config": fake_config,
+    }
+    previous = {name: sys.modules.get(name) for name in patch_modules}
 
-    scheduler_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "scheduler.py"
-    spec = importlib.util.spec_from_file_location("scheduler_under_test", scheduler_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["scheduler_under_test"] = module
-    spec.loader.exec_module(module)
-    return module
+    try:
+        sys.modules.update(patch_modules)
+        scheduler_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "scheduler.py"
+        spec = importlib.util.spec_from_file_location("scheduler_under_test", scheduler_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["scheduler_under_test"] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, old in previous.items():
+            if old is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = old
 
 
 scheduler = _load_scheduler()

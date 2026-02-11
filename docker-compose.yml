@@ -461,6 +461,7 @@ services:
       API_RESULT_TTL_SEC: "600"
       API_WORKER_MAX_INFLIGHT: "128"
       API_RESPOND_TIMEOUT_SEC: "120"
+      API_PROCESSING_SWEEP_BATCH: "200"
     volumes:
       - ./dialogs:/data/dialogs
       - app_data:/app/data

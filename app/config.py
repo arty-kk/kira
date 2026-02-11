@@ -175,6 +175,7 @@ class Settings:
     API_PERSONA_PER_KEY: bool = field(default_factory=lambda: _get_env("API_PERSONA_PER_KEY", "true", conv=_parse_bool))
     API_QUEUE_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("API_QUEUE_MAX_PAYLOAD_BYTES", "131072", conv=int))
     API_QUEUE_SNAPSHOT_SEC: int = field(default_factory=lambda: _get_env("API_QUEUE_SNAPSHOT_SEC", "60", conv=int))
+    API_PROCESSING_SWEEP_BATCH: int = field(default_factory=lambda: _get_env("API_PROCESSING_SWEEP_BATCH", "200", conv=int))
     TRUSTED_PROXY_IPS: List[str] = field(
         default_factory=lambda: [
             x.strip()
