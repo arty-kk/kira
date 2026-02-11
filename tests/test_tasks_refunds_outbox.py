@@ -213,5 +213,39 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertIsNotNone(state["outbox"].processed_at)
 
 
+    def test_invalid_billing_tier_marks_failed_without_balance_mutation(self):
+        refunds = _load_refunds_module()
+        state = {
+            "user": SimpleNamespace(id=10, free_requests=2, paid_requests=3, used_requests=4),
+            "outbox": SimpleNamespace(
+                id=8,
+                owner_id=10,
+                billing_tier="bad",
+                request_id="req-invalid",
+                status="pending",
+                attempts=0,
+                lease_attempts=0,
+                leased_at="lease",
+                lease_token="token",
+                last_error=None,
+                processed_at=None,
+            ),
+        }
+
+        with (
+            patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
+            patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
+            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+        ):
+            refunds.process_refund_outbox_task(8)
+
+        self.assertEqual(state["outbox"].status, "failed")
+        self.assertEqual(state["outbox"].last_error, "invalid_billing_tier")
+        self.assertIsNone(state["outbox"].processed_at)
+        self.assertEqual(state["user"].free_requests, 2)
+        self.assertEqual(state["user"].paid_requests, 3)
+        self.assertEqual(state["user"].used_requests, 4)
+
+
 if __name__ == "__main__":
     unittest.main()
