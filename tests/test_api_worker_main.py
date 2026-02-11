@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import pathlib
 import sys
@@ -70,6 +71,70 @@ class ApiWorkerMainFailFastTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.code, 1)
         close_mock.assert_awaited_once()
         exception_log.assert_called_once()
+
+
+class _FakeRedisQueueWithRequeueLock:
+    def __init__(self) -> None:
+        self.data = {
+            api_worker.PROCESSING_KEY: ["job:1", "job:2"],
+            api_worker.API_QUEUE_KEY: [],
+        }
+        self.lock_values = {}
+        self.rpush_calls = 0
+        self.set_calls = []
+
+    async def set(self, key, value, nx=False, ex=None):
+        self.set_calls.append({"key": key, "value": value, "nx": nx, "ex": ex})
+        if nx and key in self.lock_values:
+            return False
+        self.lock_values[key] = value
+        return True
+
+    async def lrange(self, key, start, end):
+        values = list(self.data.get(key, []))
+        if end == -1:
+            return values[start:]
+        return values[start : end + 1]
+
+    async def rpush(self, key, *values):
+        self.rpush_calls += 1
+        self.data.setdefault(key, []).extend(values)
+
+    async def delete(self, key):
+        self.data.pop(key, None)
+
+
+class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_requeue_lock_allows_only_single_worker(self) -> None:
+        fake_redis = _FakeRedisQueueWithRequeueLock()
+        stop_evt = asyncio.Event()
+        stop_evt.set()
+        requeue_lock_key = f"{api_worker.PROCESSING_KEY}:requeue_lock"
+
+        with unittest.mock.patch.object(api_worker, "get_redis_queue", return_value=fake_redis), unittest.mock.patch.object(
+            api_worker, "_sweeper_loop", unittest.mock.AsyncMock()
+        ), unittest.mock.patch.object(api_worker, "_queue_depth_loop", unittest.mock.AsyncMock()), unittest.mock.patch.object(
+            api_worker.logger, "info"
+        ) as info_log:
+            await asyncio.gather(
+                api_worker._worker_loop(stop_evt),
+                api_worker._worker_loop(stop_evt),
+            )
+
+        self.assertEqual(fake_redis.rpush_calls, 1)
+        self.assertEqual(fake_redis.data[api_worker.API_QUEUE_KEY], ["job:1", "job:2"])
+        self.assertTrue(
+            any(
+                call.args and "requeue-on-start skipped; lock held by another worker" in call.args[0]
+                for call in info_log.call_args_list
+            )
+        )
+
+        self.assertEqual(len(fake_redis.set_calls), 2)
+        for call in fake_redis.set_calls:
+            self.assertEqual(call["key"], requeue_lock_key)
+            self.assertTrue(call["nx"])
+            self.assertEqual(call["ex"], api_worker.REQUEUE_LOCK_TTL_SEC)
 
 
 if __name__ == "__main__":

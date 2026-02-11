@@ -67,6 +67,7 @@ JOB_TTL_SEC = max(
     RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT,
 )
 INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT
+REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "API_REQUEUE_LOCK_TTL_SEC", 300))
 
 def detect_voice_mime(audio: bytes) -> str | None:
     if not audio:
@@ -967,15 +968,28 @@ async def _queue_depth_loop(stop_evt: asyncio.Event, redis_queue) -> None:
 async def _worker_loop(stop_evt: asyncio.Event) -> None:
     redis_queue = get_redis_queue()
     logger.info("api_worker: starting; queue=%s", API_QUEUE_KEY)
+    requeue_lock_key = f"{PROCESSING_KEY}:requeue_lock"
 
     try:
-        pending = await redis_queue.lrange(PROCESSING_KEY, 0, -1)
-        if pending:
-            await redis_queue.rpush(API_QUEUE_KEY, *pending)
-            await redis_queue.delete(PROCESSING_KEY)
+        requeue_lock_acquired = await redis_queue.set(
+            requeue_lock_key,
+            os.getpid(),
+            nx=True,
+            ex=REQUEUE_LOCK_TTL_SEC,
+        )
+        if requeue_lock_acquired:
+            pending = await redis_queue.lrange(PROCESSING_KEY, 0, -1)
+            if pending:
+                await redis_queue.rpush(API_QUEUE_KEY, *pending)
+                await redis_queue.delete(PROCESSING_KEY)
+                logger.info(
+                    "api_worker: requeued %d pending from %s",
+                    len(pending), PROCESSING_KEY,
+                )
+        else:
             logger.info(
-                "api_worker: requeued %d pending from %s",
-                len(pending), PROCESSING_KEY,
+                "api_worker: requeue-on-start skipped; lock held by another worker (%s)",
+                requeue_lock_key,
             )
     except Exception as e:
         logger.warning("api_worker: requeue-on-start failed: %s", e)
