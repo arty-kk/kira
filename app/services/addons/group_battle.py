@@ -38,6 +38,13 @@ def _default_chat_id() -> int | None:
 def _decode_hmap(d: dict | None) -> dict[str, str]:
     return { _b2s(k): _b2s(v) for k, v in (d or {}).items() }
 
+
+def _timeout_payload(gid: str, expected_phase_version: int) -> dict[str, object]:
+    return {
+        "gid": gid,
+        "expected_phase_version": expected_phase_version,
+    }
+
 def create_task_safe(coro: Coroutine[Any, Any, Any]) -> asyncio.Task:
 
     task = asyncio.create_task(coro)
@@ -116,6 +123,8 @@ async def launch_battle(p1_id: str, p2_id: str, chat_id: int | str | None = None
         async with redis.pipeline(transaction=True) as pipe:
             pipe.hset(key, mapping={
                 "state":          "CREATED",
+                "version":        "1",
+                "phase_version":  "1",
                 "ts":             started_ts,
                 "chat_id":        str(chat_id),
                 "player1_id":     p1_id,
@@ -136,7 +145,12 @@ async def launch_battle(p1_id: str, p2_id: str, chat_id: int | str | None = None
             except Exception:
                 logger.exception("Failed to pre-mark bot ready for game %s", gid)
 
-        create_task_safe(_battle_start_timeout(gid))
+        from app.tasks.battle import battle_start_timeout_check_task
+
+        battle_start_timeout_check_task.apply_async(
+            countdown=int(T_START.total_seconds()),
+            kwargs={"payload": _timeout_payload(gid, expected_phase_version=1)},
+        )
         logger.info("New battle %s between %s and %s", gid, p1_name, p2_name)
     except Exception:
         logger.exception("Error in launch_battle")
@@ -178,16 +192,7 @@ async def start_battle_job(chat_id: int | str | None = None) -> None:
         logger.exception("Error in start_battle_job")
 
 
-async def _battle_start_timeout(gid: str) -> None:
-
-    await asyncio.sleep(T_START.total_seconds())
-    try:
-        await check_battle_timeout(gid)
-    except Exception:
-        logger.exception("Error in battle start timeout for %s", gid)
-
-
-async def check_battle_timeout(gid: str) -> None:
+async def check_battle_timeout(gid: str, expected_phase_version: int | None = None) -> None:
 
     try:
         redis = get_redis()
@@ -198,6 +203,14 @@ async def check_battle_timeout(gid: str) -> None:
             return
         if game.get("state") != "CREATED":
             return
+        if expected_phase_version is not None and int(game.get("phase_version") or 0) != expected_phase_version:
+            logger.info(
+                "Battle %s start-timeout ignored: expected phase_version=%s current=%s",
+                gid,
+                expected_phase_version,
+                game.get("phase_version"),
+            )
+            return
 
         chat_id = game.get("chat_id") or _default_chat_id()
         if chat_id is None:
@@ -207,20 +220,39 @@ async def check_battle_timeout(gid: str) -> None:
         ready1 = await redis.get(f"ready:{gid}:{game['player1_id']}")
         ready2 = await redis.get(f"ready:{gid}:{game['player2_id']}")
         if not (ready1 and ready2):
-            await bot.send_message(
-                chat_id,
-                "❌ <b>Battle canceled</b>: someone didn’t accept in time.",
-                parse_mode="HTML",
-            )
-            await _cleanup_data_only(gid)
-            logger.info("Battle %s canceled by timeout", gid)
+            lock = redis.lock(f"lock:game_start:{gid}", timeout=5, blocking_timeout=0)
+            acquired = await lock.acquire()
+            if not acquired:
+                return
+            try:
+                game = _decode_hmap(await redis.hgetall(key))
+                if not game or game.get("state") != "CREATED":
+                    return
+                if expected_phase_version is not None and int(game.get("phase_version") or 0) != expected_phase_version:
+                    return
+                ready1 = await redis.get(f"ready:{gid}:{game['player1_id']}")
+                ready2 = await redis.get(f"ready:{gid}:{game['player2_id']}")
+                if ready1 and ready2:
+                    return
+                await bot.send_message(
+                    chat_id,
+                    "❌ <b>Battle canceled</b>: someone didn’t accept in time.",
+                    parse_mode="HTML",
+                )
+                await redis.hincrby(key, "version", 1)
+                await redis.hincrby(key, "phase_version", 1)
+                await _cleanup_data_only(gid)
+                logger.info("Battle %s canceled by timeout", gid)
+            finally:
+                try:
+                    await lock.release()
+                except LockError:
+                    logger.warning("Game-start lock for timeout %s was not held", gid)
     except Exception:
         logger.exception("Error in check_battle_timeout")
 
 
-async def _battle_move_timeout(gid: str) -> None:
-
-    await asyncio.sleep((T_MOVE + SAFETY).total_seconds())
+async def check_move_timeout(gid: str, expected_phase_version: int | None = None) -> None:
     try:
 
         redis = get_redis()
@@ -229,19 +261,44 @@ async def _battle_move_timeout(gid: str) -> None:
         game = _decode_hmap(await redis.hgetall(key))
         if not game:
             return
-        if game.get("state") == "STARTED":
-            chat_id = game.get("chat_id") or _default_chat_id()
-            if chat_id is None:
-                return
-            chat_id = int(chat_id)
-            await bot.send_message(
-                chat_id,
-                "❌ <b>Battle canceled</b>: move not made in time.",
-                parse_mode="HTML",
+        if expected_phase_version is not None and int(game.get("phase_version") or 0) != expected_phase_version:
+            logger.info(
+                "Battle %s move-timeout ignored: expected phase_version=%s current=%s",
+                gid,
+                expected_phase_version,
+                game.get("phase_version"),
             )
-            await _cleanup_data_only(gid)
+            return
+        if game.get("state") == "STARTED":
+            lock = redis.lock(f"lock:game:{gid}", timeout=5, blocking_timeout=0)
+            acquired = await lock.acquire()
+            if not acquired:
+                return
+            try:
+                game = _decode_hmap(await redis.hgetall(key))
+                if not game or game.get("state") != "STARTED":
+                    return
+                if expected_phase_version is not None and int(game.get("phase_version") or 0) != expected_phase_version:
+                    return
+                chat_id = game.get("chat_id") or _default_chat_id()
+                if chat_id is None:
+                    return
+                chat_id = int(chat_id)
+                await bot.send_message(
+                    chat_id,
+                    "❌ <b>Battle canceled</b>: move not made in time.",
+                    parse_mode="HTML",
+                )
+                await redis.hincrby(key, "version", 1)
+                await redis.hincrby(key, "phase_version", 1)
+                await _cleanup_data_only(gid)
+            finally:
+                try:
+                    await lock.release()
+                except LockError:
+                    logger.warning("Game-move lock for timeout %s was not held", gid)
     except Exception:
-        logger.exception("Error in battle move timeout for %s", gid)
+        logger.exception("Error in check_move_timeout for %s", gid)
 
 
 async def on_battle_start(query: CallbackQuery) -> None:
@@ -296,10 +353,19 @@ async def on_battle_start(query: CallbackQuery) -> None:
                         "state": "STARTED",
                         "ts": new_ts,
                     })
+                    pipe.hincrby(key, "version", 1)
+                    pipe.hincrby(key, "phase_version", 1)
                     pipe.expire(key, ttl_move)
                     pipe.expire(f"active_game:{chat_id}", ttl_move)
                     await pipe.execute()
-                create_task_safe(_battle_move_timeout(gid))
+                phase_version_raw = await redis.hget(key, "phase_version")
+                phase_version = int(_b2s(phase_version_raw) or 0)
+                from app.tasks.battle import battle_move_timeout_check_task
+
+                battle_move_timeout_check_task.apply_async(
+                    countdown=int((T_MOVE + SAFETY).total_seconds()),
+                    kwargs={"payload": _timeout_payload(gid, expected_phase_version=phase_version)},
+                )
 
                 updated = _decode_hmap(await redis.hgetall(key))
                 if not updated:
@@ -392,6 +458,7 @@ async def on_battle_move(query: CallbackQuery) -> None:
             return
 
         await redis.hset(key, field, choice)
+        await redis.hincrby(key, "version", 1)
 
         updated = _decode_hmap(await redis.hgetall(key))
         bot_id_str = str(SELF_BOT_ID)
@@ -402,6 +469,7 @@ async def on_battle_move(query: CallbackQuery) -> None:
             try:
                 bot_choice = random.choice(("rock", "paper", "scissors"))
                 await redis.hset(key, bot_field, bot_choice)
+                await redis.hincrby(key, "version", 1)
                 updated = _decode_hmap(await redis.hgetall(key))
             except Exception:
                 logger.exception("Failed to set bot move for game %s", gid)
@@ -556,6 +624,14 @@ async def conclude_game(gid: str) -> None:
     except Exception:
         logger.exception("Error in conclude_game")
     finally:
+        try:
+            redis = get_redis()
+            key = f"game:{gid}"
+            if await redis.exists(key):
+                await redis.hincrby(key, "version", 1)
+                await redis.hincrby(key, "phase_version", 1)
+        except Exception:
+            logger.debug("Failed to bump version before cleanup for game %s", gid, exc_info=True)
         await _cleanup_data_only(gid)
 
 
