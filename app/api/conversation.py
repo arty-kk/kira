@@ -39,6 +39,44 @@ _REFUND_RETRY_BACKOFF_BASE_SEC = 0.2
 
 _RATE_LIMIT_REDIS_RETRIES = 2
 _RATE_LIMIT_REDIS_RETRY_DELAY_SEC = 0.05
+_RATE_LIMIT_WINDOW_SEC = 60
+_RATE_LIMIT_KEY_TTL_SEC = 70
+
+_RATE_LIMIT_LUA_SCRIPT = """
+local api_key = KEYS[1]
+local ip_key = KEYS[2]
+
+local ttl = tonumber(ARGV[1])
+local check_ip = tonumber(ARGV[2])
+local api_limit = tonumber(ARGV[3])
+local ip_limit = tonumber(ARGV[4])
+
+local api_count = redis.call('INCR', api_key)
+if api_count == 1 then
+    redis.call('EXPIRE', api_key, ttl)
+end
+
+local ip_count = 0
+if check_ip == 1 then
+    ip_count = redis.call('INCR', ip_key)
+    if ip_count == 1 then
+        redis.call('EXPIRE', ip_key, ttl)
+    end
+end
+
+local api_exceeded = 0
+if api_count > api_limit then
+    api_exceeded = 1
+end
+
+local ip_exceeded = 0
+if check_ip == 1 and ip_count > ip_limit then
+    ip_exceeded = 1
+end
+
+return {api_count, ip_count, api_exceeded, ip_exceeded}
+"""
+_RATE_LIMIT_LUA_SHA: Optional[str] = None
 
 
 def _get_api_queue_key() -> str:
@@ -392,6 +430,17 @@ def _get_persona_owner_id(owner_user_id: int, api_key_id: int) -> int:
 
 
 async def _check_rate_limit(request: Request, api_key_id: int) -> None:
+    global _RATE_LIMIT_LUA_SHA
+
+    per_min = settings.API_RATELIMIT_PER_MIN
+    burst_factor = settings.API_RATELIMIT_BURST_FACTOR
+    if per_min <= 0 or burst_factor <= 0:
+        return
+
+    ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
+    ip = _resolve_rate_limit_ip(request)
+    check_ip = ip != "unknown" and ip_limit > 0
+
     for attempt in range(1, _RATE_LIMIT_REDIS_RETRIES + 2):
         redis = get_redis()
         if redis is None:
@@ -399,39 +448,61 @@ async def _check_rate_limit(request: Request, api_key_id: int) -> None:
         else:
             try:
                 now = int(time.time())
-                window = now // 60
+                window = now // _RATE_LIMIT_WINDOW_SEC
+                api_key = f"rl:api:key:{api_key_id}:{window}"
+                ip_key = f"rl:api:ip:{ip}:{window}" if check_ip else ""
 
-                per_min = settings.API_RATELIMIT_PER_MIN
-                burst_factor = settings.API_RATELIMIT_BURST_FACTOR
-                if per_min <= 0 or burst_factor <= 0:
-                    return
-                key = f"rl:api:key:{api_key_id}:{window}"
+                result = None
+                if _RATE_LIMIT_LUA_SHA:
+                    try:
+                        result = await redis.evalsha(
+                            _RATE_LIMIT_LUA_SHA,
+                            2,
+                            api_key,
+                            ip_key,
+                            _RATE_LIMIT_KEY_TTL_SEC,
+                            int(check_ip),
+                            int(per_min * burst_factor),
+                            int(ip_limit),
+                        )
+                    except Exception as exc:
+                        if "NOSCRIPT" in str(exc).upper():
+                            _RATE_LIMIT_LUA_SHA = None
+                        else:
+                            raise
 
-                count = await redis.incr(key)
-                if count == 1:
-                    await redis.expire(key, 70)
-                if count > per_min * burst_factor:
+                if result is None:
+                    result = await redis.eval(
+                        _RATE_LIMIT_LUA_SCRIPT,
+                        2,
+                        api_key,
+                        ip_key,
+                        _RATE_LIMIT_KEY_TTL_SEC,
+                        int(check_ip),
+                        int(per_min * burst_factor),
+                        int(ip_limit),
+                    )
+                    if hasattr(redis, "script_load"):
+                        try:
+                            _RATE_LIMIT_LUA_SHA = await redis.script_load(_RATE_LIMIT_LUA_SCRIPT)
+                        except Exception:
+                            _RATE_LIMIT_LUA_SHA = None
+
+                _, _, api_exceeded, ip_exceeded = [int(v) for v in result]
+
+                if api_exceeded:
                     raise HTTPException(
                         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                         detail={"code": "rate_limited", "message": "Too many requests for this API key"},
                         headers={"Retry-After": "60"},
                     )
 
-                ip = _resolve_rate_limit_ip(request)
-                if ip != "unknown":
-                    ip_key = f"rl:api:ip:{ip}:{window}"
-                    ip_limit = settings.API_RATELIMIT_PER_IP_PER_MIN
-                    if ip_limit <= 0:
-                        return
-                    ic = await redis.incr(ip_key)
-                    if ic == 1:
-                        await redis.expire(ip_key, 70)
-                    if ic > ip_limit:
-                        raise HTTPException(
-                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                            detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
-                            headers={"Retry-After": "60"},
-                        )
+                if check_ip and ip_exceeded:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail={"code": "rate_limited_ip", "message": "Too many requests from this IP"},
+                        headers={"Retry-After": "60"},
+                    )
                 return
             except HTTPException:
                 raise
