@@ -910,7 +910,6 @@ async def conversation_endpoint(
             if status_code >= 500 or err_code in {
                 "invalid_payload",
                 "voice_transcription_failed",
-                "duplicate_request",
             }:
                 original_error_code = str(err_code or status_code)
                 try:

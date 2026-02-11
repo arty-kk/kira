@@ -36,7 +36,7 @@ class _FakeDB:
 
 
 class ConversationRefundOutboxTests(unittest.TestCase):
-    def test_worker_error_keeps_primary_error_and_stores_refund_outbox(self):
+    def test_duplicate_worker_error_keeps_primary_error_without_refund_outbox(self):
         outbox_rows = []
 
         @asynccontextmanager
@@ -55,6 +55,47 @@ class ConversationRefundOutboxTests(unittest.TestCase):
                 "message": "duplicate",
             },
         })
+        refund_mock = AsyncMock()
+
+        with (
+            patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
+            patch.object(conversation, "session_scope", _fake_session_scope),
+            patch.object(conversation, "_send_job_and_wait", new=send_task_mock),
+            patch.object(conversation, "_refund_request", new=refund_mock),
+            patch.object(conversation, "get_redis", return_value=None),
+            patch.object(conversation.asyncio, "sleep", new=AsyncMock()),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={"user_id": "u-1", "message": "hi"},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        payload = response.json().get("detail") or {}
+        self.assertEqual(payload.get("code"), "duplicate_request")
+        refund_mock.assert_not_awaited()
+        self.assertEqual(outbox_rows, [])
+
+    def test_worker_error_keeps_primary_error_and_stores_refund_outbox(self):
+        outbox_rows = []
+
+        @asynccontextmanager
+        async def _fake_session_scope(**_kwargs):
+            yield _FakeDB(outbox_rows)
+
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_task_mock = AsyncMock(return_value={
+            "ok": False,
+            "error": {
+                "status": 400,
+                "code": "invalid_payload",
+                "message": "bad payload",
+            },
+        })
 
         with (
             patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
@@ -70,16 +111,16 @@ class ConversationRefundOutboxTests(unittest.TestCase):
                 json={"user_id": "u-1", "message": "hi"},
             )
 
-        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.status_code, 400)
         payload = response.json().get("detail") or {}
-        self.assertEqual(payload.get("code"), "duplicate_request")
+        self.assertEqual(payload.get("code"), "invalid_payload")
 
         self.assertEqual(len(outbox_rows), 1)
         outbox = outbox_rows[0]
         self.assertEqual(outbox.owner_id, 1)
         self.assertEqual(outbox.billing_tier, "free")
         self.assertTrue(str(outbox.request_id))
-        self.assertEqual(outbox.reason, "worker_error:duplicate_request")
+        self.assertEqual(outbox.reason, "worker_error:invalid_payload")
         self.assertEqual(outbox.attempts, 3)
         self.assertIn("RuntimeError", str(outbox.last_error))
 
@@ -95,9 +136,9 @@ class ConversationRefundOutboxTests(unittest.TestCase):
         send_task_mock = AsyncMock(return_value={
             "ok": False,
             "error": {
-                "status": 409,
-                "code": "duplicate_request",
-                "message": "duplicate",
+                "status": 400,
+                "code": "invalid_payload",
+                "message": "bad payload",
             },
         })
 
@@ -137,7 +178,45 @@ class ConversationRefundOutboxTests(unittest.TestCase):
         )
         self.assertTrue(str(request_id))
         self.assertEqual(owner_id, 1)
-        self.assertEqual(original_error_code, "duplicate_request")
+        self.assertEqual(original_error_code, "invalid_payload")
+
+    def test_success_path_returns_only_original_result_without_refund_outbox(self):
+        outbox_rows = []
+
+        @asynccontextmanager
+        async def _fake_session_scope(**_kwargs):
+            yield _FakeDB(outbox_rows)
+
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        refund_mock = AsyncMock()
+
+        with (
+            patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
+            patch.object(conversation, "session_scope", _fake_session_scope),
+            patch.object(
+                conversation,
+                "_send_job_and_wait",
+                new=AsyncMock(return_value={"ok": True, "reply": "only-original", "request_id": "rid-1"}),
+            ),
+            patch.object(conversation, "_refund_request", new=refund_mock),
+            patch.object(conversation, "get_redis", return_value=None),
+            patch.object(conversation.asyncio, "sleep", new=AsyncMock()),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={"user_id": "u-1", "message": "hi"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload.get("reply"), "only-original")
+        self.assertNotIn("duplicate_request", str(payload))
+        refund_mock.assert_not_awaited()
+        self.assertEqual(outbox_rows, [])
 
 
 if __name__ == "__main__":
