@@ -3,7 +3,6 @@ import ssl
 import asyncio
 import logging
 import json
-import os
 import time as time_module
 
 import aiofiles
@@ -15,6 +14,7 @@ from app.config import settings
 from app.core.memory import get_redis, get_redis_queue
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
+from app.core.tls import resolve_tls_server_files
 import app.bot.components.constants as consts
 from app.bot.components.constants import (
     LANG_FILE,
@@ -81,28 +81,17 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     except Exception:
         logger.exception("Error setting webhook")
 
-    ssl_context = None
-    if settings.USE_SELF_SIGNED_CERT:
-        missing_files = [
-            path
-            for path in (settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
-            if not os.path.exists(path)
-        ]
-        if missing_files:
-            logger.error(
-                "Invalid webhook TLS configuration. Missing files: %s",
-                ", ".join(missing_files),
-            )
-            raise RuntimeError(
-                f"Webhook TLS files are missing: {', '.join(missing_files)}"
-            )
+    tls_files = resolve_tls_server_files(
+        use_self_signed=settings.USE_SELF_SIGNED_CERT,
+        certfile=settings.WEBHOOK_CERT,
+        keyfile=settings.WEBHOOK_KEY,
+        component_name="Webhook",
+    )
 
+    ssl_context = None
+    if tls_files.certfile and tls_files.keyfile:
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ssl_context.load_cert_chain(settings.WEBHOOK_CERT, settings.WEBHOOK_KEY)
-    else:
-        logger.info(
-            "USE_SELF_SIGNED_CERT is disabled; local TLS is not started and external proxy TLS termination is expected"
-        )
+        ssl_context.load_cert_chain(tls_files.certfile, tls_files.keyfile)
 
     async def handle_webhook(request: web.Request) -> web.Response:
 
@@ -122,9 +111,8 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
 
         try:
             key = f"tg:{consts.BOT_ID}:update:{update_id}"
-            seen = await redis_client.get(key)
-            if not seen:
-                await redis_client.set(key, "1", ex=60)
+            claimed = await redis_client.set(key, "1", ex=60, nx=True)
+            if claimed:
                 logger.info("Incoming update: %s", data)
 
                 upd = types.Update(**data)

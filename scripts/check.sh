@@ -17,5 +17,5 @@ export TWITTER_ACCESS_TOKEN="${TWITTER_ACCESS_TOKEN:-test}"
 export TWITTER_ACCESS_TOKEN_SECRET="${TWITTER_ACCESS_TOKEN_SECRET:-test}"
 export TWITTER_BEARER_TOKEN="${TWITTER_BEARER_TOKEN:-test}"
 
-python -m unittest discover -s tests
+pytest -q
 python -m compileall app

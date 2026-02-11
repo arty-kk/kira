@@ -45,6 +45,8 @@ def _load_main_module():
     fake_bot = types.ModuleType("app.bot")
     fake_api = types.ModuleType("app.api")
     fake_api_app = types.ModuleType("app.api.app")
+    fake_core = types.ModuleType("app.core")
+    fake_core_tls = types.ModuleType("app.core.tls")
 
     fake_settings = types.SimpleNamespace(
         USE_SELF_SIGNED_CERT=True,
@@ -78,6 +80,16 @@ def _load_main_module():
     fake_bot.start_bot = lambda: None
     fake_api_app.create_app = lambda: object()
 
+    def _fake_resolve_tls_server_files(*, use_self_signed, certfile, keyfile, component_name):
+        if not use_self_signed:
+            return types.SimpleNamespace(certfile=None, keyfile=None)
+        missing = [path for path in (certfile, keyfile) if not path or path.startswith("/tmp/")]
+        if missing:
+            raise RuntimeError(f"{component_name} TLS files are missing: {', '.join(missing)}")
+        return types.SimpleNamespace(certfile=certfile, keyfile=keyfile)
+
+    fake_core_tls.resolve_tls_server_files = _fake_resolve_tls_server_files
+
     injected = {
         "app": fake_app_pkg,
         "app.config": fake_config,
@@ -89,6 +101,8 @@ def _load_main_module():
         "app.bot": fake_bot,
         "app.api": fake_api,
         "app.api.app": fake_api_app,
+        "app.core": fake_core,
+        "app.core.tls": fake_core_tls,
         "uvicorn": _FakeUvicorn("uvicorn"),
     }
 
@@ -153,6 +167,19 @@ class StartAPIServerTLSTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(_FakeConfig.last_kwargs)
         self.assertIsNone(_FakeConfig.last_kwargs["ssl_certfile"])
         self.assertIsNone(_FakeConfig.last_kwargs["ssl_keyfile"])
+
+
+class LoopExceptionLoggingTests(unittest.TestCase):
+    def test_log_loop_exception_uses_exc_info(self):
+        exc = RuntimeError("boom")
+        with unittest.mock.patch.object(main.logging, "error") as error_mock:
+            main._log_loop_exception({"message": "ctx", "exception": exc})
+
+        self.assertEqual(error_mock.call_count, 2)
+        exc_info = error_mock.call_args_list[1].kwargs.get("exc_info")
+        self.assertIsInstance(exc_info, tuple)
+        self.assertEqual(exc_info[0], RuntimeError)
+        self.assertEqual(exc_info[1], exc)
 
 
 if __name__ == "__main__":

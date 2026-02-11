@@ -17,6 +17,7 @@ from app.emo_engine.registry import shutdown_personas
 from app.clients.http_client import http_client
 from app.bot import start_bot
 from app.api.app import create_app
+from app.core.tls import resolve_tls_server_files
 
 
 async def _preinit_persona_memory() -> PersonaMemory:
@@ -42,27 +43,14 @@ async def start_api_server() -> None:
     certfile = api_cert if isinstance(api_cert, str) and api_cert.strip() else settings.WEBHOOK_CERT
     keyfile = api_key if isinstance(api_key, str) and api_key.strip() else settings.WEBHOOK_KEY
 
-    if use_self_signed:
-        missing_files = [
-            path
-            for path in (certfile, keyfile)
-            if not path or not os.path.exists(path)
-        ]
-        if missing_files:
-            logging.error(
-                "Invalid API TLS configuration. Missing files: %s",
-                ", ".join(missing_files),
-            )
-            raise RuntimeError(
-                f"API TLS files are missing: {', '.join(missing_files)}"
-            )
-
-        ssl_certfile = certfile
-        ssl_keyfile = keyfile
-    else:
-        logging.info(
-            "USE_SELF_SIGNED_CERT is disabled; local TLS is not started and external proxy TLS termination is expected"
-        )
+    tls_files = resolve_tls_server_files(
+        use_self_signed=use_self_signed,
+        certfile=certfile,
+        keyfile=keyfile,
+        component_name="API",
+    )
+    ssl_certfile = tls_files.certfile
+    ssl_keyfile = tls_files.keyfile
 
     config = uvicorn.Config(
         app,
@@ -77,6 +65,16 @@ async def start_api_server() -> None:
     server = uvicorn.Server(config)
     server.install_signal_handlers = False
     await server.serve()
+
+def _log_loop_exception(ctx: dict[str, Any]) -> None:
+    logging.error("UNHANDLED ASYNCIO EXCEPTION: %s", ctx.get("message"))
+    exc = ctx.get("exception")
+    if exc:
+        logging.error(
+            "Unhandled asyncio exception traceback",
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+
 
 async def main() -> None:
     setup_logging()
@@ -154,9 +152,7 @@ async def main() -> None:
     )
 
     def _loop_ex_handler(loop, ctx):
-        logging.error("UNHANDLED ASYNCIO EXCEPTION: %s", ctx.get("message"))
-        if ctx.get("exception"):
-            logging.exception(ctx["exception"])
+        _log_loop_exception(ctx)
 
     loop.set_exception_handler(_loop_ex_handler)
 

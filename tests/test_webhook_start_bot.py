@@ -23,10 +23,16 @@ class _FakeAiofiles(types.ModuleType):
 
 
 class _FakeRedis:
+    def __init__(self):
+        self.kv = {}
+
     async def exists(self, _key):
         return False
 
-    async def set(self, *_args, **_kwargs):
+    async def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.kv:
+            return False
+        self.kv[key] = value
         return True
 
     async def expire(self, *_args, **_kwargs):
@@ -37,19 +43,26 @@ class _FakeRedis:
 
 
 class _FakeRouter:
+    def __init__(self):
+        self.post_handlers = {}
+
     def add_get(self, *_args, **_kwargs):
         return None
 
-    def add_post(self, *_args, **_kwargs):
-        return None
+    def add_post(self, path, handler, **_kwargs):
+        self.post_handlers[path] = handler
+        return handler
 
     def add_route(self, *_args, **_kwargs):
         return None
 
 
 class _FakeApplication:
+    last_instance = None
+
     def __init__(self):
         self.router = _FakeRouter()
+        _FakeApplication.last_instance = self
 
 
 class _FakeAppRunner:
@@ -87,7 +100,11 @@ class _FakeWeb(types.ModuleType):
             self.text = text
 
     class Request:
-        pass
+        def __init__(self, payload):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
 
     AppRunner = _FakeAppRunner
     TCPSite = _FakeTCPSite
@@ -114,7 +131,10 @@ class _FakeBot:
 
 
 class _FakeDispatcher:
+    calls = 0
+
     async def feed_update(self, *_args, **_kwargs):
+        _FakeDispatcher.calls += 1
         return None
 
 
@@ -122,7 +142,9 @@ def _load_webhook_module():
     fake_app = types.ModuleType("app")
     fake_config = types.ModuleType("app.config")
     fake_core = types.ModuleType("app.core")
+    fake_core.__path__ = []
     fake_memory = types.ModuleType("app.core.memory")
+    fake_tls = types.ModuleType("app.core.tls")
     fake_clients = types.ModuleType("app.clients")
     fake_telegram = types.ModuleType("app.clients.telegram_client")
     fake_bot_pkg = types.ModuleType("app.bot")
@@ -145,6 +167,10 @@ def _load_webhook_module():
     fake_config.settings = settings
     fake_memory.get_redis = lambda: _FakeRedis()
     fake_memory.get_redis_queue = lambda: _FakeRedis()
+    fake_tls.resolve_tls_server_files = lambda **kwargs: types.SimpleNamespace(
+        certfile=kwargs.get("certfile") if kwargs.get("use_self_signed") else None,
+        keyfile=kwargs.get("keyfile") if kwargs.get("use_self_signed") else None,
+    )
 
     fake_telegram.get_bot = lambda: _FakeBot()
 
@@ -171,6 +197,7 @@ def _load_webhook_module():
         "app.config": fake_config,
         "app.core": fake_core,
         "app.core.memory": fake_memory,
+        "app.core.tls": fake_tls,
         "app.clients": fake_clients,
         "app.clients.telegram_client": fake_telegram,
         "app.bot": fake_bot_pkg,
@@ -206,6 +233,9 @@ webhook = _load_webhook_module()
 
 
 class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        _FakeDispatcher.calls = 0
+
     async def test_start_bot_without_self_signed_cert_uses_none_ssl_context(self):
         stop_event = asyncio.Event()
         stop_event.set()
@@ -215,6 +245,28 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(_FakeTCPSite.last_instance)
         self.assertIsNone(_FakeTCPSite.last_instance.ssl_context)
         self.assertTrue(_FakeTCPSite.last_instance.started)
+
+    async def test_webhook_update_dedup_uses_atomic_nx_set(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        self.assertIsNotNone(app)
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        payload = {"update_id": 12345}
+        response_a = await handler(_FakeWeb.Request(payload))
+        response_b = await handler(_FakeWeb.Request(payload))
+        await asyncio.sleep(0)
+
+        self.assertEqual(response_a.status, 200)
+        self.assertEqual(response_b.status, 200)
+        self.assertEqual(_FakeDispatcher.calls, 1)
+
+        stop_event.set()
+        await task
 
 
 if __name__ == "__main__":

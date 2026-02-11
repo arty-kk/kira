@@ -31,12 +31,41 @@ def _seed_env() -> None:
 
 _seed_env()
 
+from app.config import settings
 from app.emo_engine.persona.core import Persona
 
 
 class PersonaRegressionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._prev = {
+            "PERSONA_NAME": settings.PERSONA_NAME,
+            "PERSONA_AGE": settings.PERSONA_AGE,
+            "PERSONA_GENDER": settings.PERSONA_GENDER,
+            "PERSONA_ZODIAC": settings.PERSONA_ZODIAC,
+            "PERSONA_TEMPERAMENT": settings.PERSONA_TEMPERAMENT,
+            "PERSONA_ARCHETYPES": settings.PERSONA_ARCHETYPES,
+            "PERSONA_ROLE": settings.PERSONA_ROLE,
+        }
+        settings.PERSONA_NAME = "Bonnie"
+        settings.PERSONA_AGE = 24
+        settings.PERSONA_GENDER = "female"
+        settings.PERSONA_ZODIAC = "Libra"
+        settings.PERSONA_TEMPERAMENT = '{"sanguine": 0.4, "choleric": 0.25, "phlegmatic": 0.2, "melancholic": 0.15}'
+        settings.PERSONA_ARCHETYPES = '["Rebel", "Jester", "Sage"]'
+        settings.PERSONA_ROLE = "Playful companion persona"
+
+    def tearDown(self) -> None:
+        settings.PERSONA_NAME = self._prev["PERSONA_NAME"]
+        settings.PERSONA_AGE = self._prev["PERSONA_AGE"]
+        settings.PERSONA_GENDER = self._prev["PERSONA_GENDER"]
+        settings.PERSONA_ZODIAC = self._prev["PERSONA_ZODIAC"]
+        settings.PERSONA_TEMPERAMENT = self._prev["PERSONA_TEMPERAMENT"]
+        settings.PERSONA_ARCHETYPES = self._prev["PERSONA_ARCHETYPES"]
+        settings.PERSONA_ROLE = self._prev["PERSONA_ROLE"]
+
     def test_baseline_persona_fields(self) -> None:
         persona = Persona(chat_id=1)
+        persona.apply_overrides(reset=True)
         self.assertEqual(persona.name, "Bonnie")
         self.assertEqual(persona.age, 24)
         self.assertEqual(persona.gender, "female")
