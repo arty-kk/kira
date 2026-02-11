@@ -127,6 +127,7 @@ class RefundOutbox(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('pending','applied','failed')", name="ck_refund_outbox_status"),
+        CheckConstraint("billing_tier IN ('free','paid')", name="ck_refund_outbox_billing_tier"),
         CheckConstraint("attempts >= 0", name="ck_refund_outbox_attempts_nonneg"),
         CheckConstraint("lease_attempts >= 0", name="ck_refund_outbox_lease_attempts_nonneg"),
         CheckConstraint("request_id <> ''", name="ck_refund_outbox_request_id_nonempty"),

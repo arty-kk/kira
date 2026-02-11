@@ -16,9 +16,13 @@ REFUND_OUTBOX_LEASE_TTL_SECONDS = 300
 REFUND_REQUEUE_BATCH_SIZE = 100
 
 
+class InvalidBillingTierError(ValueError):
+    pass
+
+
 async def _refund_balance_for_outbox(db: AsyncSession, owner_id: int, billing_tier: str) -> None:
     if billing_tier not in ("free", "paid"):
-        return
+        raise InvalidBillingTierError("invalid_billing_tier")
     res = await db.execute(select(User).where(User.id == owner_id).with_for_update())
     user = res.scalar_one_or_none()
     if not user:
@@ -54,6 +58,16 @@ def process_refund_outbox_task(outbox_id: int) -> None:
                     outbox.status = "applied"
                     outbox.last_error = None
                     outbox.processed_at = datetime.now(timezone.utc)
+            except InvalidBillingTierError:
+                outbox.status = "failed"
+                outbox.last_error = "invalid_billing_tier"
+                outbox.processed_at = None
+                logger.warning(
+                    "refund_outbox validation failed id=%s owner_id=%s request_id=%s code=invalid_billing_tier",
+                    outbox.id,
+                    outbox.owner_id,
+                    outbox.request_id,
+                )
             except Exception as exc:
                 outbox.status = "failed"
                 outbox.last_error = repr(exc)
