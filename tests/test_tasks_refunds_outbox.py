@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 
 class _FakeColumn:
-    def __eq__(self, _other):
-        return self
+    def __eq__(self, other):
+        return _FakeWhereValue(other)
 
 
 class _FakeModel:
@@ -21,6 +21,7 @@ class _FakeModel:
 
 class _FakeRefundOutboxModel(_FakeModel):
     status = _FakeColumn()
+    lease_token = _FakeColumn()
 
 
 class _FakeUserModel(_FakeModel):
@@ -44,6 +45,39 @@ class _DummyResult:
 
     def scalar_one_or_none(self):
         return self._value
+
+
+class _ClaimResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeWhereValue:
+    def __init__(self, value):
+        self.right = type("_Right", (), {"value": value})()
+
+
+class _FakeReleaseStmt:
+    table = _FakeRefundOutboxModel
+
+    def __init__(self):
+        self._where_criteria = []
+        self._values = {}
+
+    def where(self, *criteria):
+        self._where_criteria = criteria
+        return self
+
+    def values(self, **values):
+        self._values = values
+        return self
+
+
+def _fake_update(_model):
+    return _FakeReleaseStmt()
 
 
 class _NestedTx:
@@ -100,6 +134,52 @@ class _FakeSessionFactory:
         else:
             self._committed_state.clear()
             self._committed_state.update(tx_state)
+
+
+class _FakeRequeueDB:
+    def __init__(self, state):
+        self._state = state
+
+    async def execute(self, stmt, params=None):
+        stmt_text = str(stmt)
+        if "RETURNING id, lease_token" in stmt_text:
+            batch_size = int(params["batch_size"])
+            lease_token = params["lease_token"]
+            claimed = []
+            for row in self._state:
+                if row["status"] != "pending":
+                    continue
+                if row["lease_token"] is not None:
+                    continue
+                row["lease_token"] = lease_token
+                row["leased_at"] = "now"
+                row["lease_attempts"] += 1
+                claimed.append((row["id"], row["lease_token"]))
+                if len(claimed) >= batch_size:
+                    break
+            return _ClaimResult(claimed)
+
+        if getattr(stmt, "table", None) is _FakeRefundOutboxModel:
+            outbox_id = int(stmt._where_criteria[0].right.value)
+            lease_token = str(stmt._where_criteria[2].right.value)
+            values = stmt._values
+            for row in self._state:
+                if row["id"] == outbox_id and row["status"] == "pending" and row["lease_token"] == lease_token:
+                    row["leased_at"] = values.get("leased_at")
+                    row["lease_token"] = values.get("lease_token")
+                    row["last_error"] = values.get("last_error")
+            return _ClaimResult([])
+
+        raise AssertionError(f"Unexpected statement: {stmt_text}")
+
+
+class _FakeRequeueSessionFactory:
+    def __init__(self, state):
+        self._state = state
+
+    @asynccontextmanager
+    async def __call__(self, *_args, **_kwargs):
+        yield _FakeRequeueDB(self._state)
 
 
 def _load_user_service_module(fake_user_model):
@@ -358,6 +438,32 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertEqual(state["outbox"].status, "failed")
         self.assertEqual(state["outbox"].last_error, "RuntimeError('transient')")
         self.assertIsNone(state["outbox"].processed_at)
+
+    def test_requeue_pending_refund_outbox_releases_lease_after_enqueue_error(self):
+        refunds = _load_refunds_module()
+        state = [
+            {"id": 11, "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None}
+        ]
+
+        async def _run_test():
+            with (
+                patch.object(refunds, "session_scope", _FakeRequeueSessionFactory(state)),
+                patch.object(refunds.celery, "send_task", side_effect=[Exception("broker down"), None]) as send_task_mock,
+                patch.object(refunds, "update", _fake_update),
+            ):
+                first_scanned, first_enqueued = await refunds.requeue_pending_refund_outbox(batch_size=20)
+                second_scanned, second_enqueued = await refunds.requeue_pending_refund_outbox(batch_size=20)
+
+            self.assertEqual(first_scanned, 1)
+            self.assertEqual(first_enqueued, 0)
+            self.assertEqual(second_scanned, 1)
+            self.assertEqual(second_enqueued, 1)
+            self.assertEqual(send_task_mock.call_count, 2)
+            self.assertEqual(state[0]["lease_attempts"], 2)
+            self.assertIsNotNone(state[0]["lease_token"])
+            self.assertEqual(state[0]["last_error"], "broker down")
+
+        asyncio.run(_run_test())
 
 
 if __name__ == "__main__":
