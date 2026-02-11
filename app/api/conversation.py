@@ -400,8 +400,12 @@ async def _auth_api_key(
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
     raw = None
-    if authorization and authorization.lower().startswith("bearer "):
-        raw = authorization.split(None, 1)[1].strip()
+    if authorization:
+        scheme, _, tail = authorization.partition(" ")
+        if scheme.lower() == "bearer":
+            raw = tail.strip()
+        elif x_api_key:
+            raw = x_api_key.strip()
     elif x_api_key:
         raw = x_api_key.strip()
 
