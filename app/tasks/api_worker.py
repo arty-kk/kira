@@ -324,6 +324,113 @@ async def _heartbeat_job(redis, job_key: str, stop_evt: asyncio.Event) -> None:
         pass
 
 
+_CLAIM_STALE_INFLIGHT_LUA = """
+local current = redis.call('GET', KEYS[1])
+if (not current) or current ~= ARGV[1] then
+  return 0
+end
+
+local ts = string.match(current, '^inflight:(%d+)$')
+if not ts then
+  return 0
+end
+
+local now_ts = tonumber(ARGV[2])
+local stale_after = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+ts = tonumber(ts)
+
+if (not now_ts) or (not stale_after) or (not ttl) or (not ts) then
+  return 0
+end
+
+if (now_ts - ts) <= stale_after then
+  return 0
+end
+
+redis.call('SET', KEYS[1], 'inflight:' .. ARGV[2], 'EX', ttl)
+return 1
+"""
+
+
+def _is_watch_error(exc: Exception) -> bool:
+    return exc.__class__.__name__ == "WatchError"
+
+
+def _is_eval_unavailable(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        isinstance(exc, (AttributeError, NotImplementedError))
+        or "unknown command" in message
+        or " eval " in f" {message} "
+        or "noscript" in message
+    )
+
+
+async def _claim_stale_inflight(
+    redis,
+    job_key: str,
+    observed_value: str | None,
+    now_ts: int,
+    ttl: int,
+) -> bool:
+    if not isinstance(observed_value, str):
+        return False
+
+    try:
+        claimed = await redis.eval(
+            _CLAIM_STALE_INFLIGHT_LUA,
+            1,
+            job_key,
+            observed_value,
+            str(now_ts),
+            str(INFLIGHT_STALE_AFTER_SEC),
+            str(ttl),
+        )
+        return bool(claimed)
+    except Exception as exc:
+        if not _is_eval_unavailable(exc):
+            logger.warning("api_worker: inflight eval failed %s: %s", job_key, exc)
+            return False
+
+    for _ in range(3):
+        pipe = redis.pipeline()
+        try:
+            await pipe.watch(job_key)
+            current_value = await pipe.get(job_key)
+            if isinstance(current_value, (bytes, bytearray)):
+                current_value = current_value.decode("utf-8", "ignore")
+
+            if current_value != observed_value:
+                return False
+
+            if not observed_value.startswith("inflight:"):
+                return False
+
+            try:
+                inflight_ts = int(observed_value.split(":", 1)[1])
+            except (TypeError, ValueError):
+                return False
+
+            if now_ts - inflight_ts <= INFLIGHT_STALE_AFTER_SEC:
+                return False
+
+            pipe.multi()
+            pipe.set(job_key, f"inflight:{now_ts}", ex=ttl)
+            await pipe.execute()
+            return True
+        except Exception as exc:
+            if _is_watch_error(exc):
+                continue
+            logger.warning("api_worker: inflight watch/multi failed %s: %s", job_key, exc)
+            return False
+        finally:
+            with suppress(Exception):
+                await pipe.reset()
+
+    return False
+
+
 async def _handle_job(raw: str, redis_queue) -> None:
     if not raw:
         return
@@ -517,26 +624,16 @@ async def _handle_job(raw: str, redis_queue) -> None:
 
         if isinstance(existing_value, (bytes, bytearray)):
             existing_value = existing_value.decode("utf-8", "ignore")
+        observed_value = existing_value
 
-        inflight_ts = None
-        if isinstance(existing_value, str) and existing_value.startswith("inflight:"):
-            try:
-                inflight_ts = int(existing_value.split(":", 1)[1])
-            except (TypeError, ValueError):
-                inflight_ts = None
-
-        now = int(time.time())
-        inflight_age = None if inflight_ts is None else now - inflight_ts
-
-        if inflight_age is None or inflight_age > INFLIGHT_STALE_AFTER_SEC:
-            try:
-                await redis_queue.set(job_key, f"inflight:{now}", ex=JOB_TTL_SEC)
-            except Exception as e:
-                logger.warning("api_worker: inflight overwrite failed %s: %s", job_key, e)
-                with suppress(Exception):
-                    await redis_queue.lrem(PROCESSING_KEY, 1, raw)
-                return
-        else:
+        claimed = await _claim_stale_inflight(
+            redis_queue,
+            job_key,
+            observed_value,
+            int(time.time()),
+            JOB_TTL_SEC,
+        )
+        if not claimed:
             await _send_struct_error(
                 409,
                 "duplicate_request",
