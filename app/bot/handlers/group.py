@@ -37,7 +37,7 @@ from app.config import settings
 from app.core.memory import MEMORY_TTL, append_group_recent, inc_msg_count, push_group_stm, record_activity
 from app.services.addons.analytics import record_user_message
 from app.services.addons.passive_moderation import split_context_text
-from app.services.addons import group_battle as battle_service
+from app.tasks.battle import battle_launch_task
 from app.tasks.moderation import passive_moderate
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,8 @@ Image.MAX_IMAGE_PIXELS = int(getattr(settings, "MAX_IMAGE_PIXELS", 36_000_000))
 
 BATTLE_CMD_RE = re.compile(r"(^|\s)/battle(?:@[A-Za-z0-9_]{3,})?(?=\s|$|[.,!?])", re.IGNORECASE)
 IS_MENTION_RE = re.compile(r"(?<!\S)@\w+\b")
+
+BATTLE_ENQUEUE_DEDUP_TTL_SECONDS = 20
 
 
 # ---------------------------
@@ -792,8 +794,12 @@ async def _maybe_handle_battle(message: Message, *, trigger: str, has_battle_cmd
         await send_message_safe(bot, cid, "🚫 You opted out of Battles. DM /battle_on to opt in.", reply_to_message_id=message.message_id)
         return True
 
+    dedup_key = f"battle:req:{cid}:{challenger_id}:{opponent_id}"
     try:
-        await battle_service.launch_battle(str(challenger_id), str(opponent_id), chat_id=cid)
+        queued = await redis_client.set(dedup_key, 1, nx=True, ex=BATTLE_ENQUEUE_DEDUP_TTL_SECONDS)
+        if not queued:
+            return True
+        battle_launch_task.delay(str(challenger_id), str(opponent_id), cid)
         with contextlib.suppress(Exception):
             await delete_message_safe(bot, cid, message.message_id)
     except Exception:
