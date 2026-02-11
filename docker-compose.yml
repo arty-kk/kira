@@ -271,6 +271,120 @@ services:
       - worker
       - --loglevel=info
       - --pool=threads
+      - -Q
+      - celery
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    stop_signal: SIGTERM
+    stop_grace_period: 180s
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "celery worker"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  worker-moderation:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    environment:
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      RUN_BOT: "false"
+      ENABLE_SCHEDULER: "false"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "worker-moderation"
+      CELERY_MODERATION_QUEUE: ${CELERY_MODERATION_QUEUE:-queue_moderation}
+      CELERY_MODERATION_CONCURRENCY: ${CELERY_MODERATION_CONCURRENCY:-2}
+      CELERY_MODERATION_PREFETCH: ${CELERY_MODERATION_PREFETCH:-1}
+    volumes:
+      - ./dialogs:/data/dialogs
+      - app_data:/app/data
+    depends_on:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      precompute-embeddings:
+        condition: service_completed_successfully
+    command:
+      - celery
+      - "-A"
+      - app.tasks.celery_app.celery
+      - worker
+      - --loglevel=info
+      - --pool=threads
+      - -Q
+      - ${CELERY_MODERATION_QUEUE:-queue_moderation}
+      - --concurrency=${CELERY_MODERATION_CONCURRENCY:-2}
+      - --prefetch-multiplier=${CELERY_MODERATION_PREFETCH:-1}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    stop_signal: SIGTERM
+    stop_grace_period: 180s
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "celery worker"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+  worker-media:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    init: true
+    environment:
+      REDIS_PASSWORD:    ${REDIS_PASSWORD}
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
+      REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
+      REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      RUN_BOT: "false"
+      ENABLE_SCHEDULER: "false"
+      DIALOGS_DIR: "/data/dialogs"
+      DB_APP_NAME: "worker-media"
+      CELERY_MEDIA_QUEUE: ${CELERY_MEDIA_QUEUE:-queue_media}
+      CELERY_MEDIA_CONCURRENCY: ${CELERY_MEDIA_CONCURRENCY:-2}
+      CELERY_MEDIA_PREFETCH: ${CELERY_MEDIA_PREFETCH:-1}
+    volumes:
+      - ./dialogs:/data/dialogs
+      - app_data:/app/data
+    depends_on:
+      redis_kv:
+        condition: service_healthy
+      redis_vec:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      precompute-embeddings:
+        condition: service_completed_successfully
+    command:
+      - celery
+      - "-A"
+      - app.tasks.celery_app.celery
+      - worker
+      - --loglevel=info
+      - --pool=threads
+      - -Q
+      - ${CELERY_MEDIA_QUEUE:-queue_media}
+      - --concurrency=${CELERY_MEDIA_CONCURRENCY:-2}
+      - --prefetch-multiplier=${CELERY_MEDIA_PREFETCH:-1}
     ulimits:
       nofile:
         soft: 262144

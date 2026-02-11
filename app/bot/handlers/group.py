@@ -34,7 +34,7 @@ from app.services.addons.analytics import record_user_message
 from app.services.addons.passive_moderation import split_context_text
 from app.tasks.battle import battle_launch_task
 from app.tasks.media import preprocess_group_image
-from app.tasks.moderation import passive_moderate
+from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 
 logger = logging.getLogger(__name__)
 bot = get_bot()
@@ -483,7 +483,7 @@ async def _push_group_stm_and_recent(
 
 
 def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, ents: List[dict], is_channel: bool, user_id_val: int) -> None:
-    passive_moderate.delay(
+    moderation_payload = prepare_moderation_payload(
         {
             "chat_id": message.chat.id,
             "user_id": user_id_val,
@@ -493,8 +493,10 @@ def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, 
             "image_b64": payload.get("image_b64"),
             "image_mime": payload.get("image_mime"),
             "source": "channel" if is_channel else "user",
-        }
+        },
+        context="group.dispatch",
     )
+    passive_moderate.delay(moderation_payload)
 
 
 # ---------------------------

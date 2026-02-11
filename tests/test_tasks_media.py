@@ -111,6 +111,36 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         store_context.assert_not_awaited()
         passive_delay.assert_not_called()
 
+
+    async def test_preprocess_drops_oversized_image_for_moderation_queue(self) -> None:
+        fake_redis = _FakeRedis()
+        payload = {
+            "chat_id": 10,
+            "message_id": 20,
+            "user_id": 30,
+            "file_id": "abc",
+            "caption": "cap",
+            "caption_log": "cap",
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "_download_file_to_tmp", AsyncMock(return_value="/tmp/f.jpg")),
+            patch.object(media, "strict_image_load", AsyncMock(return_value=object())),
+            patch.object(media, "sanitize_and_compress", return_value=b"jpeg"),
+            patch("app.tasks.moderation.MODERATION_MAX_IMAGE_BYTES", 3),
+            patch("app.tasks.moderation.MODERATION_MAX_PAYLOAD_BYTES", 1024 * 1024),
+            patch.object(media.passive_moderate, "delay") as passive_delay,
+            patch("app.tasks.media.os.path.exists", return_value=False),
+        ):
+            consts_mock.redis_client = fake_redis
+            consts_mock.redis_queue = fake_redis
+            result = await media._preprocess(payload)
+
+        self.assertEqual(result, "ok")
+        moderation_payload = passive_delay.call_args.args[0]
+        self.assertNotIn("image_b64", moderation_payload)
+        self.assertNotIn("image_mime", moderation_payload)
+
     def test_smoke_queue_payload_contract_is_compatible(self) -> None:
         sample = {
             "chat_id": 10,
