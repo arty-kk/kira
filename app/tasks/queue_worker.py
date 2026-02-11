@@ -41,6 +41,10 @@ from app.services.user.user_service import confirm_reservation_by_id, refund_res
 
 logger = logging.getLogger(__name__)
 
+
+class ReplyTerminalError(Exception):
+    """Terminal delivery outcome: do not retry/requeue this job."""
+
 BOT = get_bot()
 
 CHATTY_MODE: bool = bool(getattr(settings, "CHATTY_MODE", True))
@@ -419,6 +423,11 @@ async def _send_chatty_reply(
                 user_id=user_id,
                 skip_dedupe=True,
             )
+        except ReplyTerminalError:
+            if delivered_first:
+                logger.info("Terminal delivery outcome for subsequent chatty chunk chat=%s msg_id=%s idx=%s", chat_id, msg_id, idx)
+                return
+            raise
         except Exception:
             if delivered_first:
                 logger.warning("Failed to send subsequent chatty chunk chat=%s msg_id=%s idx=%s", chat_id, msg_id, idx, exc_info=True)
@@ -779,14 +788,14 @@ async def _send_reply(
                         return None
                     raise
                 except TelegramForbiddenError as e:
-                    logger.info("Forbidden for chat_id=%s, skipping send and marking done: %s", chat_id, e)
+                    logger.info("Forbidden for chat_id=%s, treating delivery as terminal: %s", chat_id, e)
                     try:
                         if user_id is not None and (int(chat_id) == int(user_id)):
                             from app.services.addons.personal_ping import purge_user_state
                             asyncio.create_task(purge_user_state(int(user_id), "blocked bot (reply)"))
                     except Exception:
                         logger.debug("schedule purge_user_state failed", exc_info=True)
-                    return None
+                    raise ReplyTerminalError("telegram forbidden") from e
                 except (TelegramNetworkError, asyncio.TimeoutError) as e:
                     backoff = _jitter(min(4.0, 2.0 ** i), 0.35)
                     logger.warning("Network error (%s), backoff %ss, attempt %d/%d", e, backoff, i+1, attempts)
@@ -835,6 +844,8 @@ async def _send_reply(
                     await p.execute()
         except Exception as e:
             logger.warning("failed to mark merged sent_reply keys: %s", e)
+    except ReplyTerminalError:
+        raise
     except Exception as e:
         logger.error(
             "Failed to send message to chat_id=%s (reply_to=%s): %s",
@@ -1352,6 +1363,11 @@ async def handle_job(raw, processing_key: str) -> None:
                         await REDIS_QUEUE.set(f"last_out_mode:{chat_id}:{user_id}", "text", ex=3600)
                     except Exception:
                         pass
+            except ReplyTerminalError:
+                with suppress(Exception):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                await _refund_reservation()
+                return
             except Exception:
                 with suppress(Exception):
                     await _delete_if_inflight(REDIS_QUEUE, job_key, value)
@@ -1377,6 +1393,11 @@ async def handle_job(raw, processing_key: str) -> None:
             with suppress(Exception):
                 await _delete_if_inflight(REDIS_QUEUE, job_key, value)
             raise
+        except ReplyTerminalError:
+            with suppress(Exception):
+                await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+            await _refund_reservation()
+            return
         except Exception as e:
             logger.error(
                 "respond_to_user failed/timeout chat=%s user=%s: %s",
@@ -1395,6 +1416,11 @@ async def handle_job(raw, processing_key: str) -> None:
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                 await _confirm_reservation()
+            except ReplyTerminalError:
+                with suppress(Exception):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                await _refund_reservation()
+                return
             except Exception:
                 with suppress(Exception):
                     await _delete_if_inflight(REDIS_QUEUE, job_key, value)
