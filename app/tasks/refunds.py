@@ -4,7 +4,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import session_scope
@@ -93,7 +93,7 @@ async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_S
                 LIMIT :batch_size
                 FOR UPDATE SKIP LOCKED
             )
-            RETURNING id
+            RETURNING id, lease_token
             """
         )
         claimed_rows = (await db.execute(
@@ -106,12 +106,32 @@ async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_S
         )).all()
 
     enqueued = 0
-    for (outbox_id,) in claimed_rows:
+    for outbox_id, row_lease_token in claimed_rows:
         try:
             celery.send_task("refunds.process_outbox", args=[int(outbox_id)])
             enqueued += 1
-        except Exception:
+        except Exception as exc:
+            async with session_scope(stmt_timeout_ms=3000) as db:
+                release_stmt = (
+                    update(RefundOutbox)
+                    .where(
+                        RefundOutbox.id == int(outbox_id),
+                        RefundOutbox.status == "pending",
+                        RefundOutbox.lease_token == str(row_lease_token),
+                    )
+                    .values(
+                        leased_at=None,
+                        lease_token=None,
+                        last_error=str(exc),
+                    )
+                )
+                await db.execute(release_stmt)
             logger.exception("refunds.requeue_pending_refund_outbox: enqueue failed for outbox_id=%s", outbox_id)
+            logger.warning(
+                "refunds.requeue_pending_refund_outbox: lease released outbox_id=%s lease_token=%s",
+                outbox_id,
+                row_lease_token,
+            )
 
     logger.info(
         "refunds.requeue_pending_refund_outbox: scanned=%s enqueued=%s batch_size=%s",
