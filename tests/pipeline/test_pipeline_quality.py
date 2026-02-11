@@ -39,13 +39,33 @@ from app.emo_engine.persona.stylers import modifiers as style_mods
 class FakeRedis:
     def __init__(self) -> None:
         self.store = {}
+        self._scripts = {}
 
-    async def incr(self, key: str) -> int:
-        self.store[key] = int(self.store.get(key, 0)) + 1
-        return self.store[key]
+    async def eval(self, script: str, numkeys: int, *args):
+        del script
+        api_key, ip_key = args[:numkeys]
+        ttl, check_ip, api_limit, ip_limit = [int(v) for v in args[numkeys:]]
 
-    async def expire(self, key: str, ttl: int) -> None:
-        return None
+        api_count = int(self.store.get(api_key, 0)) + 1
+        self.store[api_key] = api_count
+
+        ip_count = 0
+        if check_ip == 1:
+            ip_count = int(self.store.get(ip_key, 0)) + 1
+            self.store[ip_key] = ip_count
+
+        api_exceeded = 1 if api_count > api_limit else 0
+        ip_exceeded = 1 if check_ip == 1 and ip_count > ip_limit else 0
+        return [api_count, ip_count, api_exceeded, ip_exceeded]
+
+    async def script_load(self, script: str) -> str:
+        self._scripts["sha"] = script
+        return "sha"
+
+    async def evalsha(self, sha: str, numkeys: int, *args):
+        if sha not in self._scripts:
+            raise RuntimeError("NOSCRIPT No matching script")
+        return await self.eval(self._scripts[sha], numkeys, *args)
 
 
 class PipelineQualityTests(unittest.TestCase):
