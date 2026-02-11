@@ -127,6 +127,19 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
     if outbox.notified_at is not None:
         return
 
+    notify_token = uuid.uuid4().hex
+    async with session_scope(stmt_timeout_ms=3000) as db:
+        claim_stmt = (
+            update(PaymentOutbox)
+            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
+            .values(notified_at=func.now(), lease_token=notify_token)
+            .returning(PaymentOutbox.id)
+        )
+        claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
+
+    if claimed_id is None:
+        return
+
     async def _tr(key: str, default: str, **kwargs) -> str:
         try:
             msg = await t(int(outbox.user_id), key, **kwargs)
@@ -155,6 +168,18 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
     sent_message = await send_message_safe(bot, int(outbox.user_id), text, parse_mode="HTML")
 
     if sent_message is None:
+        async with session_scope(stmt_timeout_ms=3000) as db:
+            rollback_stmt = (
+                update(PaymentOutbox)
+                .where(
+                    PaymentOutbox.id == outbox.id,
+                    PaymentOutbox.notified_at.is_not(None),
+                    PaymentOutbox.lease_token == notify_token,
+                )
+                .values(notified_at=None, lease_token=None)
+            )
+            await db.execute(rollback_stmt)
+
         logger.warning(
             "payment_outbox: notify skipped charge_id=%s user_id=%s",
             outbox.telegram_payment_charge_id,
@@ -163,15 +188,24 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
         return
 
     async with session_scope(stmt_timeout_ms=3000) as db:
-        claim_stmt = (
+        finalize_stmt = (
             update(PaymentOutbox)
-            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
-            .values(notified_at=func.now())
+            .where(
+                PaymentOutbox.id == outbox.id,
+                PaymentOutbox.notified_at.is_not(None),
+                PaymentOutbox.lease_token == notify_token,
+            )
+            .values(lease_token=None)
             .returning(PaymentOutbox.id)
         )
-        claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
+        finalized_id = (await db.execute(finalize_stmt)).scalar_one_or_none()
 
-    if claimed_id is None:
+    if finalized_id is None:
+        logger.warning(
+            "payment_outbox: notify finalize skipped charge_id=%s user_id=%s",
+            outbox.telegram_payment_charge_id,
+            outbox.user_id,
+        )
         return
 
     outbox.notified_at = datetime.now(timezone.utc)
