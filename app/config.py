@@ -313,6 +313,11 @@ class Settings:
     # ─── Celery ──────────────────────────────────────────────────
     CELERY_BROKER_URL: str = field(default_factory=lambda: _get_env("CELERY_BROKER_URL", ""))
     CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "10", conv=int))
+    CELERY_MEDIA_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_MEDIA_QUEUE", "queue_media", conv=str))
+    CELERY_MEDIA_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_CONCURRENCY", "2", conv=int))
+    MEDIA_PREPROCESS_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("MEDIA_PREPROCESS_TIMEOUT_SEC", "20", conv=float))
+    MEDIA_PREPROCESSED_TTL_SEC: int = field(default_factory=lambda: _get_env("MEDIA_PREPROCESSED_TTL_SEC", "300", conv=int))
+    MEDIA_MAX_INPUT_BYTES: int = field(default_factory=lambda: _get_env("MEDIA_MAX_INPUT_BYTES", str(30 * 1024 * 1024), conv=int))
 
     # ─── Redis─────────────────────────
     REDIS_URL: str = field(default_factory=lambda: _get_env("REDIS_URL", required=True))

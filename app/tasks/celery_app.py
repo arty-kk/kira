@@ -43,6 +43,7 @@ celery = Celery(
         "app.tasks.kb",
         "app.tasks.payments",
         "app.tasks.battle",
+        "app.tasks.media",
     ],
 )
 
@@ -65,6 +66,9 @@ celery.conf.update(
     worker_concurrency=settings.CELERY_CONCURRENCY,
     worker_hijack_root_logger=False,
     broker_connection_retry_on_startup=True,
+    task_routes={
+        "media.preprocess_group_image": {"queue": settings.CELERY_MEDIA_QUEUE},
+    },
 )
 
 
