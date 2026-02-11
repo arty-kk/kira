@@ -315,6 +315,7 @@ class Settings:
     CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "10", conv=int))
     CELERY_MEDIA_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_MEDIA_QUEUE", "queue_media", conv=str))
     CELERY_MEDIA_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_CONCURRENCY", "2", conv=int))
+    CELERY_MEDIA_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_PREFETCH", "1", conv=int))
     CELERY_MODERATION_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_MODERATION_QUEUE", "queue_moderation", conv=str))
     CELERY_MODERATION_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_CONCURRENCY", "2", conv=int))
     CELERY_MODERATION_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_PREFETCH", "1", conv=int))
