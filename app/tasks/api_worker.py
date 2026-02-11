@@ -636,11 +636,6 @@ async def _handle_job(raw: str, redis_queue) -> None:
             JOB_TTL_SEC,
         )
         if not claimed:
-            await _send_struct_error(
-                409,
-                "duplicate_request",
-                "Request is already in progress",
-            )
             with suppress(Exception):
                 await redis_queue.lrem(PROCESSING_KEY, 1, raw)
             return

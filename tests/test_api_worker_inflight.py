@@ -150,13 +150,13 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         source = pathlib.Path(api_worker.__file__).read_text(encoding="utf-8")
         for anchor in (
             "_handle_job",
-            "Request is already in progress",
+            "if not claimed",
             "duplicate_request",
             "inflight:",
         ):
             self.assertIn(anchor, source)
 
-    async def test_inflight_newer_than_stale_window_returns_duplicate(self) -> None:
+    async def test_inflight_newer_than_stale_window_skips_duplicate_publish(self) -> None:
         now = 10_000
         inflight_age = api_worker.RESPOND_TIMEOUT + 1
         self.assertLess(inflight_age, api_worker.INFLIGHT_STALE_AFTER_SEC)
@@ -179,15 +179,7 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(redis_queue.set_calls), 2)
         self.assertTrue(redis_queue.set_calls[0]["nx"])
-
-        self.assertEqual(len(redis_queue.pipeline_calls), 1)
-        pipeline_cmds = redis_queue.pipeline_calls[0]
-        self.assertEqual(pipeline_cmds[0][0], "rpush")
-        payload = json.loads(pipeline_cmds[0][2])
-        self.assertEqual(payload["error"]["code"], "duplicate_request")
-        self.assertEqual(payload["error"]["message"], "Request is already in progress")
-        self.assertEqual(payload["error"]["status"], 409)
-
+        self.assertEqual(redis_queue.pipeline_calls, [])
         self.assertEqual(len(redis_queue.lrem_calls), 1)
 
     async def test_two_workers_race_on_stale_inflight_only_first_claims(self) -> None:
@@ -234,12 +226,10 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(second_seen_calls, 1)
         self.assertEqual(second_seen_calls, responder_mock.await_count)
 
-        self.assertEqual(len(redis_queue.pipeline_calls), 2)
-        payloads = [json.loads(commands[0][2]) for commands in redis_queue.pipeline_calls]
-        duplicate_payload = next(payload for payload in payloads if not payload.get("ok"))
-        self.assertEqual(duplicate_payload["error"]["code"], "duplicate_request")
-        self.assertEqual(duplicate_payload["error"]["status"], 409)
-        self.assertEqual(duplicate_payload["error"]["message"], "Request is already in progress")
+        self.assertEqual(len(redis_queue.pipeline_calls), 1)
+        payload = json.loads(redis_queue.pipeline_calls[0][0][2])
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["reply"], "ok")
 
 
 if __name__ == "__main__":
