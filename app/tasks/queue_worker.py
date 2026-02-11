@@ -516,6 +516,10 @@ async def _mark_done_if_inflight(redis: Redis, key: str, expected_value: str, tt
 
 
 async def _delete_if_inflight(redis: Redis, key: str, expected_value: str) -> int:
+    return await _delete_if_value(redis, key, expected_value)
+
+
+async def _delete_if_value(redis: Redis, key: str, expected_value: str) -> int:
     script = """
     if redis.call('GET', KEYS[1]) == ARGV[1] then 
         return redis.call('DEL', KEYS[1]) 
@@ -653,10 +657,10 @@ async def _heartbeat_inflight(redis: Redis, key: str, expected_value: str, inter
         pass
 
 
-async def _heartbeat_key(redis: Redis, key: str, interval: int, ttl: int) -> None:
+async def _heartbeat_key(redis: Redis, key: str, expected_value: str, interval: int, ttl: int) -> None:
     script = """
-    if redis.call('EXISTS', KEYS[1]) == 1 then
-        return redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+    if redis.call('GET', KEYS[1]) == ARGV[1] then
+        return redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
     else
         return 0
     end
@@ -668,7 +672,7 @@ async def _heartbeat_key(redis: Redis, key: str, interval: int, ttl: int) -> Non
             if time.time() - start > ttl:
                 return
             try:
-                res = await redis.eval(script, 1, key, ttl)
+                res = await redis.eval(script, 1, key, expected_value, ttl)
                 if not res:
                     return
             except Exception as e:
@@ -1082,7 +1086,8 @@ async def handle_job(raw, processing_key: str) -> None:
 
     lock_started: float | None = None
     busy_key = f"chatbusy:{chat_id}"
-    if not await REDIS_QUEUE.set(busy_key, 1, nx=True, ex=JOB_PROCESSING_TTL):
+    busy_token = f"busy:{os.getpid()}:{id(asyncio.current_task())}:{time.time():.3f}"
+    if not await REDIS_QUEUE.set(busy_key, busy_token, nx=True, ex=JOB_PROCESSING_TTL):
         await _delete_if_inflight(REDIS_QUEUE, job_key, value)
         await REDIS_QUEUE.lrem(processing_key, 1, raw)
         await REDIS_QUEUE.lpush(queue_key, raw)
@@ -1097,6 +1102,7 @@ async def handle_job(raw, processing_key: str) -> None:
             _heartbeat_key(
                 REDIS_QUEUE,
                 busy_key,
+                busy_token,
                 JOB_HEARTBEAT_INTERVAL,
                 JOB_PROCESSING_TTL,
             )
@@ -1427,7 +1433,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     )
 
             if busy_key:
-                await REDIS_QUEUE.delete(busy_key)
+                await _delete_if_value(REDIS_QUEUE, busy_key, busy_token)
 
 
 async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
