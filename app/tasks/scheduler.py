@@ -12,6 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 
+from app.clients.twitter_client import is_twitter_configured
 from app.config import settings
 from app.tasks.periodic import (
     cleanup_nonbuyers_task, analytics_daily_task, battle_job_task,
@@ -303,13 +304,8 @@ def start_scheduler() -> None:
     else:
         logger.info("analytics_daily_job disabled by SCHED_ENABLE_ANALYTICS=false")
 
-    twitter_enabled = (
-        settings.SCHED_ENABLE_TWEETS
-        and bool(getattr(settings, "TWITTER_API_KEY", ""))
-        and bool(getattr(settings, "TWITTER_API_SECRET", ""))
-        and bool(getattr(settings, "TWITTER_ACCESS_TOKEN", ""))
-        and bool(getattr(settings, "TWITTER_ACCESS_TOKEN_SECRET", ""))
-    )
+    twitter_configured = is_twitter_configured()
+    twitter_enabled = settings.SCHED_ENABLE_TWEETS and twitter_configured
 
     if twitter_enabled:
         _sched.add_job(
@@ -323,7 +319,7 @@ def start_scheduler() -> None:
         )
     elif settings.SCHED_ENABLE_TWEETS:
         logger.warning(
-            "tweet_scheduler_job not started: SCHED_ENABLE_TWEETS=true but Twitter credentials are missing"
+            "tweet_scheduler_job disabled: SCHED_ENABLE_TWEETS=true but scheduler is disabled due to incomplete Twitter config"
         )
     else:
         logger.info("tweet_scheduler_job disabled by SCHED_ENABLE_TWEETS=false")
