@@ -44,6 +44,19 @@ class _DummyPersona:
         return None
 
 
+class _TrackedPersona(_DummyPersona):
+    created: list["_TrackedPersona"] = []
+
+    def __init__(self, chat_id: int):
+        super().__init__(chat_id)
+        self.close_calls = 0
+        self.__class__.created.append(self)
+
+    async def close(self):
+        self.close_calls += 1
+        return None
+
+
 class RegistryInflightFailureTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         await registry.shutdown_personas()
@@ -139,6 +152,42 @@ class RegistryInflightFailureTests(unittest.IsolatedAsyncioTestCase):
 
             async with registry._lock:
                 self.assertNotIn(key, registry._inflight)
+
+    async def test_creator_closes_created_persona_on_session_scope_failure(self) -> None:
+        failure = RuntimeError("session_scope failed after Persona init")
+        chat_id = 1122334455
+        profile_id = f"inflight-fail-close-{uuid.uuid4()}"
+        key = (chat_id, 0, 0, profile_id)
+
+        async with registry._lock:
+            registry._cache.clear()
+            registry._inflight.clear()
+
+        _TrackedPersona.created.clear()
+
+        @asynccontextmanager
+        async def failing_session_scope(*_args, **_kwargs):
+            raise failure
+            yield _DummyDB()
+
+        with patch.object(registry, "session_scope", new=failing_session_scope), patch.object(
+            registry,
+            "Persona",
+            new=_TrackedPersona,
+        ):
+            with self.assertRaises(RuntimeError) as build_err:
+                await asyncio.wait_for(
+                    registry.get_persona(chat_id=chat_id, profile_id=profile_id),
+                    timeout=2,
+                )
+
+            self.assertEqual(str(build_err.exception), str(failure))
+
+            async with registry._lock:
+                self.assertNotIn(key, registry._inflight)
+
+            self.assertEqual(len(_TrackedPersona.created), 1)
+            self.assertEqual(_TrackedPersona.created[0].close_calls, 1)
 
 
 if __name__ == "__main__":
