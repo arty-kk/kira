@@ -140,30 +140,32 @@ async def authenticate_key(db, raw_key: str) -> Optional[ApiKey]:
             cached = None
 
         if cached:
-            active = cached.get(b"active") == b"1"
+            def _cached_get(key: str):
+                return cached.get(key) if key in cached else cached.get(key.encode("utf-8"))
+
+            def _parse_cached_int(key: str) -> Optional[int]:
+                raw = _cached_get(key)
+                if raw is None:
+                    return None
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="ignore")
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    return None
+
+            active = _parse_cached_int("active") == 1
             if not active:
                 return None
-            res = await db.execute(
-                select(ApiKey.id, ApiKey.user_id, ApiKey.active).where(
-                    ApiKey.key_hash == key_hash
+            cached_id = _parse_cached_int("id")
+            cached_user_id = _parse_cached_int("user_id")
+            if cached_id is not None and cached_user_id is not None:
+                return ApiKey(
+                    id=cached_id,
+                    user_id=cached_user_id,
+                    key_hash=key_hash,
+                    active=True,
                 )
-            )
-            row = res.first()
-            if not row or not row.active:
-                if redis is not None:
-                    try:
-                        ttl = settings.API_KEY_CACHE_NEGATIVE_TTL_SEC
-                        await redis.hset(ck, mapping={"active": 0})
-                        await redis.expire(ck, max(10, ttl))
-                    except Exception:
-                        pass
-                return None
-            return ApiKey(
-                id=row.id,
-                user_id=row.user_id,
-                key_hash=key_hash,
-                active=True,
-            )
 
     res = await db.execute(
         select(ApiKey).where(ApiKey.key_hash == key_hash)
