@@ -22,6 +22,10 @@ _twitter_client: tweepy.Client | None = None
 _twitter_client_lock = threading.Lock()
 
 
+def is_twitter_configured() -> bool:
+    return all(bool(getattr(settings, var, None)) for var in _REQUIRED_ENV_VARS)
+
+
 def _get_twitter_client() -> tweepy.Client:
     global _twitter_client
 
@@ -32,8 +36,8 @@ def _get_twitter_client() -> tweepy.Client:
         if _twitter_client is not None:
             return _twitter_client
 
-        missing_vars = [var for var in _REQUIRED_ENV_VARS if not getattr(settings, var, None)]
-        if missing_vars:
+        if not is_twitter_configured():
+            missing_vars = [var for var in _REQUIRED_ENV_VARS if not getattr(settings, var, None)]
             missing_list = ", ".join(missing_vars)
             raise RuntimeError(
                 f"Twitter client (V2) is not configured. Missing env vars: {missing_list}"
