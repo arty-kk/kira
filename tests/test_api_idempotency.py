@@ -23,6 +23,7 @@ class _ExpiringFakeRedis:
         self._now_fn = now_fn
         self._data = {}
         self.set_calls = []
+        self.delete_calls = []
 
     def _cleanup(self, key: str) -> None:
         record = self._data.get(key)
@@ -50,6 +51,7 @@ class _ExpiringFakeRedis:
         return True
 
     async def delete(self, key):
+        self.delete_calls.append(key)
         self._data.pop(key, None)
 
 
@@ -293,6 +295,65 @@ class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(inflight_set_calls), 2)
         self.assertEqual(inflight_set_calls[0]["ex"], 2)
         self.assertTrue(all(call["ex"] != 3600 for call in inflight_set_calls))
+
+    async def test_malformed_idempotency_record_is_deleted_and_request_continues(self) -> None:
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        now = {"value": 1000.0}
+        fake_redis = _ExpiringFakeRedis(lambda: now["value"])
+        idem_key = conversation._idempotency_redis_key(2, "broken")
+        fake_redis._data[idem_key] = ("not-json", None)
+
+        check_rate_limit_error = RuntimeError("rate-limit-called")
+        original_inflight_ttl = conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC
+        conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC = 1
+        try:
+            with (
+                unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+                unittest.mock.patch.object(
+                    conversation,
+                    "_check_rate_limit",
+                    side_effect=check_rate_limit_error,
+                ) as check_mock,
+                unittest.mock.patch.object(conversation.time, "time", side_effect=lambda: now["value"]),
+            ):
+                with self.assertRaises(RuntimeError) as first_exc:
+                    await conversation.conversation_endpoint(
+                        payload,
+                        request,
+                        api_key={"user_id": 1, "id": 2},
+                        idempotency_key="broken",
+                    )
+
+                self.assertIs(first_exc.exception, check_rate_limit_error)
+                self.assertIn(idem_key, fake_redis.delete_calls)
+                self.assertTrue((await fake_redis.get(idem_key)).startswith("inflight:"))
+
+                now["value"] += 2
+
+                with self.assertRaises(RuntimeError) as second_exc:
+                    await conversation.conversation_endpoint(
+                        payload,
+                        request,
+                        api_key={"user_id": 1, "id": 2},
+                        idempotency_key="broken",
+                    )
+
+                self.assertIs(second_exc.exception, check_rate_limit_error)
+
+            self.assertEqual(check_mock.await_count, 2)
+            inflight_set_calls = [call for call in fake_redis.set_calls if call["nx"] is True]
+            self.assertGreaterEqual(len(inflight_set_calls), 2)
+        finally:
+            conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC = original_inflight_ttl
 
 
 if __name__ == "__main__":

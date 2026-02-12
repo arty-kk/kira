@@ -10,7 +10,7 @@ import ipaddress
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, constr, field_validator, model_validator
-from sqlalchemy import case, literal, or_, select, update, cast
+from sqlalchemy import case, literal, or_, update, cast
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.config import settings
@@ -34,6 +34,10 @@ from app.tasks.queue_schema import validate_api_job
 router = APIRouter(prefix="/api/v1", tags=["conversation"])
 
 logger = logging.getLogger(__name__)
+
+
+class IdempotencyRecordParseError(ValueError):
+    """Raised when an idempotency record cannot be parsed into expected shape."""
 
 _REFUND_RETRY_ATTEMPTS = 3
 _REFUND_RETRY_BACKOFF_BASE_SEC = 0.2
@@ -135,8 +139,8 @@ def _read_final_idempotency_record(raw_value: str, current_request_hash: Optiona
         status_code = int(parsed.get("status_code", 500))
         body = parsed.get("body") or {}
         cached_request_hash = parsed.get("request_hash")
-    except Exception:
-        return 500, {}
+    except Exception as exc:
+        raise IdempotencyRecordParseError("Failed to parse idempotency record") from exc
 
     if cached_request_hash and current_request_hash and cached_request_hash != current_request_hash:
         raise HTTPException(
@@ -594,10 +598,17 @@ async def conversation_endpoint(
                             "message": "Request with this Idempotency-Key is already in progress.",
                         },
                     )
-                status_code, body = _read_final_idempotency_record(cached, current_request_hash)
-                if status_code < 400:
-                    return ConversationResponse(**body)
-                raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
+                try:
+                    status_code, body = _read_final_idempotency_record(cached, current_request_hash)
+                except IdempotencyRecordParseError:
+                    try:
+                        await idem_redis.delete(idem_cache_key)
+                    except Exception:
+                        logger.exception("Failed to delete malformed idempotency record")
+                else:
+                    if status_code < 400:
+                        return ConversationResponse(**body)
+                    raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
 
             inflight_ttl = int(
                 getattr(
@@ -632,10 +643,17 @@ async def conversation_endpoint(
                                 "message": "Request with this Idempotency-Key is already in progress.",
                             },
                         )
-                    status_code, body = _read_final_idempotency_record(existing, current_request_hash)
-                    if status_code < 400:
-                        return ConversationResponse(**body)
-                    raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
+                    try:
+                        status_code, body = _read_final_idempotency_record(existing, current_request_hash)
+                    except IdempotencyRecordParseError:
+                        try:
+                            await idem_redis.delete(idem_cache_key)
+                        except Exception:
+                            logger.exception("Failed to delete malformed idempotency record")
+                    else:
+                        if status_code < 400:
+                            return ConversationResponse(**body)
+                        raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
 
     async def _store_idempotency_result(status_code: int, body: dict) -> None:
         if not (idem_lock_acquired and idem_redis is not None and idem_cache_key):
