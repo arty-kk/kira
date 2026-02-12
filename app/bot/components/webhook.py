@@ -94,35 +94,55 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         ssl_context.load_cert_chain(tls_files.certfile, tls_files.keyfile)
 
     async def handle_webhook(request: web.Request) -> web.Response:
-
+        # (a) Payload parsing and update_id validation
         try:
             data = await request.json()
         except (json.JSONDecodeError, ContentTypeError):
-            logger.warning("Invalid webhook payload", exc_info=True)
+            logger.warning("Invalid webhook payload: malformed JSON or content-type")
+            return web.Response(status=400)
+
+        if not isinstance(data, dict):
+            logger.warning("Invalid webhook payload: expected object, got %s", type(data).__name__)
             return web.Response(status=400)
 
         update_id = data.get("update_id")
 
         if update_id is None:
-            logger.warning("Webhook payload missing update_id: %s", data)
+            logger.warning("Invalid webhook payload: missing update_id")
+            return web.Response(status=400)
+        if not isinstance(update_id, int) or isinstance(update_id, bool):
+            logger.warning("Invalid webhook payload: bad update_id type=%s", type(update_id).__name__)
+            return web.Response(status=400)
+
+        # (b) Redis deduplication
+        key = f"tg:{consts.BOT_ID}:update:{update_id}"
+        try:
+            claimed = await redis_client.set(key, "1", ex=60, nx=True)
+        except Exception:
+            logger.exception("Redis deduplication failed for update_id=%s", update_id)
+            return web.Response(status=503)
+
+        if not claimed:
+            logger.info("Duplicate update %s skipped", update_id)
             return web.Response(status=200)
 
-        response = web.Response(status=200)
+        logger.info("Incoming update: %s", data)
 
+        # (c) Update schema construction
         try:
-            key = f"tg:{consts.BOT_ID}:update:{update_id}"
-            claimed = await redis_client.set(key, "1", ex=60, nx=True)
-            if claimed:
-                logger.info("Incoming update: %s", data)
+            upd = types.Update(**data)
+        except Exception as exc:
+            logger.warning("invalid update schema: %s", exc)
+            return web.Response(status=400)
 
-                upd = types.Update(**data)
-                asyncio.create_task(dp.feed_update(bot, upd))
-            else:
-                logger.debug("Duplicate update %s skipped", update_id)
+        # (d) Schedule update processing
+        try:
+            asyncio.create_task(dp.feed_update(bot, upd))
         except Exception:
-            logger.exception("Error scheduling update handling")
+            logger.exception("Failed to schedule update handling for update_id=%s", update_id)
+            return web.Response(status=503)
 
-        return response
+        return web.Response(status=200)
 
     class IgnoreBadHttpMessage(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
