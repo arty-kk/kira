@@ -129,8 +129,12 @@ async def cleanup_nonbuyers() -> None:
                     try:
                         if not await is_recently_active(uid, within_days=active_window_days):
                             sweep.append(uid)
-                    except Exception:
-                        sweep.append(uid)
+                    except Exception as exc:
+                        logger.warning(
+                            "cleanup_nonbuyers: ошибка проверки активности в cleanup_nonbuyers; user_id=%s; error=%r",
+                            uid,
+                            exc,
+                        )
 
                 if not sweep:
                     continue
