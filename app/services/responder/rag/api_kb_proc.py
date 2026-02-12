@@ -147,39 +147,39 @@ async def _ensure_state(owner_id: int, model: str) -> Optional[Dict[str, Any]]:
 
     st = _API_KB_STATE.get(key)
     if st and st.get("_mtime") == current_mtime:
-        has_ready = await _has_ready_kb(owner_id, model)
-        if has_ready:
-            return st
-
-        _API_KB_STATE.pop(key, None)
         logger.info(
-            "API-KB: no ready KB in DB for owner_id=%s model=%s; cleared stale cache",
+            "API-KB cache_hit: owner_id=%s model=%s mtime=%s",
             owner_id,
             model,
+            current_mtime,
         )
-        return None
+        return st
 
     async with _API_KB_LOCK:
         st = _API_KB_STATE.get(key)
         if st and st.get("_mtime") == current_mtime:
-            has_ready = await _has_ready_kb(owner_id, model)
-            if has_ready:
-                return st
-
-            _API_KB_STATE.pop(key, None)
             logger.info(
-                "API-KB: no ready KB in DB for owner_id=%s model=%s; cleared stale cache",
+                "API-KB cache_hit: owner_id=%s model=%s mtime=%s",
                 owner_id,
                 model,
+                current_mtime,
             )
-            return None
+            return st
+
+        logger.info(
+            "API-KB db_reload: owner_id=%s model=%s old_mtime=%s new_mtime=%s",
+            owner_id,
+            model,
+            st.get("_mtime") if st else None,
+            current_mtime,
+        )
 
         has_ready = await _has_ready_kb(owner_id, model)
         if not has_ready:
             _API_KB_STATE.pop(key, None)
             logger.info(
-                "API-KB: no ready KB in DB for owner_id=%s model=%s; "
-                "skipping NPZ load for now",
+                "API-KB db_reload: no ready KB in DB for owner_id=%s model=%s; "
+                "cache cleared and NPZ load skipped",
                 owner_id,
                 model,
             )
