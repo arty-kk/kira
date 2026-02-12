@@ -28,7 +28,7 @@ class _FakePaymentOutbox:
     id = _FakeColumn()
     leased_at = _FakeColumn()
     lease_token = _FakeColumn()
-
+    notified_at = _FakeColumn()
 
 
 
@@ -76,7 +76,12 @@ class _FakeDB:
             lease_token = params["lease_token"]
             claimed = []
             for row in self._state:
-                if row["status"] != "pending":
+                status_filter = "applied" if "status = 'applied'" in stmt_text else "pending"
+                if row["status"] != status_filter:
+                    continue
+                if status_filter == "pending" and row.get("applied_at") is not None:
+                    continue
+                if status_filter == "applied" and row.get("notified_at") is not None:
                     continue
                 if row["lease_token"] is not None:
                     continue
@@ -93,7 +98,7 @@ class _FakeDB:
             lease_token = str(stmt._where_criteria[2].right.value)
             values = stmt._values
             for row in self._state:
-                if row["charge_id"] == charge_id and row["status"] == "pending" and row["lease_token"] == lease_token:
+                if row["charge_id"] == charge_id and row["lease_token"] == lease_token:
                     row["leased_at"] = values.get("leased_at")
                     row["lease_token"] = values.get("lease_token")
                     row["last_error"] = values.get("last_error")
@@ -218,6 +223,49 @@ class RequeuePendingOutboxTests(unittest.IsolatedAsyncioTestCase):
         ):
             first_enqueued, first_errors = await payments.requeue_pending_outbox(batch_size=20)
             second_enqueued, second_errors = await payments.requeue_pending_outbox(batch_size=20)
+
+        self.assertEqual(first_enqueued, 0)
+        self.assertEqual(first_errors, 1)
+        self.assertEqual(second_enqueued, 1)
+        self.assertEqual(second_errors, 0)
+        self.assertEqual(send_task_mock.call_count, 2)
+        self.assertEqual(state[0]["lease_attempts"], 2)
+        self.assertIsNotNone(state[0]["lease_token"])
+        self.assertEqual(state[0]["last_error"], "broker down")
+
+
+class RequeueAppliedUnnotifiedOutboxTests(unittest.IsolatedAsyncioTestCase):
+    async def test_requeue_applied_unnotified_outbox_enqueues_only_unnotified_applied(self):
+        payments = _load_payments_module()
+        state = [
+            {"charge_id": "charge_applied", "status": "applied", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None, "notified_at": None},
+            {"charge_id": "charge_notified", "status": "applied", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None, "notified_at": "now"},
+        ]
+
+        with (
+            patch.object(payments, "session_scope", _FakeSessionFactory(state)),
+            patch.object(payments.celery, "send_task") as send_task_mock,
+            patch.object(payments, "update", _fake_update),
+        ):
+            enqueued, errors = await payments.requeue_applied_unnotified_outbox(batch_size=20)
+
+        self.assertEqual(enqueued, 1)
+        self.assertEqual(errors, 0)
+        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_applied"])
+
+    async def test_requeue_applied_unnotified_outbox_releases_lease_on_enqueue_error(self):
+        payments = _load_payments_module()
+        state = [
+            {"charge_id": "charge_applied_2", "status": "applied", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None, "notified_at": None}
+        ]
+
+        with (
+            patch.object(payments, "session_scope", _FakeSessionFactory(state)),
+            patch.object(payments.celery, "send_task", side_effect=[Exception("broker down"), None]) as send_task_mock,
+            patch.object(payments, "update", _fake_update),
+        ):
+            first_enqueued, first_errors = await payments.requeue_applied_unnotified_outbox(batch_size=20)
+            second_enqueued, second_errors = await payments.requeue_applied_unnotified_outbox(batch_size=20)
 
         self.assertEqual(first_enqueued, 0)
         self.assertEqual(first_errors, 1)

@@ -10,7 +10,7 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.tasks.celery_app import celery, _run
 from app.tasks.cleanup import cleanup_nonbuyers
-from app.tasks.payments import requeue_pending_outbox
+from app.tasks.payments import requeue_pending_outbox, requeue_applied_unnotified_outbox
 from app.tasks.refunds import requeue_pending_refund_outbox
 from app.services.addons.analytics import generate_and_send_daily_reports
 from app.services.addons import (
@@ -134,6 +134,13 @@ def payments_requeue_pending_outbox_task():
     logger.info("payments_requeue_pending_outbox_task start")
     _run(requeue_pending_outbox())
     logger.info("payments_requeue_pending_outbox_task done")
+
+
+@celery.task(name="payments_requeue_applied_unnotified_outbox")
+def payments_requeue_applied_unnotified_outbox_task():
+    logger.info("payments_requeue_applied_unnotified_outbox_task start")
+    _run(requeue_applied_unnotified_outbox())
+    logger.info("payments_requeue_applied_unnotified_outbox_task done")
 
 
 @celery.task(name="refunds_requeue_pending_outbox")

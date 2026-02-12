@@ -325,6 +325,80 @@ async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_
     return enqueued, enqueue_errors
 
 
+async def requeue_applied_unnotified_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:
+    safe_batch_size = max(1, int(batch_size))
+    lease_token = uuid.uuid4().hex
+    async with session_scope(stmt_timeout_ms=5000) as db:
+        claim_stmt = text(
+            """
+            UPDATE payment_outbox
+            SET
+                leased_at = now(),
+                lease_token = :lease_token,
+                lease_attempts = lease_attempts + 1,
+                updated_at = now()
+            WHERE id IN (
+                SELECT id
+                FROM payment_outbox
+                WHERE status = 'applied'
+                  AND notified_at IS NULL
+                  AND (leased_at IS NULL OR leased_at < now() - make_interval(secs => :ttl_seconds))
+                ORDER BY id
+                LIMIT :batch_size
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING telegram_payment_charge_id, lease_token
+            """
+        )
+        claimed_rows = (await db.execute(
+            claim_stmt,
+            {
+                "lease_token": lease_token,
+                "ttl_seconds": OUTBOX_LEASE_TTL_SECONDS,
+                "batch_size": safe_batch_size,
+            },
+        )).all()
+
+    enqueued = 0
+    enqueue_errors = 0
+    for charge_id, row_lease_token in claimed_rows:
+        try:
+            celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            enqueued += 1
+        except Exception as exc:
+            enqueue_errors += 1
+            async with session_scope(stmt_timeout_ms=3000) as db:
+                release_stmt = (
+                    update(PaymentOutbox)
+                    .where(
+                        PaymentOutbox.telegram_payment_charge_id == str(charge_id),
+                        PaymentOutbox.status == "applied",
+                        PaymentOutbox.lease_token == str(row_lease_token),
+                    )
+                    .values(
+                        leased_at=None,
+                        lease_token=None,
+                        last_error=str(exc),
+                    )
+                )
+                await db.execute(release_stmt)
+            logger.exception("payments.requeue_applied_unnotified_outbox: enqueue failed for charge_id=%s", charge_id)
+
+    logger.info(
+        "payments.requeue_applied_unnotified_outbox: scanned=%s enqueued=%s enqueue_errors=%s batch_size=%s",
+        len(claimed_rows),
+        enqueued,
+        enqueue_errors,
+        safe_batch_size,
+    )
+    return enqueued, enqueue_errors
+
+
 @celery.task(name="payments.requeue_pending_outbox")
 def requeue_pending_outbox_task(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> None:
     _run(requeue_pending_outbox(batch_size=batch_size))
+
+
+@celery.task(name="payments.requeue_applied_unnotified_outbox")
+def requeue_applied_unnotified_outbox_task(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> None:
+    _run(requeue_applied_unnotified_outbox(batch_size=batch_size))

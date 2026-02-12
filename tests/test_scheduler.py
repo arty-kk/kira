@@ -30,6 +30,7 @@ def _load_scheduler():
     fake_periodic.tweet_once_task = dummy_task
     fake_periodic.tg_channel_post_task = dummy_task
     fake_periodic.payments_requeue_pending_outbox_task = dummy_task
+    fake_periodic.payments_requeue_applied_unnotified_outbox_task = dummy_task
     fake_periodic.refunds_requeue_pending_outbox_task = dummy_task
     fake_kb.gc_orphan_api_key_dirs = dummy_task
 
