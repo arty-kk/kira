@@ -11,7 +11,7 @@ class BotQueueJob(BaseModel):
     chat_id: int
     user_id: int
     text: Optional[str] = ""
-    msg_id: Optional[int] = None
+    msg_id: int
     reply_to: Optional[int] = None
     tg_reply_to: Optional[int] = None
     reservation_id: Optional[int] = None
@@ -56,9 +56,11 @@ class ApiQueueJob(BaseModel):
 
 def validate_bot_job(payload: dict[str, Any]) -> Optional[str]:
     try:
-        BotQueueJob.model_validate(payload)
+        job = BotQueueJob.model_validate(payload)
     except ValidationError as exc:
         return str(exc)
+    if job.msg_id <= 0:
+        return "msg_id must be > 0"
     return None
 
 

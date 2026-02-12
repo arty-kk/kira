@@ -77,9 +77,20 @@ async def _download_file_to_tmp(*, file_id: str, suffix: str, timeout_s: float) 
 
 async def _enqueue(payload: dict[str, Any]) -> bool:
     reservation_id = _safe_int(payload.get("reservation_id"), 0)
+    chat_id = _safe_int(payload.get("chat_id"), 0)
+    user_id = _safe_int(payload.get("user_id"), 0)
+    msg_id = _safe_int(payload.get("msg_id"), 0)
     err = validate_bot_job(payload)
     if err:
-        logger.error("media.preprocess_group_image: invalid queue payload: %s", err)
+        logger.warning(
+            "media.preprocess_group_image.enqueue_reject",
+            extra={
+                "reason": err,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "msg_id": msg_id,
+            },
+        )
         if reservation_id:
             await refund_reservation_by_id(reservation_id)
         return False
