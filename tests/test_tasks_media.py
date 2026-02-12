@@ -64,6 +64,51 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queued["msg_id"], 20)
         self.assertEqual(queued["image_mime"], "image/jpeg")
 
+    async def test_enqueue_rejects_payload_without_msg_id_before_redis_and_refunds(self) -> None:
+        fake_redis = _FakeRedis()
+        payload = {
+            "chat_id": 10,
+            "user_id": 30,
+            "text": "cap",
+            "reservation_id": 42,
+            "is_group": True,
+            "is_channel_post": False,
+            "entities": [],
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "refund_reservation_by_id", AsyncMock()) as refund_mock,
+        ):
+            consts_mock.redis_queue = fake_redis
+            ok = await media._enqueue(payload)
+
+        self.assertFalse(ok)
+        self.assertEqual(fake_redis.queue, [])
+        refund_mock.assert_awaited_once_with(42)
+
+    async def test_enqueue_rejects_non_positive_msg_id_before_redis_and_refunds(self) -> None:
+        fake_redis = _FakeRedis()
+        payload = {
+            "chat_id": 10,
+            "user_id": 30,
+            "text": "cap",
+            "msg_id": 0,
+            "reservation_id": 42,
+            "is_group": True,
+            "is_channel_post": False,
+            "entities": [],
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "refund_reservation_by_id", AsyncMock()) as refund_mock,
+        ):
+            consts_mock.redis_queue = fake_redis
+            ok = await media._enqueue(payload)
+
+        self.assertFalse(ok)
+        self.assertEqual(fake_redis.queue, [])
+        refund_mock.assert_awaited_once_with(42)
+
     async def test_preprocess_fail_path_oversize(self) -> None:
         payload = {
             "chat_id": 10,
@@ -158,6 +203,32 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
             "entities": [],
         }
         self.assertIsNone(media.validate_bot_job(sample))
+
+    def test_validate_bot_job_rejects_missing_msg_id(self) -> None:
+        sample = {
+            "chat_id": 10,
+            "user_id": 30,
+            "text": "cap",
+            "is_group": True,
+            "is_channel_post": False,
+            "entities": [],
+        }
+        err = media.validate_bot_job(sample)
+        self.assertIsNotNone(err)
+        self.assertIn("msg_id", err or "")
+
+    def test_validate_bot_job_rejects_non_positive_msg_id(self) -> None:
+        sample = {
+            "chat_id": 10,
+            "user_id": 30,
+            "text": "cap",
+            "msg_id": 0,
+            "is_group": True,
+            "is_channel_post": False,
+            "entities": [],
+        }
+        err = media.validate_bot_job(sample)
+        self.assertEqual(err, "msg_id must be > 0")
 
 
 if __name__ == "__main__":

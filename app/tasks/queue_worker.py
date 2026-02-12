@@ -49,6 +49,7 @@ BOT = get_bot()
 
 CHATTY_MODE: bool = bool(getattr(settings, "CHATTY_MODE", True))
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
+_BULLET_LINE_RE = re.compile(r'^\s*(?:[-*•]\s+|\d+[.)]\s+)')
 EMOJI_TAIL_RE = re.compile(
     r'^(.*?)(?:\s*)([\U0001F300-\U0001FAFF\U00002700-\U000027BF]+)$'
 )
@@ -164,6 +165,15 @@ def _is_effectively_empty(s: str) -> bool:
     t = _IS_MENTION_RE.sub(' ', (s or ''))
     t = re.sub(r'\s+', ' ', t).strip()
     return t == ''
+
+
+def _is_bullet_list_text(text: str) -> bool:
+    lines = [(ln or "").strip() for ln in (text or "").splitlines() if (ln or "").strip()]
+    if len(lines) < 2:
+        return False
+
+    bullet_lines = sum(1 for ln in lines if _BULLET_LINE_RE.match(ln))
+    return bullet_lines >= 2 and bullet_lines == len(lines)
 
 
 def _split_reply_into_messages(text: str) -> list[str]:
@@ -362,7 +372,7 @@ async def _send_chatty_reply(
         return
     delivered_first = False
 
-    if len(text) >= 350:
+    if len(text) >= 350 or _is_bullet_list_text(text):
         chunks = [text]
     else:
         base_chunks = _split_reply_into_messages(text)

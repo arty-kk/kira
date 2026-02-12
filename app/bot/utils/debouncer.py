@@ -55,9 +55,30 @@ async def _enqueue(payload: dict):
         reservation_id = int(payload.get("reservation_id") or 0)
     except Exception:
         reservation_id = 0
+    try:
+        chat_id = int(payload.get("chat_id") or 0)
+    except Exception:
+        chat_id = 0
+    try:
+        user_id = int(payload.get("user_id") or 0)
+    except Exception:
+        user_id = 0
+    try:
+        msg_id = int(payload.get("msg_id") or 0)
+    except Exception:
+        msg_id = 0
+
     err = validate_bot_job(payload)
     if err:
-        logger.error("debouncer: invalid queue payload: %s", err)
+        logger.warning(
+            "debouncer.enqueue_reject",
+            extra={
+                "reason": err,
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "msg_id": msg_id,
+            },
+        )
         if reservation_id:
             await refund_reservation_by_id(reservation_id)
         return
