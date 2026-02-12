@@ -10,8 +10,8 @@ import ipaddress
 from typing import Optional, Literal, Dict, Any, List
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, constr, field_validator, model_validator
-from sqlalchemy import case, literal, or_, update, cast
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import case, literal, or_, update, cast, select
+from sqlalchemy.dialects.postgresql import JSONB, insert
 
 from app.config import settings
 from app.core.db import session_scope
@@ -26,7 +26,6 @@ from app.core.media_limits import (
 )
 from app.core.memory import get_redis, get_redis_queue, register_api_memory_uid
 from app.api.api_keys import authenticate_key, inc_stats
-from app.services.user.user_service import refund_user_balance
 from app.emo_engine.registry import update_cached_personas_for_owner
 from app.emo_engine.persona.constants.user_prefs import normalize_prefs
 from app.tasks.queue_schema import validate_api_job
@@ -38,9 +37,6 @@ logger = logging.getLogger(__name__)
 
 class IdempotencyRecordParseError(ValueError):
     """Raised when an idempotency record cannot be parsed into expected shape."""
-
-_REFUND_RETRY_ATTEMPTS = 3
-_REFUND_RETRY_BACKOFF_BASE_SEC = 0.2
 
 _RATE_LIMIT_REDIS_RETRIES = 2
 _RATE_LIMIT_REDIS_RETRY_DELAY_SEC = 0.05
@@ -1164,13 +1160,6 @@ async def conversation_endpoint(
         raise
 
 
-async def _refund_request(owner_id: int, billing_tier: Optional[str]) -> None:
-    async with session_scope(
-        stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
-    ) as db:
-        await refund_user_balance(db, owner_id, billing_tier)
-
-
 async def _store_refund_outbox_task(
     owner_id: int,
     billing_tier: Optional[str],
@@ -1179,23 +1168,42 @@ async def _store_refund_outbox_task(
     reason: str,
     attempts: int,
     last_error: Optional[str],
-) -> Optional[int]:
+) -> tuple[Optional[int], bool]:
     try:
         async with session_scope(
             stmt_timeout_ms=settings.API_DB_TIMEOUT_MS,
         ) as db:
-            row = RefundOutbox(
-                owner_id=owner_id,
-                billing_tier=billing_tier,
-                request_id=request_id,
-                reason=reason,
-                status="pending",
-                attempts=max(0, int(attempts or 0)),
-                last_error=last_error,
+            claim_stmt = (
+                insert(RefundOutbox)
+                .values(
+                    owner_id=owner_id,
+                    billing_tier=billing_tier,
+                    request_id=request_id,
+                    reason=reason,
+                    status="pending",
+                    attempts=max(0, int(attempts or 0)),
+                    last_error=last_error,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[RefundOutbox.request_id, RefundOutbox.reason],
+                )
+                .returning(RefundOutbox.id)
             )
-            db.add(row)
-            await db.flush()
-            return int(row.id)
+            inserted_id = (await db.execute(claim_stmt)).scalar_one_or_none()
+            if inserted_id is not None:
+                return int(inserted_id), True
+
+            existing_id = (await db.execute(
+                select(RefundOutbox.id)
+                .where(
+                    RefundOutbox.request_id == request_id,
+                    RefundOutbox.reason == reason,
+                )
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing_id is not None:
+                return int(existing_id), False
+            return None, False
     except Exception:
         logger.exception(
             "Failed to store deferred refund task owner_id=%s billing_tier=%s request_id=%s reason=%s",
@@ -1204,7 +1212,7 @@ async def _store_refund_outbox_task(
             request_id,
             reason,
         )
-        return None
+        return None, False
 
 
 async def _safe_refund_request(
@@ -1217,39 +1225,29 @@ async def _safe_refund_request(
     if billing_tier not in ("free", "paid"):
         return True
 
-    last_error: Optional[str] = None
-    for attempt in range(1, _REFUND_RETRY_ATTEMPTS + 1):
-        try:
-            await _refund_request(owner_id, billing_tier)
-            return True
-        except Exception as exc:
-            last_error = repr(exc)
-            logger.exception(
-                "Refund attempt failed owner_id=%s billing_tier=%s request_id=%s reason=%s attempt=%s",
-                owner_id,
-                billing_tier,
-                request_id,
-                reason,
-                attempt,
-            )
-            if attempt < _REFUND_RETRY_ATTEMPTS:
-                delay = _REFUND_RETRY_BACKOFF_BASE_SEC * (2 ** (attempt - 1))
-                await asyncio.sleep(delay)
-
-    outbox_id = await _store_refund_outbox_task(
+    outbox_id, created = await _store_refund_outbox_task(
         owner_id,
         billing_tier,
         request_id=request_id,
         reason=reason,
-        attempts=_REFUND_RETRY_ATTEMPTS,
-        last_error=last_error,
+        attempts=0,
+        last_error=None,
     )
     if outbox_id is None:
         raise RuntimeError(
-            "Refund compensation failed after retry and outbox-save failure "
+            "Refund compensation failed after outbox-save failure "
             f"owner_id={owner_id} request_id={request_id} reason={reason}"
         )
-    return False
+    if not created:
+        logger.info(
+            "Refund duplicate claim ignored owner_id=%s billing_tier=%s request_id=%s reason=%s outbox_id=%s",
+            owner_id,
+            billing_tier,
+            request_id,
+            reason,
+            outbox_id,
+        )
+    return created
 
 
 async def _send_job_and_wait(*, request_id: str, job: Dict[str, Any]) -> Dict[str, Any]:

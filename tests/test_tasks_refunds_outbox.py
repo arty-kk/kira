@@ -439,6 +439,48 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertEqual(state["outbox"].last_error, "RuntimeError('transient')")
         self.assertIsNone(state["outbox"].processed_at)
 
+
+    def test_reprocessing_applied_outbox_does_not_refund_twice(self):
+        refunds = _load_refunds_module()
+        state = {
+            "user": SimpleNamespace(id=10, free_requests=0, paid_requests=0, used_requests=1),
+            "outbox": SimpleNamespace(
+                id=13,
+                owner_id=10,
+                billing_tier="free",
+                request_id="req-idem",
+                status="pending",
+                attempts=0,
+                lease_attempts=0,
+                leased_at="lease",
+                lease_token="token",
+                last_error=None,
+                processed_at=None,
+            ),
+        }
+
+        with (
+            patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
+            patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
+            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+        ):
+            refunds.process_refund_outbox_task(13)
+
+        self.assertEqual(state["user"].free_requests, 1)
+        self.assertEqual(state["user"].used_requests, 0)
+        self.assertEqual(state["outbox"].status, "applied")
+
+        with (
+            patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
+            patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
+            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+        ):
+            refunds.process_refund_outbox_task(13)
+
+        self.assertEqual(state["user"].free_requests, 1)
+        self.assertEqual(state["user"].used_requests, 0)
+        self.assertEqual(state["outbox"].attempts, 1)
+
     def test_requeue_pending_refund_outbox_releases_lease_after_enqueue_error(self):
         refunds = _load_refunds_module()
         state = [
