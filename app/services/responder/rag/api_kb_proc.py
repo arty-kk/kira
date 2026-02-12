@@ -264,10 +264,23 @@ async def get_relevant_for_owner(
     if N == 0:
         return []
 
+    raw_top_k = getattr(settings, "KNOWLEDGE_TOP_K", 3)
     try:
-        top_k_cfg = settings.KNOWLEDGE_TOP_K
+        parsed_top_k = int(raw_top_k)
     except Exception:
-        top_k_cfg = 3
+        parsed_top_k = 3
+        logger.warning(
+            "api_kb_proc.get_relevant_for_owner: invalid KNOWLEDGE_TOP_K raw_top_k=%r, applied_top_k=%d",
+            raw_top_k,
+            parsed_top_k,
+        )
+    if parsed_top_k <= 0:
+        logger.warning(
+            "api_kb_proc.get_relevant_for_owner: non-positive KNOWLEDGE_TOP_K raw_top_k=%r, applied_top_k=%d",
+            raw_top_k,
+            1,
+        )
+    top_k_cfg = max(1, parsed_top_k)
     top_k_eff = min(top_k_cfg, N)
 
     L = min(max(10 * top_k_eff, 200), N)
