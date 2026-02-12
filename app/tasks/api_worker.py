@@ -99,6 +99,7 @@ def _classify_error(error: Dict[str, Any] | None) -> str:
         "invalid_payload",
         "invalid_image_mime",
         "invalid_voice_mime",
+        "invalid_voice_format",
         "empty_message",
         "voice_transcription_failed",
         "invalid_job",

@@ -109,5 +109,21 @@ class VoiceMimeDetectionTests(unittest.TestCase):
         self.assertIsNone(api_worker.detect_voice_mime(data))
 
 
+class ErrorClassificationTests(unittest.TestCase):
+    def test_voice_validation_error_codes(self) -> None:
+        self.assertEqual(
+            api_worker._classify_error({"code": "invalid_voice_format"}),
+            "validation",
+        )
+        self.assertEqual(
+            api_worker._classify_error({"code": "invalid_voice_mime"}),
+            "validation",
+        )
+        self.assertEqual(
+            api_worker._classify_error({"code": "voice_transcription_failed"}),
+            "validation",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
