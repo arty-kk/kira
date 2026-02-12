@@ -42,6 +42,7 @@ class ApiQueueJob(BaseModel):
     chat_id: int
     memory_uid: int
     persona_owner_id: int
+    knowledge_owner_id: int
     persona_profile_id: Optional[str] = None
     api_key_id: int
     billing_tier: Optional[str] = None

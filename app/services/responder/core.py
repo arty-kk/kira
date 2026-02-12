@@ -731,6 +731,7 @@ async def respond_to_user(
     expect_voice_out: bool = False,
     billing_tier: str | None = None,
     persona_owner_id: int | None = None,
+    knowledge_owner_id: int | None = None,
     memory_uid: int | None = None,
     persona_profile_id: str | int | None = None,
     request_id: str | None = None,
@@ -1347,6 +1348,7 @@ async def respond_to_user(
                 threshold=settings.RELEVANCE_THRESHOLD,
                 return_hits=True,
                 persona_owner_id=persona_owner_id,
+                knowledge_owner_id=knowledge_owner_id,
             )
         except Exception:
             logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)

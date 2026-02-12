@@ -78,7 +78,9 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
             )
 
         (_, job), = captured_jobs
-        register_memory_uid = register_mock.await_args.args[1]
+        register_memory_uid = None
+        if register_mock.await_args is not None:
+            register_memory_uid = register_mock.await_args.args[1]
         return job, register_memory_uid
 
     async def test_job_memory_uid_scoped_for_persona(self):
@@ -102,6 +104,20 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(job["persona_profile_id"])
         self.assertEqual(job["memory_uid"], job["chat_id"])
         self.assertEqual(job["memory_uid"], register_memory_uid)
+
+    async def test_job_sets_knowledge_owner_id_to_api_key_when_persona_scoped_to_user(self):
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        old_value = getattr(conversation.settings, "API_PERSONA_PER_KEY", True)
+        setattr(conversation.settings, "API_PERSONA_PER_KEY", False)
+        try:
+            job, _ = await self._run_endpoint(payload)
+        finally:
+            setattr(conversation.settings, "API_PERSONA_PER_KEY", old_value)
+
+        self.assertEqual(job["persona_owner_id"], 1)
+        self.assertEqual(job["knowledge_owner_id"], 2)
+
 
     async def test_user_id_whitespace_rejected_before_worker_call(self):
         app = FastAPI()

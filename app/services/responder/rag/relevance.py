@@ -22,6 +22,7 @@ async def is_relevant(
     threshold: float,
     return_hits: bool,
     persona_owner_id: Optional[int] = None,
+    knowledge_owner_id: Optional[int] = None,
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     clean = _CLEAN.sub(" ", text).lower().strip()
@@ -35,12 +36,16 @@ async def is_relevant(
     except Exception:
         topk = 3
 
+    effective_knowledge_owner_id = knowledge_owner_id
+    if effective_knowledge_owner_id is None:
+        effective_knowledge_owner_id = persona_owner_id
+
     try:
         tag_hits = await find_tag_hits(
             text,
             model=model,
             limit=topk * 10,
-            owner_id=persona_owner_id,
+            owner_id=effective_knowledge_owner_id,
         )
     except Exception:
         logger.exception("gate: keyword pre-check failed")
@@ -84,9 +89,9 @@ async def is_relevant(
     custom_hits: List[Tuple[float, str, str]] = []
     ok_custom = False
 
-    if persona_owner_id is not None:
+    if effective_knowledge_owner_id is not None:
         try:
-            owner_id_int = int(persona_owner_id)
+            owner_id_int = int(effective_knowledge_owner_id)
         except (TypeError, ValueError):
             owner_id_int = 0
 
