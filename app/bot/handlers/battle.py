@@ -34,6 +34,20 @@ def _is_chat_allowed(chat) -> bool:
     return cid in allowed_ids
 
 
+def _normalize_cached_user_id(cached_value) -> Optional[str]:
+    if cached_value is None:
+        return None
+    try:
+        if isinstance(cached_value, (bytes, bytearray)):
+            cached_value = cached_value.decode("utf-8")
+        normalized = str(cached_value).strip()
+        if not normalized:
+            return None
+        return str(int(normalized))
+    except Exception:
+        return None
+
+
 async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
 
     chat_id = message.chat.id
@@ -48,8 +62,9 @@ async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
         if ent.type == MessageEntityType.MENTION:
             uname = raw[ent.offset + 1 : ent.offset + ent.length]  # без '@'
             cached = await redis_client.hget(f"user_map:{chat_id}", uname)
-            if cached:
-                return str(cached)
+            normalized_cached = _normalize_cached_user_id(cached)
+            if normalized_cached is not None:
+                return normalized_cached
             try:
                 chat = await bot.get_chat(f"@{uname}")
                 if chat and chat.id and chat.type != ChatType.CHANNEL:
@@ -104,8 +119,9 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
                 raw = message.text or message.caption or ""
                 username = raw[ent.offset + 1 : ent.offset + ent.length]
                 cached = await redis_client.hget(f"user_map:{chat_id}", username)
-                if cached:
-                    opponent_id = str(cached)
+                normalized_cached = _normalize_cached_user_id(cached)
+                if normalized_cached is not None:
+                    opponent_id = normalized_cached
                     break
                 try:
                     chat = await bot.get_chat(f"@{username}")
