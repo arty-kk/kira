@@ -562,6 +562,27 @@ async def _check_rate_limit(request: Request, api_key_id: int) -> None:
     "/conversation",
     response_model=ConversationResponse,
     response_model_exclude_none=True,
+    summary="Process conversation request with optional idempotency",
+    description=(
+        "When `Idempotency-Key` is provided, replay/in-flight protection is guaranteed only while "
+        "the idempotency storage subsystem is available. If storage is unavailable, the endpoint "
+        "returns `503` with `detail.code = idempotency_unavailable`."
+    ),
+    responses={
+        503: {
+            "description": "Idempotency storage is temporarily unavailable.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "code": "idempotency_unavailable",
+                            "message": "Idempotency subsystem is temporarily unavailable.",
+                        }
+                    }
+                }
+            },
+        }
+    },
 )
 async def conversation_endpoint(
     payload: ConversationRequest,
@@ -578,19 +599,70 @@ async def conversation_endpoint(
     idem_redis = None
     idem_cache_key = None
     idem_lock_acquired = False
+
+    def _idempotency_unavailable() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "idempotency_unavailable",
+                "message": "Idempotency subsystem is temporarily unavailable.",
+            },
+        )
+
     if idem_key:
         idem_redis = get_redis()
-        if idem_redis is not None:
-            idem_cache_key = _idempotency_redis_key(api_key_id, idem_key)
+        if idem_redis is None:
+            raise _idempotency_unavailable()
+
+        idem_cache_key = _idempotency_redis_key(api_key_id, idem_key)
+        cached = None
+        try:
+            cached = await idem_redis.get(idem_cache_key)
+        except Exception:
             cached = None
+        if cached:
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            if str(cached).startswith("inflight:"):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "idempotency_in_flight",
+                        "message": "Request with this Idempotency-Key is already in progress.",
+                    },
+                )
+            status_code, body = _read_final_idempotency_record(cached, current_request_hash)
+            if status_code < 400:
+                return ConversationResponse(**body)
+            raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
+
+        inflight_ttl = int(
+            getattr(
+                settings,
+                "API_IDEMPOTENCY_INFLIGHT_TTL_SEC",
+                int(getattr(settings, "API_CALL_TIMEOUT_SEC", 135)) + 20,
+            )
+        )
+        try:
+            idem_lock_acquired = await idem_redis.set(
+                idem_cache_key,
+                f"inflight:{time.time()}",
+                nx=True,
+                ex=max(1, inflight_ttl),
+            )
+        except Exception:
+            idem_lock_acquired = False
+
+        if not idem_lock_acquired:
+            existing = None
             try:
-                cached = await idem_redis.get(idem_cache_key)
+                existing = await idem_redis.get(idem_cache_key)
             except Exception:
-                cached = None
-            if cached:
-                if isinstance(cached, (bytes, bytearray)):
-                    cached = cached.decode("utf-8", "ignore")
-                if str(cached).startswith("inflight:"):
+                existing = None
+            if existing:
+                if isinstance(existing, (bytes, bytearray)):
+                    existing = existing.decode("utf-8", "ignore")
+                if str(existing).startswith("inflight:"):
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
                         detail={
