@@ -7,6 +7,7 @@ import numpy as np
 import asyncio
 import time
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 _INDICES: Dict[str, Dict[str, Any]] = {}
-_EMB_CACHE: Dict[Tuple[str, str], List[float]] = {}
+_EMB_CACHE: OrderedDict[Tuple[str, str], List[float]] = OrderedDict()
+_EMB_CACHE_MAX = int(getattr(settings, "EMBED_CACHE_SIZE", 2048))
 
 _JSON_TRAILING_COMMAS = re.compile(r',\s*([}\]])')
 
@@ -38,6 +40,10 @@ def _owner_tags_npz_path(owner_id: int, model: str) -> Path:
 def _api_model_name(model: Optional[str]) -> str:
     m = model or settings.EMBEDDING_MODEL
     return str(m).replace("-offtopic", "")
+
+
+def _cache_key(api_model: str, text: str) -> Tuple[str, str]:
+    return (api_model, text)
 
 
 def _norm_ws(s: str) -> str:
@@ -153,8 +159,16 @@ async def _embed_texts(texts: List[str], model: Optional[str] = None) -> List[Li
     api_model = _api_model_name(model)
     need: List[str] = []
     seen: set[str] = set()
+    cache_hits = 0
+    cache_misses = 0
     for t in texts:
-        if (api_model, t) not in _EMB_CACHE and t not in seen:
+        key = _cache_key(api_model, t)
+        if key in _EMB_CACHE:
+            _EMB_CACHE.move_to_end(key)
+            cache_hits += 1
+            continue
+        cache_misses += 1
+        if t not in seen:
             need.append(t)
             seen.add(t)
     if need:
@@ -204,19 +218,41 @@ async def _embed_texts(texts: List[str], model: Optional[str] = None) -> List[Li
                     emb = row.get("embedding")
                 if not isinstance(emb, list):
                     raise RuntimeError("keyword_filter: invalid embedding row")
-                _EMB_CACHE[(api_model, chunk[j])] = _l2_normalize(
-                    [float(x) for x in emb]
-                )
+                cache_key = _cache_key(api_model, chunk[j])
+                _EMB_CACHE[cache_key] = _l2_normalize([float(x) for x in emb])
+                while len(_EMB_CACHE) > _EMB_CACHE_MAX:
+                    _EMB_CACHE.popitem(last=False)
         total_elapsed = time.perf_counter() - overall_start
         logger.info(
-            "keyword_filter: openai embeddings.create total model=%s texts=%d new=%d batches=%d elapsed=%.3fs",
+            "keyword_filter: openai embeddings.create total model=%s texts=%d new=%d batches=%d elapsed=%.3fs cache_size=%d cache_limit=%d cache_hits=%d cache_misses=%d",
             api_model,
             len(texts),
             len(need),
             ((len(need) + bs - 1) // bs),
             total_elapsed,
+            len(_EMB_CACHE),
+            _EMB_CACHE_MAX,
+            cache_hits,
+            cache_misses,
         )
-    return [_EMB_CACHE[(api_model, t)] for t in texts]
+    else:
+        logger.info(
+            "keyword_filter: embeddings cache-only model=%s texts=%d cache_size=%d cache_limit=%d cache_hits=%d cache_misses=%d",
+            api_model,
+            len(texts),
+            len(_EMB_CACHE),
+            _EMB_CACHE_MAX,
+            cache_hits,
+            cache_misses,
+        )
+
+    out: List[List[float]] = []
+    for t in texts:
+        key = _cache_key(api_model, t)
+        v = _EMB_CACHE[key]
+        _EMB_CACHE.move_to_end(key)
+        out.append(v)
+    return out
 
 
 def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
@@ -327,7 +363,7 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     seen_kw: set[str] = set()
     for lst in kw_by_id.values():
         for s in lst:
-            if (api_model, s) not in _EMB_CACHE and s not in seen_kw:
+            if _cache_key(api_model, s) not in _EMB_CACHE and s not in seen_kw:
                 all_kws.append(s)
                 seen_kw.add(s)
     if all_kws:
@@ -340,9 +376,11 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
         acc: Optional[List[float]] = None
         cnt = 0
         for k in kws:
-            v = _EMB_CACHE.get((api_model, k))
+            cache_key = _cache_key(api_model, k)
+            v = _EMB_CACHE.get(cache_key)
             if v is None:
                 continue
+            _EMB_CACHE.move_to_end(cache_key)
             if acc is None:
                 acc = [x for x in v]
             else:
