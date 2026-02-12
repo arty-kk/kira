@@ -98,6 +98,35 @@ class ConversationIdempotencyApiTests(unittest.TestCase):
         send_job.assert_not_awaited()
         session_scope.assert_not_awaited()
 
+    def test_idempotency_returns_503_for_mixed_lock_failures_between_attempts(self):
+        variants = [
+            [False, RuntimeError("redis down")],
+            [RuntimeError("redis down"), False],
+        ]
+
+        for set_values in variants:
+            with self.subTest(set_values=set_values):
+                redis = _SequenceRedis(get_values=[None, None, None], set_values=list(set_values))
+                send_job = AsyncMock()
+                session_scope = AsyncMock()
+
+                with (
+                    patch.object(conversation, "get_redis", return_value=redis),
+                    patch.object(conversation, "_send_job_and_wait", new=send_job),
+                    patch.object(conversation, "session_scope", new=session_scope),
+                ):
+                    client = self._client()
+                    response = client.post(
+                        "/api/v1/conversation",
+                        headers={"Idempotency-Key": "idem-1"},
+                        json={"user_id": "u-1", "message": "hi"},
+                    )
+
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
+                send_job.assert_not_awaited()
+                session_scope.assert_not_awaited()
+
     def test_idempotency_keeps_inflight_409_behavior(self):
         redis = _SequenceRedis(get_values=["inflight:1710000000"])
 
