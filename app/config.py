@@ -157,10 +157,6 @@ class Settings:
     API_RATELIMIT_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_MIN", "60", conv=int))
     API_RATELIMIT_BURST_FACTOR: int = field(default_factory=lambda: _get_env("API_RATELIMIT_BURST_FACTOR", "2", conv=int))
     API_RATELIMIT_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_PER_IP_PER_MIN", "360", conv=int))
-    API_RATELIMIT_FALLBACK_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_MIN", "10", conv=int))
-    API_RATELIMIT_FALLBACK_PER_IP_PER_MIN: int = field(default_factory=lambda: _get_env("API_RATELIMIT_FALLBACK_PER_IP_PER_MIN", "30", conv=int))
-    # Fallback limiter keeps a bounded OrderedDict; values <= 0 fall back to the safe default (10000), not unlimited.
-    API_FALLBACK_RL_MAX_KEYS: int = field(default_factory=lambda: _get_env("API_FALLBACK_RL_MAX_KEYS", "10000", conv=int))
     API_IDEMPOTENCY_TTL_SEC: int = field(default_factory=lambda: _get_env("API_IDEMPOTENCY_TTL_SEC", "3600", conv=int))
     API_IDEMPOTENCY_INFLIGHT_TTL_SEC: int = field(
         default_factory=lambda: _get_env(

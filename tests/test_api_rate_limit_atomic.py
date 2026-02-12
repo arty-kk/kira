@@ -56,6 +56,16 @@ class _AtomicFakeRedis:
         return [api_count, ip_count, api_exceeded, ip_exceeded]
 
 
+class _AlwaysFailRedis:
+    async def eval(self, script: str, numkeys: int, *args):
+        del script, numkeys, args
+        raise RuntimeError("redis is down")
+
+    async def evalsha(self, sha: str, numkeys: int, *args):
+        del sha, numkeys, args
+        raise RuntimeError("redis is down")
+
+
 class ApiRateLimitAtomicTests(unittest.TestCase):
     def setUp(self) -> None:
         self._per_min = settings.API_RATELIMIT_PER_MIN
@@ -148,6 +158,31 @@ class ApiRateLimitAtomicTests(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 429)
         self.assertEqual(ctx.exception.detail["code"], "rate_limited_ip")
         self.assertEqual(ctx.exception.headers.get("Retry-After"), "60")
+
+    def test_rate_limiter_returns_503_when_redis_unavailable(self) -> None:
+        settings.API_RATELIMIT_PER_MIN = 10
+        settings.API_RATELIMIT_BURST_FACTOR = 1
+        settings.API_RATELIMIT_PER_IP_PER_MIN = 0
+        conversation._RATE_LIMIT_LUA_SHA = None
+
+        request = types.SimpleNamespace(headers={}, client=None)
+        scenarios = {
+            "redis-client-is-none": None,
+            "redis-always-errors": _AlwaysFailRedis(),
+        }
+
+        for name, redis_value in scenarios.items():
+            with self.subTest(name=name):
+                with (
+                    mock.patch.object(conversation, "get_redis", return_value=redis_value),
+                    mock.patch.object(conversation, "_RATE_LIMIT_REDIS_RETRIES", 1),
+                    mock.patch.object(conversation, "_RATE_LIMIT_REDIS_RETRY_DELAY_SEC", 0),
+                ):
+                    with self.assertRaises(HTTPException) as ctx:
+                        asyncio.run(conversation._check_rate_limit(request, api_key_id=101))
+
+                self.assertEqual(ctx.exception.status_code, 503)
+                self.assertEqual(ctx.exception.detail["code"], "rate_limiter_unavailable")
 
 
 if __name__ == "__main__":
