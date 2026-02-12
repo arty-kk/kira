@@ -1387,7 +1387,19 @@ async def handle_job(raw, processing_key: str) -> None:
                         return
                     except Exception as ex:
                         logger.error("Failed to requeue after send failure: %s", ex)
-                        remove_from_processing = False
+                with suppress(Exception):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                await _refund_reservation()
+                logger.warning(
+                    "Dropped job after send failure: requeue guard exhausted",
+                    extra={
+                        "chat_id": chat_id,
+                        "msg_id": msg_id,
+                        "reservation_id": reservation_id,
+                        "dedupe_id": dedupe_id,
+                    },
+                )
+                return
         except asyncio.CancelledError:
             remove_from_processing = False
             with suppress(Exception):
@@ -1440,7 +1452,19 @@ async def handle_job(raw, processing_key: str) -> None:
                         return
                     except Exception as ex:
                         logger.error("Failed to requeue after fallback send failure: %s", ex)
-                        remove_from_processing = False
+                with suppress(Exception):
+                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                await _refund_reservation()
+                logger.warning(
+                    "Dropped job after fallback send failure: requeue guard exhausted",
+                    extra={
+                        "chat_id": chat_id,
+                        "msg_id": msg_id,
+                        "reservation_id": reservation_id,
+                        "dedupe_id": dedupe_id,
+                    },
+                )
+                return
         finally:
             hb_task.cancel()
             with suppress(asyncio.CancelledError):
