@@ -55,6 +55,36 @@ class _ExpiringFakeRedis:
         self._data.pop(key, None)
 
 
+class _ScenarioFakeRedis:
+    def __init__(self, *, get_results, set_nx_results) -> None:
+        self._get_results = list(get_results)
+        self._set_nx_results = list(set_nx_results)
+        self.get_calls = []
+        self.set_calls = []
+        self.delete_calls = []
+        self.call_log = []
+
+    async def get(self, key):
+        self.get_calls.append(key)
+        self.call_log.append(("get", key))
+        if self._get_results:
+            return self._get_results.pop(0)
+        return None
+
+    async def set(self, key, value, nx=False, ex=None):
+        self.set_calls.append({"key": key, "value": value, "nx": nx, "ex": ex})
+        self.call_log.append(("set", key, nx))
+        if nx:
+            if self._set_nx_results:
+                return self._set_nx_results.pop(0)
+            return False
+        return True
+
+    async def delete(self, key):
+        self.delete_calls.append(key)
+        self.call_log.append(("delete", key))
+
+
 class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_auth_api_key_falls_back_to_x_api_key_for_non_bearer_auth(self) -> None:
         @asynccontextmanager
@@ -156,6 +186,97 @@ class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(resp.reply, "ok")
         self.assertEqual(resp.request_id, "req-1")
+
+    async def test_nx_fail_with_existing_final_json_returns_cache_without_delete(self) -> None:
+        final_cached = json.dumps(
+            {
+                "status_code": 200,
+                "body": {
+                    "reply": "from-cache",
+                    "latency_ms": 7,
+                    "latency_breakdown": {
+                        "queue_latency_ms": 1,
+                        "worker_latency_ms": 2,
+                        "total_latency_ms": 7,
+                    },
+                    "request_id": "req-cache-1",
+                },
+            }
+        )
+        fake_redis = _ScenarioFakeRedis(get_results=[None, final_cached], set_nx_results=[False])
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        with (
+            unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+            unittest.mock.patch.object(
+                conversation,
+                "_check_rate_limit",
+                new=unittest.mock.AsyncMock(),
+            ) as check_rate_limit_mock,
+        ):
+            resp = await conversation.conversation_endpoint(
+                payload,
+                request,
+                api_key={"user_id": 1, "id": 2},
+                idempotency_key="cached-after-nx-fail",
+            )
+
+        idem_cache_key = conversation._idempotency_redis_key(2, "cached-after-nx-fail")
+        self.assertEqual(resp.reply, "from-cache")
+        self.assertEqual(resp.request_id, "req-cache-1")
+        self.assertNotIn(idem_cache_key, fake_redis.delete_calls)
+        self.assertEqual(check_rate_limit_mock.await_count, 0)
+
+    async def test_nx_fail_with_malformed_value_deletes_and_retries_lock(self) -> None:
+        fake_redis = _ScenarioFakeRedis(get_results=[None, "not-json"], set_nx_results=[False, True])
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+        stop_error = RuntimeError("stop-after-second-lock")
+
+        with (
+            unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+            unittest.mock.patch.object(
+                conversation,
+                "_check_rate_limit",
+                side_effect=stop_error,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as exc:
+                await conversation.conversation_endpoint(
+                    payload,
+                    request,
+                    api_key={"user_id": 1, "id": 2},
+                    idempotency_key="malformed-after-nx-fail",
+                )
+
+        self.assertIs(exc.exception, stop_error)
+
+        idem_cache_key = conversation._idempotency_redis_key(2, "malformed-after-nx-fail")
+        self.assertIn(idem_cache_key, fake_redis.delete_calls)
+
+        nx_set_calls = [call for call in fake_redis.set_calls if call["nx"] is True]
+        self.assertGreaterEqual(len(nx_set_calls), 2)
+
+        delete_index = fake_redis.call_log.index(("delete", idem_cache_key))
+        second_lock_index = fake_redis.call_log.index(("set", idem_cache_key, True), delete_index + 1)
+        self.assertGreater(second_lock_index, delete_index)
 
 
     def test_idempotency_hash_normalizes_message_whitespace(self) -> None:
