@@ -10,11 +10,23 @@ from app.api import conversation
 
 
 class _SequenceRedis:
-    def __init__(self, get_values=None, set_exception=None, set_result=True, set_values=None):
+    def __init__(
+        self,
+        get_values=None,
+        set_exception=None,
+        set_result=True,
+        set_values=None,
+        set_nx_values=None,
+        set_final_values=None,
+    ):
         self._get_values = list(get_values or [])
         self._set_exception = set_exception
         self._set_result = set_result
         self._set_values = list(set_values or [])
+        self._set_nx_values = list(set_nx_values or [])
+        self._set_final_values = list(set_final_values or [])
+        self._data = {}
+        self.delete_calls = []
 
     async def get(self, _key):
         if self._get_values:
@@ -22,14 +34,37 @@ class _SequenceRedis:
         return None
 
     async def set(self, *_args, **_kwargs):
+        key, value = _args[0], _args[1]
+        nx = bool(_kwargs.get("nx", False))
+        if nx and self._set_nx_values:
+            value_for_call = self._set_nx_values.pop(0)
+            if isinstance(value_for_call, Exception):
+                raise value_for_call
+            if value_for_call:
+                self._data[key] = value
+            return value_for_call
+        if not nx and self._set_final_values:
+            value_for_call = self._set_final_values.pop(0)
+            if isinstance(value_for_call, Exception):
+                raise value_for_call
+            if value_for_call:
+                self._data[key] = value
+            return value_for_call
         if self._set_values:
             value = self._set_values.pop(0)
             if isinstance(value, Exception):
                 raise value
+            if value:
+                self._data[key] = value
             return value
         if self._set_exception is not None:
             raise self._set_exception
+        self._data[key] = value
         return self._set_result
+
+    async def delete(self, key):
+        self.delete_calls.append(key)
+        self._data.pop(key, None)
 
 
 class ConversationIdempotencyApiTests(unittest.TestCase):
@@ -206,6 +241,98 @@ class ConversationIdempotencyApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["reply"], "ok")
+
+    def test_idempotency_returns_503_when_final_state_store_fails_after_worker_success(self):
+        redis = _SequenceRedis(
+            get_values=[None],
+            set_nx_values=[True],
+            set_final_values=[RuntimeError("redis-final-set-failed")],
+        )
+
+        with (
+            patch.object(conversation, "get_redis", return_value=redis),
+            patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
+            patch.object(
+                conversation,
+                "_send_job_and_wait",
+                new=AsyncMock(return_value={"ok": True, "reply": "ok", "request_id": "req-1"}),
+            ),
+            patch.object(conversation, "register_api_memory_uid", new=AsyncMock()),
+            patch.object(conversation, "inc_stats", new=AsyncMock()),
+            patch.object(conversation, "update_cached_personas_for_owner", new=AsyncMock()),
+            patch.object(conversation, "_safe_refund_request", new=AsyncMock()),
+        ):
+            class _Result:
+                def scalar_one_or_none(self):
+                    return "free"
+
+            class _Db:
+                async def execute(self, _stmt):
+                    return _Result()
+
+            @asynccontextmanager
+            async def _fake_session_scope(**_kwargs):
+                yield _Db()
+
+            with patch.object(conversation, "session_scope", _fake_session_scope):
+                client = self._client()
+                response = client.post(
+                    "/api/v1/conversation",
+                    headers={"Idempotency-Key": "idem-1"},
+                    json={"user_id": "u-1", "message": "hi"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
+
+
+    def test_idempotency_returns_503_when_error_result_store_fails(self):
+        redis = _SequenceRedis(
+            get_values=[None],
+            set_nx_values=[True],
+            set_final_values=[RuntimeError("redis-final-set-failed")],
+        )
+
+        with (
+            patch.object(conversation, "get_redis", return_value=redis),
+            patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
+            patch.object(
+                conversation,
+                "_send_job_and_wait",
+                new=AsyncMock(
+                    return_value={
+                        "ok": False,
+                        "error": {"status": 400, "code": "invalid_payload", "message": "bad"},
+                    }
+                ),
+            ),
+            patch.object(conversation, "register_api_memory_uid", new=AsyncMock()),
+            patch.object(conversation, "inc_stats", new=AsyncMock()),
+            patch.object(conversation, "update_cached_personas_for_owner", new=AsyncMock()),
+            patch.object(conversation, "_safe_refund_request", new=AsyncMock()),
+        ):
+            class _Result:
+                def scalar_one_or_none(self):
+                    return "free"
+
+            class _Db:
+                async def execute(self, _stmt):
+                    return _Result()
+
+            @asynccontextmanager
+            async def _fake_session_scope(**_kwargs):
+                yield _Db()
+
+            with patch.object(conversation, "session_scope", _fake_session_scope):
+                client = self._client()
+                response = client.post(
+                    "/api/v1/conversation",
+                    headers={"Idempotency-Key": "idem-1"},
+                    json={"user_id": "u-1", "message": "hi"},
+                )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
 
 
 if __name__ == "__main__":

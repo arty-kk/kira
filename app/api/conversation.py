@@ -765,6 +765,11 @@ async def conversation_endpoint(
             )
         except Exception:
             logger.exception("Failed to store idempotency result")
+            try:
+                await idem_redis.delete(idem_cache_key)
+            except Exception:
+                logger.exception("Failed to clear idempotency inflight record after store failure")
+            raise
 
     try:
         await _check_rate_limit(request, api_key_id)
@@ -1108,10 +1113,32 @@ async def conversation_endpoint(
             latency_breakdown=latency_breakdown,
             request_id=request_id,
         )
-        await _store_idempotency_result(200, response.model_dump(exclude_none=True))
+        try:
+            await _store_idempotency_result(200, response.model_dump(exclude_none=True))
+        except Exception:
+            if idem_key:
+                try:
+                    await _safe_refund_request(
+                        owner_id,
+                        billing_tier,
+                        request_id=request_id,
+                        reason="idempotency_store_failure",
+                    )
+                except RuntimeError as compensation_error:
+                    await _handle_refund_compensation_failure(
+                        "idempotency_unavailable",
+                        compensation_error,
+                    )
+                raise _idempotency_unavailable()
+            raise
         return response
     except HTTPException as exc:
-        await _store_idempotency_result(exc.status_code, {"detail": exc.detail})
+        try:
+            await _store_idempotency_result(exc.status_code, {"detail": exc.detail})
+        except Exception:
+            if idem_key:
+                raise _idempotency_unavailable()
+            raise
         raise
 
 
