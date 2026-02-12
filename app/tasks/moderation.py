@@ -35,6 +35,15 @@ def prepare_moderation_payload(payload: dict[str, Any], *, context: str) -> dict
         return safe_payload
 
     image_bytes = decode_base64_payload(str(image_b64))
+    if not image_bytes:
+        safe_payload.pop("image_b64", None)
+        safe_payload.pop("image_mime", None)
+        logger.warning(
+            "moderation payload image stripped (%s): invalid base64",
+            context,
+        )
+        return safe_payload
+
     if MODERATION_MAX_IMAGE_BYTES > 0 and image_bytes and len(image_bytes) > MODERATION_MAX_IMAGE_BYTES:
         safe_payload.pop("image_b64", None)
         safe_payload.pop("image_mime", None)
