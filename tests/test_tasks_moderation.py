@@ -38,6 +38,19 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         prepared = prepare_moderation_payload(oversized, context="test")
         self.assertNotIn("image_b64", prepared)
 
+    def test_prepare_moderation_payload_drops_invalid_base64_and_logs_reason(self) -> None:
+        payload = {
+            "text": "x",
+            "image_b64": "aGVs*bG8=",
+            "image_mime": "image/png",
+        }
+        with self.assertLogs("app.tasks.moderation", level="WARNING") as logs:
+            prepared = prepare_moderation_payload(payload, context="api")
+
+        self.assertNotIn("image_b64", prepared)
+        self.assertNotIn("image_mime", prepared)
+        self.assertTrue(any("invalid base64" in entry and "api" in entry for entry in logs.output))
+
 
 if __name__ == "__main__":
     unittest.main()
