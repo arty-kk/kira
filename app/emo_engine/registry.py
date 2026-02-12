@@ -124,10 +124,14 @@ async def get_persona(
     logger.debug("persona.cache miss key=%s – constructing", key)
 
     dispose: Persona | None = None
+    created_persona: Persona | None = None
     closers2: list[Persona] = []
     build_error: BaseException | None = None
+    created_persona_cached = False
+    ret: Persona | None = None
     try:
         persona = Persona(chat_id)
+        created_persona = persona
 
         async with session_scope(read_only=True) as db:
             prefs = None
@@ -169,10 +173,12 @@ async def get_persona(
                     _cache.pop(key, None)
                     _cache[key] = (persona, now)
                     _cache.move_to_end(key, last=True)
+                    created_persona_cached = True
                     ret = persona
             else:
                 _cache[key] = (persona, now)
                 _cache.move_to_end(key, last=True)
+                created_persona_cached = True
                 ret = persona
             closers2 = _purge_locked(now)
             try:
@@ -197,6 +203,11 @@ async def get_persona(
                         logger.debug("persona.cache: set_exception failed", exc_info=True)
 
     if build_error is not None:
+        if created_persona is not None and created_persona is not ret and not created_persona_cached:
+            try:
+                await created_persona.close()
+            except Exception:
+                logger.debug("persona.created close failed", exc_info=True)
         logger.debug("persona.cache build failed key=%s", key, exc_info=True)
         raise build_error
 
