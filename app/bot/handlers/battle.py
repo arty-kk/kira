@@ -1,28 +1,22 @@
 #app/bot/handlers/battle.py
 import logging
-import re
 from html import escape
-
 from typing import Optional
 
 from aiogram import F
 from aiogram.enums import ChatType, MessageEntityType
-from aiogram.filters import Command, CommandObject
-from aiogram.types import Message, CallbackQuery
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
 
-from app.clients.telegram_client import get_bot
+from app.bot.components.constants import BOT_ID as SELF_BOT_ID, redis_client
 from app.bot.components.dispatcher import dp
-from app.bot.components.constants import redis_client, BOT_ID as SELF_BOT_ID, BOT_USERNAME as SELF_BOT_USERNAME
+from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.services.addons import group_battle as battle_service
-from app.tasks.battle import battle_launch_task
 
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
-
-BATTLE_ENQUEUE_DEDUP_TTL_SECONDS = 20
 
 
 def _is_chat_allowed(chat) -> bool:
@@ -49,7 +43,6 @@ def _normalize_cached_user_id(cached_value) -> Optional[str]:
 
 
 async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
-
     chat_id = message.chat.id
     if message.reply_to_message and message.reply_to_message.from_user and not message.reply_to_message.from_user.is_bot:
         return str(message.reply_to_message.from_user.id)
@@ -72,96 +65,6 @@ async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
             except Exception:
                 pass
     return None
-
-
-@dp.message(Command("battle"), F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
-async def cmd_group_battle(message: Message, command: CommandObject | None = None) -> None:
-
-    chat_id = message.chat.id
-    if not _is_chat_allowed(message.chat):
-        logger.info(
-            "Ignore unauthorized group chat=%s uname=%s",
-            chat_id,
-            getattr(message.chat, "username", None),
-        )
-        return
-
-    if redis_client is None:
-        await message.reply("⏳ Initializing… try again in a few seconds.")
-        return
-
-    raw = message.text or ""
-    all_entities = (message.entities or []) + (message.caption_entities or [])
-    bot_un = (SELF_BOT_USERNAME or "").lower()
-    if bot_un:
-        pattern = rf"(^|\s)/battle@{re.escape(bot_un)}(\s|$)"
-        if re.search(pattern, raw.lower()):
-            return
-        for ent in all_entities:
-            if ent.type == MessageEntityType.TEXT_MENTION and ent.user and ent.user.id == SELF_BOT_ID:
-                return
-            if ent.type == MessageEntityType.MENTION:
-                uname = raw[ent.offset + 1 : ent.offset + ent.length]
-                if uname.lower() == bot_un:
-                    return
-
-    challenger_id = str(message.from_user.id)
-    opponent_id: Optional[str] = None
-
-    if message.reply_to_message and not message.reply_to_message.from_user.is_bot:
-        opponent_id = str(message.reply_to_message.from_user.id)
-    else:
-        for ent in all_entities:
-            if ent.type == MessageEntityType.TEXT_MENTION and ent.user:
-                opponent_id = str(ent.user.id)
-                break
-            if ent.type == MessageEntityType.MENTION:
-                raw = message.text or message.caption or ""
-                username = raw[ent.offset + 1 : ent.offset + ent.length]
-                cached = await redis_client.hget(f"user_map:{chat_id}", username)
-                normalized_cached = _normalize_cached_user_id(cached)
-                if normalized_cached is not None:
-                    opponent_id = normalized_cached
-                    break
-                try:
-                    chat = await bot.get_chat(f"@{username}")
-                    opponent_id = str(chat.id)
-                    break
-                except TelegramBadRequest as e:
-                    if "chat not found" not in str(e).lower():
-                        logger.exception("Unexpected Telegram error for @%s: %s", username, e)
-
-        if not opponent_id:
-            opponent_id = str(SELF_BOT_ID)
-
-    if opponent_id == challenger_id:
-        await message.reply("🤔 You can’t battle yourself.", quote=True)
-        return
-
-    if opponent_id != str(SELF_BOT_ID) and await redis_client.sismember("battle:opt_out", opponent_id):
-        await message.reply("🚫 That user has opted out of Battles.", quote=True)
-        return
-    if await redis_client.sismember("battle:opt_out", challenger_id):
-        await message.reply("🚫 You opted out of Battles. Use /battle_on to opt in.", quote=True)
-        return
-
-    dedup_key = f"battle:req:{chat_id}:{challenger_id}:{opponent_id}"
-    try:
-        queued = await redis_client.set(dedup_key, 1, nx=True, ex=BATTLE_ENQUEUE_DEDUP_TTL_SECONDS)
-        if not queued:
-            return
-        battle_launch_task.delay(challenger_id, opponent_id, chat_id)
-        try:
-            await message.delete()
-        except Exception:
-            pass
-    except Exception:
-        logger.exception("battle enqueue failed")
-        await message.reply(
-            "❌ Failed to start the battle (opponent may have left or an internal error occurred).",
-            quote=True,
-        )
-        return
 
 
 @dp.message(Command("battle_stats"), F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
@@ -224,7 +127,9 @@ async def cmd_battle_stats(message: Message) -> None:
     except Exception:
         try:
             me = await bot.get_me()
-            bot_disp = f"@{me.username}" if getattr(me, "username", None) else (getattr(me, "full_name", None) or getattr(me, "first_name", None) or "Bot")
+            bot_disp = f"@{me.username}" if getattr(me, "username", None) else (
+                getattr(me, "full_name", None) or getattr(me, "first_name", None) or "Bot"
+            )
         except Exception:
             bot_disp = "Bot"
 
@@ -237,26 +142,22 @@ async def cmd_battle_stats(message: Message) -> None:
     await message.reply(text, parse_mode="HTML", quote=True)
 
 
-@dp.message(
-    F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]),
-    F.text.regexp(r"(^|\s)/battle(\s|$)"),
-)
-async def cmd_group_battle_loose(message: Message) -> None:
-    await cmd_group_battle(message, None)
-
 @dp.message(Command("battle_off"), F.chat.type == ChatType.PRIVATE)
 async def cmd_battle_off(message: Message) -> None:
     await redis_client.sadd("battle:opt_out", str(message.from_user.id))
     await message.reply("✅ You’ve opted out of Battles.")
+
 
 @dp.message(Command("battle_on"), F.chat.type == ChatType.PRIVATE)
 async def cmd_battle_on(message: Message) -> None:
     await redis_client.srem("battle:opt_out", str(message.from_user.id))
     await message.reply("✅ You’ve opted in to Battles.")
 
+
 @dp.callback_query(F.data.startswith("battle_start:"))
 async def cb_battle_start(query: CallbackQuery) -> None:
     await battle_service.on_battle_start(query)
+
 
 @dp.callback_query(F.data.startswith("battle_move:"))
 async def cb_battle_move(query: CallbackQuery) -> None:
