@@ -924,6 +924,7 @@ async def conversation_endpoint(
             err_code = err.get("code")
             if status_code >= 500 or err_code in {
                 "invalid_payload",
+                "invalid_voice_format",
                 "voice_transcription_failed",
             }:
                 original_error_code = str(err_code or status_code)

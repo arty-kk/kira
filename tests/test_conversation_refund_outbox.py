@@ -124,6 +124,49 @@ class ConversationRefundOutboxTests(unittest.TestCase):
         self.assertEqual(outbox.attempts, 3)
         self.assertIn("RuntimeError", str(outbox.last_error))
 
+    def test_invalid_voice_format_worker_error_stores_refund_outbox(self):
+        outbox_rows = []
+
+        @asynccontextmanager
+        async def _fake_session_scope(**_kwargs):
+            yield _FakeDB(outbox_rows)
+
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_task_mock = AsyncMock(return_value={
+            "ok": False,
+            "error": {
+                "status": 400,
+                "code": "invalid_voice_format",
+                "message": "unknown voice format",
+            },
+        })
+
+        with (
+            patch.object(conversation, "_check_rate_limit", new=AsyncMock()),
+            patch.object(conversation, "session_scope", _fake_session_scope),
+            patch.object(conversation, "_send_job_and_wait", new=send_task_mock),
+            patch.object(conversation, "_refund_request", new=AsyncMock(side_effect=RuntimeError("db down"))),
+            patch.object(conversation, "get_redis", return_value=None),
+            patch.object(conversation.asyncio, "sleep", new=AsyncMock()),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={"user_id": "u-1", "message": "hi"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json().get("detail") or {}
+        self.assertEqual(payload.get("code"), "invalid_voice_format")
+
+        self.assertEqual(len(outbox_rows), 1)
+        outbox = outbox_rows[0]
+        self.assertEqual(outbox.reason, "worker_error:invalid_voice_format")
+
+
     def test_refund_compensation_failure_returns_dedicated_500(self):
         @asynccontextmanager
         async def _fake_session_scope(**_kwargs):
