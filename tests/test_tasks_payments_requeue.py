@@ -273,6 +273,7 @@ class RequeueAppliedUnnotifiedOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_errors, 0)
         self.assertEqual(send_task_mock.call_count, 2)
         self.assertEqual(state[0]["lease_attempts"], 2)
+        self.assertIsNone(state[0]["notified_at"])
         self.assertIsNotNone(state[0]["lease_token"])
         self.assertEqual(state[0]["last_error"], "broker down")
 
