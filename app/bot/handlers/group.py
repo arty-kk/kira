@@ -735,6 +735,10 @@ async def on_group_message(message: Message) -> None:
             if _is_effectively_empty(model_text):
                 return
 
+        # battle shortcut (must run before daily limit/context writes)
+        if await _maybe_handle_battle(message, trigger=trigger, has_battle_cmd=has_battle_cmd, is_battle_cmd_to_us=is_battle_cmd_to_us):
+            return
+
         if not await _ensure_daily_limit(cid, message.message_id):
             return
 
@@ -757,10 +761,6 @@ async def on_group_message(message: Message) -> None:
             speaker_id=user_id_val,
             source=("channel" if is_channel else "user"),
         )
-
-        # battle shortcut
-        if await _maybe_handle_battle(message, trigger=trigger, has_battle_cmd=has_battle_cmd, is_battle_cmd_to_us=is_battle_cmd_to_us):
-            return
 
         channel = _channel_obj(message)
 
