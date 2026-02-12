@@ -3,6 +3,7 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 def _load_api_worker():
@@ -19,6 +20,9 @@ def _load_api_worker():
     fake_config.settings = types.SimpleNamespace()
 
     fake_openai_client.get_openai = lambda: None
+    fake_openai_client.transcribe_audio_with_retry = lambda **_kwargs: ""
+    fake_openai_client.classify_openai_error = lambda _exc: "other"
+    fake_clients.openai_client = fake_openai_client
 
     fake_media_limits.ALLOWED_IMAGE_MIMES = {"image/png"}
     fake_media_limits.ALLOWED_VOICE_MIMES = {
@@ -127,3 +131,26 @@ class ErrorClassificationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VoiceTranscriptionRetryWrapperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transcribe_voice_bytes_returns_empty_on_final_failure(self) -> None:
+        async def _boom(**_kwargs):
+            raise RuntimeError("upstream down")
+
+        with patch.object(api_worker.openai_client, "transcribe_audio_with_retry", side_effect=_boom):
+            text = await api_worker._transcribe_voice_bytes(b"OggS\x00\x02", "audio/ogg")
+        self.assertEqual(text, "")
+
+    async def test_transcribe_voice_bytes_uses_configured_model(self) -> None:
+        captured = {}
+
+        async def _ok(**kwargs):
+            captured.update(kwargs)
+            return " hello "
+
+        with patch.object(api_worker.openai_client, "transcribe_audio_with_retry", side_effect=_ok):
+            text = await api_worker._transcribe_voice_bytes(b"OggS\x00\x02", "audio/ogg")
+        self.assertEqual(text, "hello")
+        self.assertEqual(captured.get("model"), api_worker.VOICE_TRANSCRIPTION_MODEL)
+

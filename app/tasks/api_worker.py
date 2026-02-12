@@ -12,7 +12,7 @@ from contextlib import suppress
 from typing import Any, Dict, Set
 
 from app.config import settings
-from app.clients.openai_client import get_openai
+from app.clients import openai_client
 from app.core.media_limits import (
     ALLOWED_IMAGE_MIMES,
     ALLOWED_VOICE_MIMES,
@@ -281,14 +281,13 @@ async def _transcribe_voice_bytes(audio: bytes, mime: str | None) -> str:
             tmp.write(audio)
             tmp_path = tmp.name
 
-        client = get_openai()
-
         async def _do() -> str:
             with open(tmp_path, "rb") as f:
-                resp = await client.audio.transcriptions.create(
+                resp = await openai_client.transcribe_audio_with_retry(
                     model=VOICE_TRANSCRIPTION_MODEL,
                     file=f,
                     response_format="text",
+                    total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
                 )
             if isinstance(resp, str):
                 return resp.strip()
@@ -296,7 +295,16 @@ async def _transcribe_voice_bytes(audio: bytes, mime: str | None) -> str:
 
         return await asyncio.wait_for(_do(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
     except Exception as e:
-        logger.warning("api_worker: voice transcription failed: %s", e)
+        logger.warning(
+            "api_worker: voice transcription failed",
+            extra={
+                "reason": openai_client.classify_openai_error(e),
+                "attempts": getattr(e, "_openai_retry_attempts", None),
+                "model": VOICE_TRANSCRIPTION_MODEL,
+                "total_timeout": VOICE_TRANSCRIPTION_TIMEOUT,
+            },
+            exc_info=True,
+        )
         return ""
     finally:
         if tmp_path and os.path.exists(tmp_path):

@@ -27,7 +27,7 @@ from app.config import settings
 from app.bot.utils.debouncer import compute_typing_delay
 import app.bot.components.constants as consts
 from app.clients.telegram_client import get_bot
-from app.clients.openai_client import get_openai
+from app.clients import openai_client
 from app.services.responder import respond_to_user
 from app.services.addons.voice_generator import (
     maybe_tts_and_send, shutdown_tts,
@@ -453,14 +453,13 @@ async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> s
         with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
             tmp_path = tmp.name
         await asyncio.wait_for(BOT.download(f, tmp_path), timeout=120)
-        client = get_openai()
-
         async def _do_transcribe() -> str:
             with open(tmp_path, "rb") as audio:
-                resp = await client.audio.transcriptions.create(
+                resp = await openai_client.transcribe_audio_with_retry(
                     model=model,
                     file=audio,
-                    response_format="text"
+                    response_format="text",
+                    total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
                 )
             text_inner = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
             return text_inner
@@ -468,7 +467,16 @@ async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> s
         resp_text = await asyncio.wait_for(_do_transcribe(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
         return resp_text
     except Exception as e:
-        logger.warning("voice transcription failed: %s", e)
+        logger.warning(
+            "voice transcription failed",
+            extra={
+                "reason": openai_client.classify_openai_error(e),
+                "attempts": getattr(e, "_openai_retry_attempts", None),
+                "model": model,
+                "total_timeout": VOICE_TRANSCRIPTION_TIMEOUT,
+            },
+            exc_info=True,
+        )
         return ""
     finally:
         if tmp_path and os.path.exists(tmp_path):
