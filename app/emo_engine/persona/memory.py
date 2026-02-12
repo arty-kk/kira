@@ -74,7 +74,6 @@ _MEMTXT_MAX_PER_UID = int(getattr(settings, "MEMTXT_MAX_PER_UID", 150))
 _MEMTXT_MAX_PER_CHAT = int(getattr(settings, "MEMTXT_MAX_PER_CHAT", 500))
 _FORGET_ATTACHMENT_WEIGHT = float(getattr(settings, "FORGET_ATTACHMENT_WEIGHT", 0.06))
 _DEDUP_EVENTTIME_MIN_SHIFT = float(getattr(settings, "DEDUP_EVENTTIME_MIN_SHIFT", 300.0))
-_RERANK_ENABLE = bool(getattr(settings, "MEMORY_RERANK_ENABLE", True))
 _RERANK_W_SALIENCE = float(getattr(settings, "RERANK_W_SALIENCE", 0.20))
 _RERANK_W_RECENCY = float(getattr(settings, "RERANK_W_RECENCY", 0.15))
 _RERANK_W_ATTACHMENT = float(getattr(settings, "RERANK_W_ATTACHMENT", 0.10))
@@ -131,6 +130,24 @@ def _to_int(v, default: int = 0) -> int:
         return int(v)
     except Exception:
         return default
+
+def _to_bool_flag(value, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, float) and value.is_integer():
+        return int(value) != 0
+    if isinstance(value, str):
+        norm = value.strip().lower()
+        if norm in {"1", "true", "yes"}:
+            return True
+        if norm in {"0", "false", "no"}:
+            return False
+    return default
+
+
+_RERANK_ENABLE = _to_bool_flag(getattr(settings, "MEMORY_RERANK_ENABLE", True), True)
 
 _ZERO_VEC: bytes = np.zeros(_DIM, dtype=np.float32).tobytes()
 
