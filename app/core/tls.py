@@ -26,13 +26,21 @@ def resolve_tls_server_files(
         )
         return TLSServerFiles(certfile=None, keyfile=None)
 
-    missing_files = [path for path in (certfile, keyfile) if not path or not os.path.exists(path)]
-    if missing_files:
+    missing_files_for_message = []
+    for field_name, path in (("certfile", certfile), ("keyfile", keyfile)):
+        if not path:
+            missing_files_for_message.append(f"<empty {field_name}>")
+            continue
+        if not os.path.exists(path):
+            missing_files_for_message.append(path)
+    if missing_files_for_message:
         logger.error(
             "Invalid %s TLS configuration. Missing files: %s",
             component_name,
-            ", ".join(missing_files),
+            ", ".join(missing_files_for_message),
         )
-        raise RuntimeError(f"{component_name} TLS files are missing: {', '.join(missing_files)}")
+        raise RuntimeError(
+            f"{component_name} TLS files are missing: {', '.join(missing_files_for_message)}"
+        )
 
     return TLSServerFiles(certfile=certfile, keyfile=keyfile)
