@@ -1539,13 +1539,23 @@ async def handle_job(raw, processing_key: str) -> None:
                 await _delete_if_chatbusy_owner(REDIS_QUEUE, busy_key, busy_token)
 
 
-async def _sweep_processing(redis: Redis, queue_key: str, processing_key: str, batch: int) -> None:
+async def _sweep_processing(
+    redis: Redis,
+    queue_key: str,
+    processing_key: str,
+    window_index: int,
+    batch: int,
+    list_len: int,
+) -> None:
     try:
-        plen = await redis.llen(processing_key)
-        if not plen:
+        if list_len <= 0:
             return
-        start = max(0, plen - batch)
-        items = await redis.lrange(processing_key, start, -1)
+        batch = max(1, int(batch))
+        start = max(0, int(window_index) * batch)
+        if start >= list_len:
+            return
+        end = min(start + batch - 1, list_len - 1)
+        items = await redis.lrange(processing_key, start, end)
         if not items:
             return
         for raw in items:
@@ -1638,15 +1648,32 @@ async def _sweep_chatbusy(redis: Redis) -> None:
 
 
 async def _sweeper_loop(stop_evt: asyncio.Event, queue_key: str, processing_key: str) -> None:
-    try:
-        while not stop_evt.is_set():
-            await _sweep_processing(
-                REDIS_QUEUE, queue_key, processing_key, PROCESSING_SWEEP_BATCH
-            )
+    sweep_cursor = 0
+    while not stop_evt.is_set():
+        try:
+            batch = max(1, int(PROCESSING_SWEEP_BATCH))
+            list_len = await REDIS_QUEUE.llen(processing_key)
+            if list_len == 0:
+                sweep_cursor = 0
+            else:
+                window_count = max(1, (list_len + batch - 1) // batch)
+                sweep_cursor %= window_count
+                await _sweep_processing(
+                    REDIS_QUEUE,
+                    queue_key,
+                    processing_key,
+                    sweep_cursor,
+                    batch,
+                    list_len,
+                )
+                sweep_cursor = (sweep_cursor + 1) % window_count
             await _sweep_chatbusy(REDIS_QUEUE)
             await asyncio.sleep(_jitter(PROCESSING_SWEEP_INTERVAL, 0.1))
-    except asyncio.CancelledError:
-        pass
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning("sweeper_loop error: %s", e)
+            await asyncio.sleep(_jitter(PROCESSING_SWEEP_INTERVAL, 0.1))
 
 
 async def _cleanup_chat_locks_loop(stop_evt: asyncio.Event) -> None:
