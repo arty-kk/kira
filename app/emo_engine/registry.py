@@ -125,6 +125,7 @@ async def get_persona(
 
     dispose: Persona | None = None
     closers2: list[Persona] = []
+    build_error: BaseException | None = None
     try:
         persona = Persona(chat_id)
 
@@ -179,19 +180,25 @@ async def get_persona(
                 ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
             except Exception:
                 logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
+    except BaseException as e:
+        build_error = e
+    finally:
+        async with _lock:
             fut_done = _inflight.pop(key, None)
             if fut_done and not fut_done.done():
-                fut_done.set_result(ret)
-    except Exception as e:
-        async with _lock:
-            fut_fail = _inflight.pop(key, None)
-            if fut_fail and not fut_fail.done():
-                try:
-                    fut_fail.set_exception(e)
-                except Exception:
-                    logger.debug("persona.cache: set_exception failed", exc_info=True)
+                if build_error is None:
+                    fut_done.set_result(ret)
+                else:
+                    exc: BaseException = build_error
+                    try:
+                        fut_done.set_exception(exc)
+                        fut_done.add_done_callback(lambda done: done.exception())
+                    except Exception:
+                        logger.debug("persona.cache: set_exception failed", exc_info=True)
+
+    if build_error is not None:
         logger.debug("persona.cache build failed key=%s", key, exc_info=True)
-        raise
+        raise build_error
 
     _schedule_closes(closers2)
 
@@ -202,7 +209,6 @@ async def get_persona(
             logger.debug("persona.dispose close failed", exc_info=True)
     logger.debug("persona.ready key=%s dt=%.3fs", key, _now() - t0)
     return ret
-
 
 async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
     if not prefs:
