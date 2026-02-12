@@ -460,6 +460,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
     chat_id = job.get("chat_id")
     memory_uid = job.get("memory_uid")
     persona_owner_id = job.get("persona_owner_id")
+    knowledge_owner_id = job.get("knowledge_owner_id")
     persona_profile_id = job.get("persona_profile_id")
     billing_tier = job.get("billing_tier")
     if isinstance(billing_tier, (bytes, bytearray)):
@@ -558,19 +559,23 @@ async def _handle_job(raw: str, redis_queue) -> None:
     except Exception:
         msg_id = None
 
-    if persona_owner_id is None:
-        logger.error("api_worker: missing persona_owner_id in %s: %r", request_id, job)
+    if persona_owner_id is None or knowledge_owner_id is None:
+        logger.error(
+            "api_worker: missing persona_owner_id/knowledge_owner_id in %s: %r",
+            request_id,
+            job,
+        )
         await _send_struct_error(
             500,
             "invalid_job",
-            "Missing persona_owner_id in job payload.",
+            "Missing persona_owner_id or knowledge_owner_id in job payload.",
         )
         await _push_dlq(
             redis_queue,
             raw=raw,
             error_type="invalid_job",
             request_id=request_id,
-            reason="missing_persona_owner_id",
+            reason="missing_persona_or_knowledge_owner_id",
             chat_id=chat_id,
             persona_owner_id=persona_owner_id,
         )
@@ -580,19 +585,24 @@ async def _handle_job(raw: str, redis_queue) -> None:
 
     try:
         persona_owner_id = int(persona_owner_id)
+        knowledge_owner_id = int(knowledge_owner_id)
     except Exception:
-        logger.error("api_worker: bad persona_owner_id in %s: %r", request_id, job)
+        logger.error(
+            "api_worker: bad persona_owner_id/knowledge_owner_id in %s: %r",
+            request_id,
+            job,
+        )
         await _send_struct_error(
             500,
             "invalid_job",
-            "Invalid persona_owner_id in job payload.",
+            "Invalid persona_owner_id or knowledge_owner_id in job payload.",
         )
         await _push_dlq(
             redis_queue,
             raw=raw,
             error_type="invalid_job",
             request_id=request_id,
-            reason="bad_persona_owner_id",
+            reason="bad_persona_or_knowledge_owner_id",
             chat_id=chat_id,
             persona_owner_id=persona_owner_id,
         )
@@ -601,9 +611,10 @@ async def _handle_job(raw: str, redis_queue) -> None:
         return
 
     logger.info(
-        "api_worker: start request_id=%s persona_owner_id=%s persona_profile_id=%s chat_id=%s",
+        "api_worker: start request_id=%s persona_owner_id=%s knowledge_owner_id=%s persona_profile_id=%s chat_id=%s",
         request_id,
         persona_owner_id,
+        knowledge_owner_id,
         persona_profile_id,
         chat_id,
     )
@@ -760,6 +771,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
                             expect_voice_out=False,
                             billing_tier=billing_tier,
                             persona_owner_id=persona_owner_id,
+                            knowledge_owner_id=knowledge_owner_id,
                             memory_uid=memory_uid,
                             persona_profile_id=persona_profile_id,
                             request_id=request_id,

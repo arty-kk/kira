@@ -448,6 +448,7 @@ async def _auth_api_key(
 
 
 def _get_persona_owner_id(owner_user_id: int, api_key_id: int) -> int:
+    """persona_owner_id scope: persona/memory/profile context only (not API KB owner)."""
     if getattr(settings, "API_PERSONA_PER_KEY", True):
         return api_key_id
     return owner_user_id
@@ -897,6 +898,7 @@ async def conversation_endpoint(
 
         result_key = f"api:resp:{request_id}"
 
+        # persona_owner_id scopes persona + memory; knowledge_owner_id scopes API knowledge/RAG.
         job = {
             "request_id": request_id,
             "text": (payload.message or "").strip(),
@@ -907,6 +909,7 @@ async def conversation_endpoint(
             "chat_id": chat_id,
             "memory_uid": scoped_memory_uid,
             "persona_owner_id": persona_owner_id,
+            "knowledge_owner_id": api_key_id,
             "persona_profile_id": persona_profile_id,
             "api_key_id": api_key_id,
             "billing_tier": billing_tier,
