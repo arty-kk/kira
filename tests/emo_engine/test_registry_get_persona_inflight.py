@@ -96,6 +96,50 @@ class RegistryInflightFailureTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(creator_persona)
             self.assertIs(creator_persona, waiter_persona)
 
+    async def test_waiter_gets_creator_cancellation_and_inflight_clears(self) -> None:
+        chat_id = 246813579
+        profile_id = f"inflight-cancel-{uuid.uuid4()}"
+        key = (chat_id, 0, 0, profile_id)
+        inflight_set = asyncio.Event()
+        release_scope = asyncio.Event()
+
+        async with registry._lock:
+            registry._cache.clear()
+            registry._inflight.clear()
+
+        @asynccontextmanager
+        async def controlled_session_scope(*_args, **_kwargs):
+            async with registry._lock:
+                self.assertIn(key, registry._inflight)
+            inflight_set.set()
+            await release_scope.wait()
+            yield _DummyDB()
+
+        with patch.object(registry, "session_scope", new=controlled_session_scope), patch.object(
+            registry,
+            "Persona",
+            new=_DummyPersona,
+        ):
+            creator_task = asyncio.create_task(
+                registry.get_persona(chat_id=chat_id, profile_id=profile_id)
+            )
+
+            await asyncio.wait_for(inflight_set.wait(), timeout=2)
+
+            waiter_task = asyncio.create_task(
+                registry.get_persona(chat_id=chat_id, profile_id=profile_id)
+            )
+
+            creator_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(creator_task, timeout=2)
+
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(waiter_task, timeout=2)
+
+            async with registry._lock:
+                self.assertNotIn(key, registry._inflight)
+
 
 if __name__ == "__main__":
     unittest.main()
