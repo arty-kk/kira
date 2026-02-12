@@ -10,10 +10,11 @@ from app.api import conversation
 
 
 class _SequenceRedis:
-    def __init__(self, get_values=None, set_exception=None, set_result=True):
+    def __init__(self, get_values=None, set_exception=None, set_result=True, set_values=None):
         self._get_values = list(get_values or [])
         self._set_exception = set_exception
         self._set_result = set_result
+        self._set_values = list(set_values or [])
 
     async def get(self, _key):
         if self._get_values:
@@ -21,6 +22,11 @@ class _SequenceRedis:
         return None
 
     async def set(self, *_args, **_kwargs):
+        if self._set_values:
+            value = self._set_values.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
         if self._set_exception is not None:
             raise self._set_exception
         return self._set_result
@@ -45,10 +51,19 @@ class ConversationIdempotencyApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
 
-    def test_idempotency_returns_503_when_lock_operation_fails(self):
-        redis = _SequenceRedis(get_values=[None, None], set_exception=RuntimeError("redis down"))
+    def test_idempotency_returns_503_when_lock_operation_fails_both_attempts(self):
+        redis = _SequenceRedis(
+            get_values=[None, None, None],
+            set_values=[RuntimeError("redis down"), RuntimeError("redis down")],
+        )
+        send_job = AsyncMock()
+        session_scope = AsyncMock()
 
-        with patch.object(conversation, "get_redis", return_value=redis):
+        with (
+            patch.object(conversation, "get_redis", return_value=redis),
+            patch.object(conversation, "_send_job_and_wait", new=send_job),
+            patch.object(conversation, "session_scope", new=session_scope),
+        ):
             client = self._client()
             response = client.post(
                 "/api/v1/conversation",
@@ -58,6 +73,30 @@ class ConversationIdempotencyApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
+        send_job.assert_not_awaited()
+        session_scope.assert_not_awaited()
+
+    def test_idempotency_returns_503_when_lock_not_acquired_without_exception(self):
+        redis = _SequenceRedis(get_values=[None, None, None], set_values=[False, False])
+        send_job = AsyncMock()
+        session_scope = AsyncMock()
+
+        with (
+            patch.object(conversation, "get_redis", return_value=redis),
+            patch.object(conversation, "_send_job_and_wait", new=send_job),
+            patch.object(conversation, "session_scope", new=session_scope),
+        ):
+            client = self._client()
+            response = client.post(
+                "/api/v1/conversation",
+                headers={"Idempotency-Key": "idem-1"},
+                json={"user_id": "u-1", "message": "hi"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"]["code"], "idempotency_unavailable")
+        send_job.assert_not_awaited()
+        session_scope.assert_not_awaited()
 
     def test_idempotency_keeps_inflight_409_behavior(self):
         redis = _SequenceRedis(get_values=["inflight:1710000000"])
