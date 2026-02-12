@@ -3,6 +3,7 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 _FAKE_ENV: dict[str, str | None] = {}
@@ -83,9 +84,17 @@ def _load_main_module():
     def _fake_resolve_tls_server_files(*, use_self_signed, certfile, keyfile, component_name):
         if not use_self_signed:
             return types.SimpleNamespace(certfile=None, keyfile=None)
-        missing = [path for path in (certfile, keyfile) if not path or path.startswith("/tmp/")]
-        if missing:
-            raise RuntimeError(f"{component_name} TLS files are missing: {', '.join(missing)}")
+
+        missing_for_message = []
+        for field_name, path in (("certfile", certfile), ("keyfile", keyfile)):
+            if not path:
+                missing_for_message.append(f"<empty {field_name}>")
+                continue
+            if path.startswith("/tmp/"):
+                missing_for_message.append(path)
+
+        if missing_for_message:
+            raise RuntimeError(f"{component_name} TLS files are missing: {', '.join(missing_for_message)}")
         return types.SimpleNamespace(certfile=certfile, keyfile=keyfile)
 
     fake_core_tls.resolve_tls_server_files = _fake_resolve_tls_server_files
@@ -172,7 +181,7 @@ class StartAPIServerTLSTests(unittest.IsolatedAsyncioTestCase):
 class LoopExceptionLoggingTests(unittest.TestCase):
     def test_log_loop_exception_uses_exc_info(self):
         exc = RuntimeError("boom")
-        with unittest.mock.patch.object(main.logging, "error") as error_mock:
+        with mock.patch.object(main.logging, "error") as error_mock:
             main._log_loop_exception({"message": "ctx", "exception": exc})
 
         self.assertEqual(error_mock.call_count, 2)

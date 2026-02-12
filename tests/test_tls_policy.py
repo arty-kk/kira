@@ -46,6 +46,20 @@ class TLSPolicyTests(unittest.TestCase):
         self.assertTrue(files.certfile)
         self.assertTrue(files.keyfile)
 
+    def test_enabled_tls_with_empty_paths_raises_runtime_error_with_markers(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            tls.resolve_tls_server_files(
+                use_self_signed=True,
+                certfile=None,
+                keyfile="",
+                component_name="API",
+            )
+
+        message = str(ctx.exception)
+        self.assertIn("<empty certfile>", message)
+        self.assertIn("<empty keyfile>", message)
+        self.assertNotIn("TypeError", message)
+
 
 if __name__ == "__main__":
     unittest.main()
