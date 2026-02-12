@@ -234,6 +234,17 @@ def _is_cmd_addressed_to_other_bot(message: types.Message, name: str) -> bool:
     return False
 
 
+def _is_actionable_battle_command(message: types.Message) -> bool:
+    if _is_bot_command_to_us(message, "battle"):
+        return True
+    raw = (message.text or message.caption or "") or ""
+    if not raw:
+        return False
+    if not BATTLE_CMD_RE.search(raw):
+        return False
+    return not _is_cmd_addressed_to_other_bot(message, "battle")
+
+
 def _mentions_other_user(message: types.Message) -> bool:
     raw = message.text or message.caption or ""
     if not raw:
@@ -600,15 +611,12 @@ async def _resolve_battle_opponent_id(message: types.Message) -> int | None:
     return None
 
 
-async def _maybe_handle_battle(message: Message, *, trigger: str, has_battle_cmd: bool, is_battle_cmd_to_us: bool) -> bool:
+async def _maybe_handle_battle(message: Message, *, trigger: str) -> bool:
     # returns True if handled (and handler should return)
     if trigger != "mention":
         return False
 
-    if not (
-        is_battle_cmd_to_us
-        or (has_battle_cmd and not _is_cmd_addressed_to_other_bot(message, "battle"))
-    ):
+    if not _is_actionable_battle_command(message):
         return False
 
     cid = message.chat.id
@@ -727,6 +735,9 @@ async def on_group_message(message: Message) -> None:
         has_battle_cmd = bool(BATTLE_CMD_RE.search(raw_text or ""))
         is_battle_cmd_to_us = _is_bot_command_to_us(message, "battle")
 
+        if has_battle_cmd and _is_cmd_addressed_to_other_bot(message, "battle"):
+            return
+
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
 
@@ -755,7 +766,7 @@ async def on_group_message(message: Message) -> None:
                 return
 
         # battle shortcut (must run before daily limit/context writes)
-        if await _maybe_handle_battle(message, trigger=trigger, has_battle_cmd=has_battle_cmd, is_battle_cmd_to_us=is_battle_cmd_to_us):
+        if await _maybe_handle_battle(message, trigger=trigger):
             return
 
         if not await _ensure_daily_limit(cid, message.message_id):
