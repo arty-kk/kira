@@ -155,6 +155,8 @@ class _Pipeline:
         self.ops.append(("lpush", key, value))
 
     async def execute(self):
+        if self.owner.pipeline_execute_error is not None:
+            raise self.owner.pipeline_execute_error
         for op in self.ops:
             if op[0] == "lrem":
                 await self.owner.lrem(op[1], op[2], op[3])
@@ -163,12 +165,16 @@ class _Pipeline:
 
 
 class _FakeQueueRedis:
-    def __init__(self):
+    def __init__(self, *, requeue_set_result=True, pipeline_execute_error=None):
         self.kv = {}
         self.lpush_calls = []
         self.lrem_calls = []
+        self.requeue_set_result = requeue_set_result
+        self.pipeline_execute_error = pipeline_execute_error
 
     async def set(self, key, value, ex=None, nx=False):
+        if key.endswith(":requeued"):
+            return self.requeue_set_result
         if nx and key in self.kv:
             return False
         self.kv[key] = value
@@ -241,6 +247,95 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         mark_done.assert_awaited()
         delete_inflight.assert_not_awaited()
         refund_reservation.assert_awaited_once_with(777)
+        confirm_reservation.assert_not_awaited()
+
+
+    async def test_send_failure_requeue_pipeline_error_drops_job_terminally(self):
+        fake_queue = _FakeQueueRedis(requeue_set_result=True, pipeline_execute_error=Exception("pipeline broken"))
+        queue_worker.REDIS_QUEUE = fake_queue
+        queue_worker.get_redis = lambda: types.SimpleNamespace(set=AsyncMock())
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = False
+
+        mark_done = AsyncMock(return_value=1)
+        delete_inflight = AsyncMock(return_value=0)
+        delete_busy_owner = AsyncMock(return_value=1)
+        refund_reservation = AsyncMock(return_value=None)
+        confirm_reservation = AsyncMock(return_value=None)
+
+        job = {
+            "chat_id": 303,
+            "user_id": 303,
+            "text": "hello",
+            "msg_id": 99,
+            "reply_to": 99,
+            "is_group": False,
+            "is_channel_post": False,
+            "reservation_id": 999,
+        }
+
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done), \
+             patch.object(queue_worker, "_delete_if_inflight", delete_inflight), \
+             patch.object(queue_worker, "_delete_if_chatbusy_owner", delete_busy_owner), \
+             patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()), \
+             patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()), \
+             patch.object(queue_worker, "_heartbeat_key", AsyncMock()), \
+             patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()), \
+             patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")), \
+             patch.object(queue_worker, "_send_reply", AsyncMock(side_effect=Exception("telegram down"))), \
+             patch.object(queue_worker, "refund_reservation_by_id", refund_reservation), \
+             patch.object(queue_worker, "confirm_reservation_by_id", confirm_reservation), \
+             patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        self.assertEqual(fake_queue.lpush_calls, [], "job must not be requeued when pipeline execution fails")
+        self.assertEqual(len(fake_queue.lrem_calls), 1, "processing item must be removed exactly once")
+        mark_done.assert_awaited_once()
+        refund_reservation.assert_awaited_once_with(999)
+        confirm_reservation.assert_not_awaited()
+
+    async def test_fallback_send_failure_with_requeue_guard_exhausted_marks_done_and_refunds(self):
+        fake_queue = _FakeQueueRedis(requeue_set_result=False)
+        queue_worker.REDIS_QUEUE = fake_queue
+        queue_worker.get_redis = lambda: types.SimpleNamespace(set=AsyncMock())
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = False
+
+        mark_done = AsyncMock(return_value=1)
+        delete_inflight = AsyncMock(return_value=0)
+        delete_busy_owner = AsyncMock(return_value=1)
+        refund_reservation = AsyncMock(return_value=None)
+        confirm_reservation = AsyncMock(return_value=None)
+
+        job = {
+            "chat_id": 202,
+            "user_id": 202,
+            "text": "hello",
+            "msg_id": 77,
+            "reply_to": 77,
+            "is_group": False,
+            "is_channel_post": False,
+            "reservation_id": 888,
+        }
+
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done), \
+             patch.object(queue_worker, "_delete_if_inflight", delete_inflight), \
+             patch.object(queue_worker, "_delete_if_chatbusy_owner", delete_busy_owner), \
+             patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()), \
+             patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()), \
+             patch.object(queue_worker, "_heartbeat_key", AsyncMock()), \
+             patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()), \
+             patch.object(queue_worker, "respond_to_user", AsyncMock(side_effect=Exception("model timeout"))), \
+             patch.object(queue_worker, "_send_reply", AsyncMock(side_effect=Exception("telegram down"))), \
+             patch.object(queue_worker, "refund_reservation_by_id", refund_reservation), \
+             patch.object(queue_worker, "confirm_reservation_by_id", confirm_reservation), \
+             patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        self.assertEqual(fake_queue.lpush_calls, [], "job must not be requeued when requeue guard is exhausted")
+        self.assertEqual(len(fake_queue.lrem_calls), 1, "processing item must be removed exactly once")
+        mark_done.assert_awaited_once()
+        refund_reservation.assert_awaited_once_with(888)
         confirm_reservation.assert_not_awaited()
 
 
