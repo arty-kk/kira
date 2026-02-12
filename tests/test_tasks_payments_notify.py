@@ -285,5 +285,79 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(update_calls[1].values_kwargs, {"lease_token": None})
 
 
+class _FakeRequeueNotifyResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+    def all(self):
+        return self._value
+
+
+class _FakeRequeueNotifyDB:
+    def __init__(self, charge_id):
+        self.charge_id = charge_id
+        self.claimed_once = False
+
+    async def execute(self, stmt, params=None):
+        stmt_text = str(stmt)
+        if params is not None and "RETURNING telegram_payment_charge_id, lease_token" in stmt_text:
+            if self.claimed_once:
+                return _FakeRequeueNotifyResult([])
+            self.claimed_once = True
+            return _FakeRequeueNotifyResult([(self.charge_id, params["lease_token"])])
+        return _FakeRequeueNotifyResult(1)
+
+
+class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_notify_via_requeue_applied_unnotified_without_reapply(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            id=10,
+            user_id=77,
+            kind="buy",
+            status="applied",
+            requests_amount=4,
+            gift_title=None,
+            gift_emoji=None,
+            gift_code=None,
+            stars_amount=100,
+            telegram_payment_charge_id="charge_retry_notify",
+            notified_at=None,
+        )
+
+        db = _FakeRequeueNotifyDB(charge_id=outbox.telegram_payment_charge_id)
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        send_mock = AsyncMock(side_effect=[None, object()])
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(payments, "send_message_safe", send_mock),
+            patch.object(payments, "t", AsyncMock(return_value="sent")),
+            patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
+            patch.object(payments, "func", _Func()),
+            patch.object(payments.uuid, "uuid4", side_effect=[SimpleNamespace(hex="notify-1"), SimpleNamespace(hex="lease-1"), SimpleNamespace(hex="notify-2")]),
+            patch.object(payments.celery, "send_task") as send_task_mock,
+        ):
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True)
+            self.assertIsNone(outbox.notified_at)
+
+            enqueued, errors = await payments.requeue_applied_unnotified_outbox(batch_size=10)
+            self.assertEqual((enqueued, errors), (1, 0))
+            send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_retry_notify"])
+
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True)
+
+        self.assertIsNotNone(outbox.notified_at)
+        self.assertEqual(send_mock.await_count, 2)
+        payments.add_paid_requests.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()
