@@ -215,6 +215,25 @@ async def tr(uid: int, key: str, default: str = "", **kwargs: Any) -> str:
         return default
 
 
+def _persona_key(name: str) -> str:
+    return (name or "").strip().lower()
+
+
+async def _tr_zodiac(uid: int, zodiac: str) -> str:
+    key = _persona_key(zodiac)
+    return await tr(uid, f"persona.zodiac.{key}", zodiac)
+
+
+async def _tr_archetype(uid: int, archetype: str) -> str:
+    key = _persona_key(archetype)
+    return await tr(uid, f"persona.archetype.{key}", archetype)
+
+
+async def _tr_sociality(uid: int, sociality: str) -> str:
+    key = _persona_key(sociality)
+    return await tr(uid, f"persona.social.{key}", sociality)
+
+
 # ---------------------------
 # Telegram UI helpers
 # ---------------------------
@@ -1556,7 +1575,8 @@ async def step_zodiac(cb: CallbackQuery) -> None:
     items: list[tuple[str, str]] = []
     for z in ZODIAC:
         badge = ZODIAC_BADGES.get(z, "")
-        label = f"{badge} {z}".strip()
+        z_localized = await _tr_zodiac(uid, z)
+        label = f"{badge} {z_localized}".strip()
         if z == picked:
             label = f"✅ {label}"
         items.append((label, z))
@@ -1712,7 +1732,8 @@ async def show_archetypes(cb: CallbackQuery) -> None:
     row: list[InlineKeyboardButton] = []
     for i, name in enumerate(ARCHETYPES):
         mark = "✅ " if name in selected else ""
-        row.append(InlineKeyboardButton(text=f"{mark}{name}", callback_data=f"persona:arch:toggle:{i}"))
+        label = await _tr_archetype(uid, name)
+        row.append(InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"persona:arch:toggle:{i}"))
         if len(row) == 2:
             rows.append(row)
             row = []
@@ -1826,14 +1847,17 @@ async def persona_preview(cb: CallbackQuery) -> None:
             bar = _bar(v, width=10)
             temp_lines.append(f"{name} — {pct}% <code>{bar}</code>")
 
-        arch_str = ", ".join(arch) if arch else "—"
+        arch_labels = [await _tr_archetype(uid, str(a)) for a in arch]
+        arch_str = ", ".join(arch_labels) if arch_labels else "—"
         badge = ZODIAC_BADGES.get(z, "")
-        z_line = f"{badge} {z}".strip()
+        z_localized = await _tr_zodiac(uid, str(z))
+        z_line = f"{badge} {z_localized}".strip()
+        soc_line = await _tr_sociality(uid, str(soc))
 
         txt = (
             f"<b>{html.escape(title)}</b>\n\n"
             f"<b>{html.escape(l_z)}:</b> {html.escape(z_line)}\n"
-            f"<b>{html.escape(l_s)}:</b> {html.escape(str(soc))}\n"
+            f"<b>{html.escape(l_s)}:</b> {html.escape(str(soc_line))}\n"
             f"<b>{html.escape(l_a)}:</b> {html.escape(arch_str)}\n\n"
             f"<b>{html.escape(l_t)}:</b>\n" + ("\n".join(temp_lines) if temp_lines else "—")
         )
