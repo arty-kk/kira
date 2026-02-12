@@ -14,6 +14,7 @@ from aiogram.exceptions import TelegramBadRequest
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client, BOT_ID as SELF_BOT_ID, BOT_USERNAME as SELF_BOT_USERNAME
+from app.config import settings
 from app.services.addons import group_battle as battle_service
 from app.tasks.battle import battle_launch_task
 
@@ -22,6 +23,15 @@ logger = logging.getLogger(__name__)
 bot = get_bot()
 
 BATTLE_ENQUEUE_DEDUP_TTL_SECONDS = 20
+
+
+def _is_chat_allowed(chat) -> bool:
+    try:
+        cid = int(chat.id)
+    except Exception:
+        return False
+    allowed_ids = set(getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
+    return cid in allowed_ids
 
 
 async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
@@ -52,11 +62,18 @@ async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
 @dp.message(Command("battle"), F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
 async def cmd_group_battle(message: Message, command: CommandObject | None = None) -> None:
 
+    chat_id = message.chat.id
+    if not _is_chat_allowed(message.chat):
+        logger.info(
+            "Ignore unauthorized group chat=%s uname=%s",
+            chat_id,
+            getattr(message.chat, "username", None),
+        )
+        return
+
     if redis_client is None:
         await message.reply("⏳ Initializing… try again in a few seconds.")
         return
-
-    chat_id = message.chat.id
 
     raw = message.text or ""
     all_entities = (message.entities or []) + (message.caption_entities or [])
@@ -134,6 +151,13 @@ async def cmd_group_battle(message: Message, command: CommandObject | None = Non
 @dp.message(Command("battle_stats"), F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
 async def cmd_battle_stats(message: Message) -> None:
     chat_id = message.chat.id
+    if not _is_chat_allowed(message.chat):
+        logger.info(
+            "Ignore unauthorized group chat=%s uname=%s",
+            chat_id,
+            getattr(message.chat, "username", None),
+        )
+        return
 
     def _to_int(x) -> int:
         try:
