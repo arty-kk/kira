@@ -1010,21 +1010,35 @@ async def handle_job(raw, processing_key: str) -> None:
     except Exception:
         reservation_id = 0
 
+    reservation_ids: list[int] = []
+    seen_reservation_ids: set[int] = set()
+    raw_reservation_ids = job.get("reservation_ids")
+    if isinstance(raw_reservation_ids, list):
+        for raw_reservation_id in raw_reservation_ids:
+            try:
+                reservation_id_item = int(raw_reservation_id)
+            except Exception:
+                continue
+            if reservation_id_item <= 0 or reservation_id_item in seen_reservation_ids:
+                continue
+            seen_reservation_ids.add(reservation_id_item)
+            reservation_ids.append(reservation_id_item)
+    if not reservation_ids and reservation_id > 0:
+        reservation_ids.append(reservation_id)
+
     async def _confirm_reservation() -> None:
-        if reservation_id <= 0:
-            return
-        try:
-            await confirm_reservation_by_id(reservation_id)
-        except Exception:
-            logger.exception("Failed to confirm reservation_id=%s", reservation_id)
+        for reservation_id_item in reservation_ids:
+            try:
+                await confirm_reservation_by_id(reservation_id_item)
+            except Exception:
+                logger.exception("Failed to confirm reservation_id=%s", reservation_id_item)
 
     async def _refund_reservation() -> None:
-        if reservation_id <= 0:
-            return
-        try:
-            await refund_reservation_by_id(reservation_id)
-        except Exception:
-            logger.exception("Failed to refund reservation_id=%s", reservation_id)
+        for reservation_id_item in reservation_ids:
+            try:
+                await refund_reservation_by_id(reservation_id_item)
+            except Exception:
+                logger.exception("Failed to refund reservation_id=%s", reservation_id_item)
 
     try:
         msg_id = int(msg_id) if msg_id is not None else None
