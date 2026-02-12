@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Mapping, Iterable, Tuple, Optional
+from typing import Callable, Dict, Mapping, Iterable, Tuple, Optional
 
 from .constants.emotions import (
     PRIMARY_EMOTIONS, SECONDARY_EMOTIONS,
     TERTIARY_EMOTIONS, SECONDARY_KEYS,
     TERTIARY_KEYS, VALID_DYADS,
     VALID_TRIADS, ALL_METRICS, FAT_CLAMP,
-    make_learned_secondary,
 )
 from .constants.tone_map import (
     Tone, project_state_to_tones,
@@ -40,6 +39,7 @@ class PersonaBrain:
     state: Dict[str, float] = field(default_factory=dict)
     coactivation_counts: Dict[frozenset, int] = field(default_factory=dict)
     learned_metrics: Dict[str, Tuple[str, str]] = field(default_factory=dict)
+    learned_formulas: Dict[str, Callable[[Dict[str, float]], float]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.state:
@@ -131,6 +131,9 @@ class PersonaBrain:
                 except KeyError:
                     continue
 
+        for name, fn in self.learned_formulas.items():
+            s[name] = FAT_CLAMP(float(fn(s)))
+
 
     def _log_coactivations(self) -> None:
 
@@ -162,11 +165,18 @@ class PersonaBrain:
             name = base_name
             suffix = 2
 
-            while name in ALL_METRICS or name in self.learned_metrics:
+            while (
+                name in ALL_METRICS
+                or name in self.learned_metrics
+                or name in self.state
+            ):
                 name = f"{base_name}_{suffix}"
                 suffix += 1
 
-            make_learned_secondary(name, {a: 0.5, b: 0.5})
+            def _formula(state: Dict[str, float], p1: str = a, p2: str = b) -> float:
+                return 0.5 * state.get(p1, 0.0) + 0.5 * state.get(p2, 0.0)
+
+            self.learned_formulas[name] = _formula
             parent = getattr(self, "parent", None)
             if parent is not None and hasattr(parent, "register_metric"):
                 parent.register_metric(name)
@@ -175,7 +185,7 @@ class PersonaBrain:
                 pass
             self.learned_metrics[name] = (a, b)
 
-            self.state.setdefault(name, 0.0)
+            self.state[name] = FAT_CLAMP(float(_formula(self.state)))
             self.coactivation_counts[pair] = 0
 
             if len(self.learned_metrics) >= self.config.max_learned_metrics:
