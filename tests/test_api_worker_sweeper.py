@@ -20,6 +20,9 @@ def _load_api_worker():
 
     fake_config.settings = types.SimpleNamespace()
     fake_openai_client.get_openai = lambda: None
+    fake_openai_client.transcribe_audio_with_retry = lambda **_kwargs: ""
+    fake_openai_client.classify_openai_error = lambda _exc: "other"
+    fake_clients.openai_client = fake_openai_client
 
     fake_media_limits.ALLOWED_IMAGE_MIMES = {"image/png"}
     fake_media_limits.ALLOWED_VOICE_MIMES = {"audio/ogg"}

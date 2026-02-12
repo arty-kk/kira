@@ -62,6 +62,9 @@ def _load_queue_worker():
     fake_bot_debouncer.compute_typing_delay = lambda *_args, **_kwargs: 0.0
     fake_tg_client.get_bot = lambda: types.SimpleNamespace()
     fake_openai_client.get_openai = lambda: None
+    fake_openai_client.transcribe_audio_with_retry = lambda **_kwargs: ""
+    fake_openai_client.classify_openai_error = lambda _exc: "other"
+    fake_clients.openai_client = fake_openai_client
     fake_responder.respond_to_user = lambda *_args, **_kwargs: "ok"
 
     async def _noop_async(*_args, **_kwargs):

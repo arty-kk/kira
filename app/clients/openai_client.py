@@ -104,6 +104,52 @@ def _should_retry(exc: Exception) -> bool:
     return False
 
 
+def classify_openai_error(exc: Exception) -> str:
+    if RETRYABLE_EXC_TYPES:
+        try:
+            from openai import RateLimitError
+            if isinstance(exc, RateLimitError):
+                return "rate_limit"
+        except Exception:
+            pass
+
+    if isinstance(exc, APIStatusError):
+        try:
+            status = int(getattr(exc, "status_code", 500) or 500)
+        except Exception:
+            status = 500
+        if status == 429:
+            return "rate_limit"
+        if status >= 500:
+            return "upstream_5xx_or_transport"
+        return "other"
+
+    if isinstance(
+        exc,
+        (
+            httpx.ReadTimeout,
+            httpx.ConnectTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+            httpx.TransportError,
+        ),
+    ):
+        return "upstream_5xx_or_transport"
+
+    status_maybe = getattr(exc, "status_code", None)
+    if status_maybe is not None:
+        try:
+            status = int(status_maybe)
+            if status == 429:
+                return "rate_limit"
+            if status >= 500:
+                return "upstream_5xx_or_transport"
+        except Exception:
+            pass
+
+    return "other"
+
+
 async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
     total_timeout_override: Optional[float] = None
@@ -231,6 +277,46 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                         attempt.retry_state.attempt_number,
                     )
                     raise
+
+
+async def transcribe_audio_with_retry(
+    *,
+    model: str,
+    file: Any,
+    response_format: str = "text",
+    total_timeout: Optional[float] = None,
+    **kwargs: Any,
+) -> Any:
+    client = get_openai()
+    params = {
+        "model": model,
+        "file": file,
+        "response_format": response_format,
+        **kwargs,
+    }
+    if "timeout" not in params:
+        params["timeout"] = _build_httpx_timeout()
+
+    retry_timeout = total_timeout if total_timeout is not None else OPENAI_TOTAL_TIMEOUT_SECONDS
+    attempt_no = 0
+    async with OPENAI_SEMAPHORE:
+        try:
+            async for attempt in AsyncRetrying(
+                stop=(stop_after_attempt(OPENAI_MAX_ATTEMPTS) | stop_after_delay(retry_timeout)),
+                wait=wait_exponential(min=0.5, max=2),
+                retry=retry_if_exception(_should_retry),
+                reraise=True,
+            ):
+                with attempt:
+                    attempt_no = attempt.retry_state.attempt_number
+                    return await client.audio.transcriptions.create(**params)
+        except Exception as exc:
+            try:
+                setattr(exc, "_openai_retry_attempts", attempt_no)
+                setattr(exc, "_openai_total_timeout", retry_timeout)
+            except Exception:
+                pass
+            raise
 
 
 def _msg(role: str, text: str) -> dict:

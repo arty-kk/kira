@@ -1,4 +1,3 @@
-import asyncio
 import importlib.util
 import json
 import pathlib
@@ -74,6 +73,9 @@ def _load_queue_worker():
     fake_bot_debouncer.compute_typing_delay = lambda *_args, **_kwargs: 0.0
     fake_tg_client.get_bot = lambda: types.SimpleNamespace()
     fake_openai_client.get_openai = lambda: None
+    fake_openai_client.transcribe_audio_with_retry = lambda **_kwargs: ""
+    fake_openai_client.classify_openai_error = lambda _exc: "other"
+    fake_clients.openai_client = fake_openai_client
 
     async def _respond_ok(*_args, **_kwargs):
         return "ok"
@@ -341,3 +343,45 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VoiceFileTranscriptionRetryWrapperTests(unittest.IsolatedAsyncioTestCase):
+    async def test_transcribe_voice_file_id_returns_empty_on_final_failure(self) -> None:
+        async def _get_file(_file_id):
+            return object()
+
+        async def _download(_file, path):
+            with open(path, "wb") as f:
+                f.write(b"OggS\x00\x02")
+
+        async def _boom(**_kwargs):
+            raise RuntimeError("fail")
+
+        with patch.object(queue_worker, "BOT", types.SimpleNamespace(get_file=_get_file, download=_download)), \
+             patch.object(queue_worker.openai_client, "transcribe_audio_with_retry", side_effect=_boom):
+            text = await queue_worker._transcribe_voice_file_id("file_1")
+
+        self.assertEqual(text, "")
+
+    async def test_transcribe_voice_file_id_preserves_model_selection(self) -> None:
+        async def _get_file(_file_id):
+            return object()
+
+        async def _download(_file, path):
+            with open(path, "wb") as f:
+                f.write(b"OggS\x00\x02")
+
+        captured = {}
+
+        async def _ok(**kwargs):
+            captured.update(kwargs)
+            return " world "
+
+        with patch.object(queue_worker, "BOT", types.SimpleNamespace(get_file=_get_file, download=_download)), \
+             patch.object(queue_worker.openai_client, "transcribe_audio_with_retry", side_effect=_ok), \
+             patch.object(queue_worker, "settings", types.SimpleNamespace(TRANSCRIPTION_MODEL="whisper-x")):
+            text = await queue_worker._transcribe_voice_file_id("file_1")
+
+        self.assertEqual(text, "world")
+        self.assertEqual(captured.get("model"), "whisper-x")
+
