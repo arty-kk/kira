@@ -21,9 +21,6 @@ def decode_base64_payload(b64_value: str) -> bytes:
     """Shared base64 cleanup/validation helper for API and worker."""
     cleaned = clean_base64_payload(b64_value)
     try:
-        return base64.b64decode(
-            cleaned,
-            validate=bool(getattr(settings, "API_STRICT_BASE64_VALIDATION", False)),
-        )
+        return base64.b64decode(cleaned, validate=True)
     except Exception:
         return b""

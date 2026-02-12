@@ -86,6 +86,24 @@ class PipelineQualityTests(unittest.TestCase):
         )
         self.assertEqual(req.voice_b64, "aGVsbG8=")
 
+    def test_voice_payload_rejects_invalid_base64(self) -> None:
+        with self.assertRaises(HTTPException) as ctx:
+            ConversationRequest(
+                user_id="u1",
+                voice_b64="aGVs*bG8=",
+                voice_mime="audio/ogg",
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertEqual(ctx.exception.detail["message"], "voice_b64 must be valid base64.")
+
+    def test_voice_payload_accepts_whitespace_in_base64(self) -> None:
+        req = ConversationRequest(
+            user_id="u1",
+            voice_b64="aGVs\nbG8=",
+            voice_mime="audio/ogg",
+        )
+        self.assertEqual(req.voice_b64, "aGVsbG8=")
+
     def test_invalid_payload_rejected(self) -> None:
         with self.assertRaises(HTTPException):
             ConversationRequest(user_id="u1")
