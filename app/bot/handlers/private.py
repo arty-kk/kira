@@ -26,7 +26,7 @@ from aiogram.types import (
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.sql import func
 
-from app.api.api_keys import create_key, deactivate_key, list_keys_for_user
+from app.api.api_keys import cache_active_key, create_key, deactivate_key, list_keys_for_user
 from app.bot.components.constants import WELCOME_MESSAGES, redis_client
 from app.bot.components.dispatcher import dp
 from app.core.media_utils import (
@@ -2023,6 +2023,7 @@ async def api_rotate(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     async with session_scope(stmt_timeout_ms=5000) as db:
         api_key, secret = await create_key(db, uid)
+    await cache_active_key(api_key)
 
     ttl = 365 * 24 * 3600
     with suppress(Exception):
