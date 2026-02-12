@@ -631,10 +631,17 @@ async def conversation_endpoint(
                         "message": "Request with this Idempotency-Key is already in progress.",
                     },
                 )
-            status_code, body = _read_final_idempotency_record(cached, current_request_hash)
-            if status_code < 400:
-                return ConversationResponse(**body)
-            raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
+            try:
+                status_code, body = _read_final_idempotency_record(cached, current_request_hash)
+            except IdempotencyRecordParseError:
+                try:
+                    await idem_redis.delete(idem_cache_key)
+                except Exception:
+                    logger.exception("Failed to delete malformed idempotency record")
+            else:
+                if status_code < 400:
+                    return ConversationResponse(**body)
+                raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
 
         inflight_ttl = int(
             getattr(
@@ -671,7 +678,7 @@ async def conversation_endpoint(
                         },
                     )
                 try:
-                    status_code, body = _read_final_idempotency_record(cached, current_request_hash)
+                    status_code, body = _read_final_idempotency_record(existing, current_request_hash)
                 except IdempotencyRecordParseError:
                     try:
                         await idem_redis.delete(idem_cache_key)
@@ -726,6 +733,7 @@ async def conversation_endpoint(
                         if status_code < 400:
                             return ConversationResponse(**body)
                         raise HTTPException(status_code=status_code, detail=body.get("detail") or body)
+                raise _idempotency_unavailable()
 
     async def _store_idempotency_result(status_code: int, body: dict) -> None:
         if not (idem_lock_acquired and idem_redis is not None and idem_cache_key):
