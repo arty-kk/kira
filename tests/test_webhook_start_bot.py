@@ -4,6 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest import mock
 
 
 class _FakeAsyncFile:
@@ -40,6 +41,11 @@ class _FakeRedis:
 
     async def get(self, _key):
         return None
+
+
+class _FailingRedis(_FakeRedis):
+    async def set(self, *_args, **_kwargs):
+        raise RuntimeError("redis unavailable")
 
 
 class _FakeRouter:
@@ -264,6 +270,80 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response_a.status, 200)
         self.assertEqual(response_b.status, 200)
         self.assertEqual(_FakeDispatcher.calls, 1)
+
+        stop_event.set()
+        await task
+
+    async def test_webhook_returns_503_when_redis_dedup_fails(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        webhook.redis_client = _FailingRedis()
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        response = await handler(_FakeWeb.Request({"update_id": 777}))
+
+        self.assertEqual(response.status, 503)
+
+        stop_event.set()
+        await task
+
+    async def test_webhook_returns_400_for_non_object_payload(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        response = await handler(_FakeWeb.Request([{"update_id": 778}]))
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(_FakeDispatcher.calls, 0)
+
+        stop_event.set()
+        await task
+
+    async def test_webhook_returns_400_for_invalid_update_schema(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        with mock.patch.object(webhook.types, "Update", side_effect=ValueError("bad schema")):
+            response = await handler(_FakeWeb.Request({"update_id": 778}))
+
+        self.assertEqual(response.status, 400)
+        self.assertEqual(_FakeDispatcher.calls, 0)
+
+        stop_event.set()
+        await task
+
+    async def test_webhook_returns_503_when_scheduling_fails(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        def _raise_on_create_task(coro):
+            coro.close()
+            raise RuntimeError("loop down")
+
+        with mock.patch.object(webhook.asyncio, "create_task", side_effect=_raise_on_create_task):
+            response = await handler(_FakeWeb.Request({"update_id": 779}))
+
+        self.assertEqual(response.status, 503)
+        self.assertEqual(_FakeDispatcher.calls, 0)
 
         stop_event.set()
         await task
