@@ -1026,12 +1026,26 @@ async def handle_job(raw, processing_key: str) -> None:
     if not reservation_ids and reservation_id > 0:
         reservation_ids.append(reservation_id)
 
+    billable_reservation_id = reservation_id if reservation_id > 0 else (reservation_ids[-1] if reservation_ids else 0)
+    reservation_ids_to_refund_on_success = [
+        reservation_id_item
+        for reservation_id_item in reservation_ids
+        if reservation_id_item != billable_reservation_id
+    ]
+
     async def _confirm_reservation() -> None:
-        for reservation_id_item in reservation_ids:
+        if billable_reservation_id <= 0:
+            return
+        try:
+            await confirm_reservation_by_id(billable_reservation_id)
+        except Exception:
+            logger.exception("Failed to confirm reservation_id=%s", billable_reservation_id)
+
+        for reservation_id_item in reservation_ids_to_refund_on_success:
             try:
-                await confirm_reservation_by_id(reservation_id_item)
+                await refund_reservation_by_id(reservation_id_item)
             except Exception:
-                logger.exception("Failed to confirm reservation_id=%s", reservation_id_item)
+                logger.exception("Failed to refund extra reservation_id=%s", reservation_id_item)
 
     async def _refund_reservation() -> None:
         for reservation_id_item in reservation_ids:

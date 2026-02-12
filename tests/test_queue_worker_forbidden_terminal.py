@@ -340,7 +340,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         refund_reservation.assert_awaited_once_with(888)
         confirm_reservation.assert_not_awaited()
 
-    async def test_success_path_confirms_all_merged_reservation_ids(self):
+    async def test_success_path_confirms_single_billable_and_refunds_extra_merged_reservation_ids(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.get_redis = lambda: types.SimpleNamespace(set=AsyncMock())
@@ -370,10 +370,14 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             [call.args[0] for call in confirm_reservation.await_args_list],
-            [11, 12, 13],
-            "all normalized reservation_ids must be confirmed in order without loss",
+            [99],
+            "only billable reservation must be confirmed for a merged generation",
         )
-        refund_reservation.assert_not_awaited()
+        self.assertEqual(
+            [call.args[0] for call in refund_reservation.await_args_list],
+            [11, 12, 13],
+            "extra merged reservations must be refunded on successful completion",
+        )
 
     async def test_terminal_failure_refunds_all_ids_and_fallbacks_to_legacy_single(self):
         fake_queue = _FakeQueueRedis()
@@ -472,4 +476,3 @@ class VoiceFileTranscriptionRetryWrapperTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(text, "world")
         self.assertEqual(captured.get("model"), "whisper-x")
-
