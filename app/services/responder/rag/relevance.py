@@ -36,16 +36,19 @@ async def is_relevant(
     except Exception:
         topk = 3
 
-    effective_knowledge_owner_id = knowledge_owner_id
-    if effective_knowledge_owner_id is None:
-        effective_knowledge_owner_id = persona_owner_id
+    try:
+        owner_id_int = int(knowledge_owner_id) if knowledge_owner_id is not None else 0
+    except (TypeError, ValueError):
+        owner_id_int = 0
+
+    owner_id_for_scoped_paths = owner_id_int if owner_id_int > 0 else None
 
     try:
         tag_hits = await find_tag_hits(
             text,
             model=model,
             limit=topk * 10,
-            owner_id=effective_knowledge_owner_id,
+            owner_id=owner_id_for_scoped_paths,
         )
     except Exception:
         logger.exception("gate: keyword pre-check failed")
@@ -89,39 +92,38 @@ async def is_relevant(
     custom_hits: List[Tuple[float, str, str]] = []
     ok_custom = False
 
-    if effective_knowledge_owner_id is not None:
+    if owner_id_for_scoped_paths is not None:
         try:
-            owner_id_int = int(effective_knowledge_owner_id)
-        except (TypeError, ValueError):
-            owner_id_int = 0
+            custom_hits = await get_relevant_for_owner(
+                text,
+                owner_id=owner_id_for_scoped_paths,
+                model_name=model,
+            )
+        except Exception:
+            logger.exception(
+                "gate: get_relevant_for_owner failed for owner=%s",
+                owner_id_for_scoped_paths,
+            )
+            custom_hits = []
 
-        if owner_id_int > 0:
-            try:
-                custom_hits = await get_relevant_for_owner(
-                    text,
-                    owner_id=owner_id_int,
-                    model_name=model,
-                )
-            except Exception:
-                logger.exception(
-                    "gate: get_relevant_for_owner failed for owner=%s",
-                    owner_id_int,
-                )
-                custom_hits = []
-
-            if custom_hits:
-                top_c = custom_hits[0][0]
-                thr_eff = threshold + margin
-                ok_custom = top_c >= thr_eff
-                logger.info(
-                    "gate: custom KB owner=%s model=%s ok=%s top=%.3f thr=%.3f hits=%d",
-                    owner_id_int,
-                    model,
-                    ok_custom,
-                    top_c,
-                    thr_eff,
-                    len(custom_hits),
-                )
+        if custom_hits:
+            top_c = custom_hits[0][0]
+            thr_eff = threshold + margin
+            ok_custom = top_c >= thr_eff
+            logger.info(
+                "gate: custom KB owner=%s model=%s ok=%s top=%.3f thr=%.3f hits=%d",
+                owner_id_for_scoped_paths,
+                model,
+                ok_custom,
+                top_c,
+                thr_eff,
+                len(custom_hits),
+            )
+    else:
+        logger.info(
+            "gate: skip owner KB path due to missing/invalid knowledge_owner_id=%r",
+            knowledge_owner_id,
+        )
 
     has_any_hits = bool(sys_hits or custom_hits)
     ok_any = bool(ok_sys or ok_custom)
