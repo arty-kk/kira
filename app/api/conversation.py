@@ -215,6 +215,33 @@ def _resolve_rate_limit_ip(request: Request) -> str:
     return client_host
 
 
+def _should_refund_on_error(
+    status_code: int,
+    code: Optional[str],
+    source: Literal["http", "timeout", "worker"],
+) -> bool:
+    normalized_code = (code or "").strip().lower() or None
+
+    # Timeout branch must resolve by the same domain mapping via canonical code.
+    if source == "timeout" and normalized_code is None:
+        normalized_code = "upstream_timeout"
+
+    # Domain rule: infrastructure / upstream failures are always refundable
+    # regardless of source branch.
+    if status_code >= 500 or normalized_code == "upstream_timeout":
+        return True
+
+    # Domain rule: business-validation/media categories below are refundable
+    # in all branches (HTTP/timeout/worker) to avoid branch-specific drift.
+    refundable_business_codes = {
+        "invalid_payload",
+        "payload_too_large",
+        "invalid_voice_format",
+        "voice_transcription_failed",
+    }
+    return normalized_code in refundable_business_codes
+
+
 class PersonaConfig(BaseModel):
     name: Optional[constr(min_length=1, max_length=64)] = None
     age: Optional[int] = Field(None, ge=1, le=120)
@@ -948,10 +975,7 @@ async def conversation_endpoint(
         except HTTPException as e:
             detail = e.detail if isinstance(e.detail, dict) else {}
             err_code = detail.get("code")
-            if 500 <= e.status_code < 600 or err_code in {
-                "invalid_payload",
-                "payload_too_large",
-            }:
+            if _should_refund_on_error(e.status_code, err_code, source="http"):
                 original_error_code = str(err_code or e.status_code)
                 try:
                     await _safe_refund_request(
@@ -967,16 +991,18 @@ async def conversation_endpoint(
                     )
             raise
         except asyncio.TimeoutError:
+            timeout_code = "upstream_timeout"
             try:
-                await _safe_refund_request(
-                    owner_id,
-                    billing_tier,
-                    request_id=request_id,
-                    reason="timeout",
-                )
+                if _should_refund_on_error(504, timeout_code, source="timeout"):
+                    await _safe_refund_request(
+                        owner_id,
+                        billing_tier,
+                        request_id=request_id,
+                        reason="timeout",
+                    )
             except RuntimeError as compensation_error:
                 await _handle_refund_compensation_failure(
-                    "upstream_timeout",
+                    timeout_code,
                     compensation_error,
                 )
             logging.exception(
@@ -1025,11 +1051,7 @@ async def conversation_endpoint(
             err = result.get("error") or {}
             status_code = int(err.get("status") or 500)
             err_code = err.get("code")
-            if status_code >= 500 or err_code in {
-                "invalid_payload",
-                "invalid_voice_format",
-                "voice_transcription_failed",
-            }:
+            if _should_refund_on_error(status_code, err_code, source="worker"):
                 original_error_code = str(err_code or status_code)
                 try:
                     await _safe_refund_request(
