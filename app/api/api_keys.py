@@ -38,24 +38,28 @@ async def create_key(db, user_id: int, label: Optional[str] = None) -> Tuple[Api
 
     db.add(ApiKeyStats(api_key_id=api_key.id))
 
-    redis = get_redis()
-    if redis is not None:
-        try:
-            ttl = settings.API_KEY_CACHE_TTL_SEC
-            ck = _cache_key(key_hash)
-            await redis.hset(
-                ck,
-                mapping={
-                    "id": api_key.id,
-                    "user_id": user_id,
-                    "active": 1,
-                },
-            )
-            await redis.expire(ck, max(10, ttl))
-        except Exception:
-            pass
-
     return api_key, secret
+
+
+async def cache_active_key(api_key: ApiKey) -> None:
+    redis = get_redis()
+    if redis is None:
+        return
+
+    try:
+        ttl = settings.API_KEY_CACHE_TTL_SEC
+        ck = _cache_key(api_key.key_hash)
+        await redis.hset(
+            ck,
+            mapping={
+                "id": api_key.id,
+                "user_id": api_key.user_id,
+                "active": 1,
+            },
+        )
+        await redis.expire(ck, max(10, ttl))
+    except Exception:
+        pass
 
 
 async def deactivate_key(
@@ -154,25 +158,21 @@ async def authenticate_key(db, raw_key: str) -> Optional[ApiKey]:
                 except (TypeError, ValueError):
                     return None
 
-            active = _parse_cached_int("active") == 1
-            if not active:
+            cached_active = _parse_cached_int("active")
+            if cached_active == 0:
                 return None
-            cached_id = _parse_cached_int("id")
-            cached_user_id = _parse_cached_int("user_id")
-            if cached_id is not None and cached_user_id is not None:
-                return ApiKey(
-                    id=cached_id,
-                    user_id=cached_user_id,
-                    key_hash=key_hash,
-                    active=True,
-                )
+            cached_positive = cached_active == 1
+        else:
+            cached_positive = False
+    else:
+        cached_positive = False
 
     res = await db.execute(
-        select(ApiKey).where(ApiKey.key_hash == key_hash)
+        select(ApiKey).where(ApiKey.key_hash == key_hash, ApiKey.active.is_(True))
     )
     api_key = res.scalar_one_or_none()
 
-    if not api_key or not api_key.active:
+    if not api_key:
         if redis is not None:
             try:
                 ttl = settings.API_KEY_CACHE_NEGATIVE_TTL_SEC
@@ -182,20 +182,8 @@ async def authenticate_key(db, raw_key: str) -> Optional[ApiKey]:
                 pass
         return None
 
-    if redis is not None:
-        try:
-            ttl = settings.API_KEY_CACHE_TTL_SEC
-            await redis.hset(
-                ck,
-                mapping={
-                    "id": api_key.id,
-                    "user_id": api_key.user_id,
-                    "active": 1,
-                },
-            )
-            await redis.expire(ck, max(10, ttl))
-        except Exception:
-            pass
+    if redis is not None and not cached_positive:
+        await cache_active_key(api_key)
     return api_key
 
 
