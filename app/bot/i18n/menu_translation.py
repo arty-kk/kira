@@ -46,6 +46,13 @@ _EN: Dict[str, str] = {
         "Please send exactly one image (≤ 5 MB) in a single message."
     ),
     "errors.doc_unsupported": "⚠️ Unsupported file. Please send an image or a JSON knowledge base file.",
+    "group.battle.self": "🤔 You can't challenge yourself.",
+    "group.battle.opponent_opted_out": "🚫 That user has opted out of Battles.",
+    "group.battle.you_opted_out": "🚫 You opted out of Battles. DM /battle_on to opt in.",
+    "group.battle.start_failed": (
+        "❌ Couldn't start the battle "
+        "(opponent might be unavailable or an internal error occurred)."
+    ),
 
     # Gender
     "gender.prompt": "<b>Please select your gender:</b>",
@@ -101,6 +108,36 @@ _EN: Dict[str, str] = {
     "persona.temp.choleric": "Choleric",
     "persona.temp.phlegmatic": "Phlegmatic",
     "persona.temp.melancholic": "Melancholic",
+
+    # Persona labels
+    "persona.zodiac.aries": "Aries",
+    "persona.zodiac.taurus": "Taurus",
+    "persona.zodiac.gemini": "Gemini",
+    "persona.zodiac.cancer": "Cancer",
+    "persona.zodiac.leo": "Leo",
+    "persona.zodiac.virgo": "Virgo",
+    "persona.zodiac.libra": "Libra",
+    "persona.zodiac.scorpio": "Scorpio",
+    "persona.zodiac.sagittarius": "Sagittarius",
+    "persona.zodiac.capricorn": "Capricorn",
+    "persona.zodiac.aquarius": "Aquarius",
+    "persona.zodiac.pisces": "Pisces",
+    "persona.archetype.nomad": "Nomad",
+    "persona.archetype.architect": "Architect",
+    "persona.archetype.mirror": "Mirror",
+    "persona.archetype.spark": "Spark",
+    "persona.archetype.ghost": "Ghost",
+    "persona.archetype.anchor": "Anchor",
+    "persona.archetype.muse": "Muse",
+    "persona.archetype.trickster": "Trickster",
+    "persona.archetype.hero": "Hero",
+    "persona.archetype.sage": "Sage",
+    "persona.archetype.explorer": "Explorer",
+    "persona.archetype.creator": "Creator",
+    "persona.archetype.caregiver": "Caregiver",
+    "persona.archetype.rebel": "Rebel",
+    "persona.archetype.lover": "Lover",
+    "persona.archetype.jester": "Jester",
 
     # Shop
     "shop.title": "<b>🛒 Shop</b>",
@@ -272,6 +309,10 @@ _RU: Dict[str, str] = {
         "Пожалуйста, отправьте ровно одно изображение (≤ 5 МБ) одним сообщением."
     ),
     "errors.doc_unsupported": "⚠️ Неподдерживаемый файл. Пришлите изображение или JSON-файл базы знаний.",
+    "group.battle.self": "🤔 Нельзя вызвать на баттл самого себя.",
+    "group.battle.opponent_opted_out": "🚫 Этот пользователь отключил участие в баттлах.",
+    "group.battle.you_opted_out": "🚫 Вы отключили участие в баттлах. Напишите в ЛС /battle_on, чтобы включить обратно.",
+    "group.battle.start_failed": "❌ Не удалось запустить баттл (соперник недоступен или внутренняя ошибка).",
 
     # Gender
     "gender.prompt": "<b>Пожалуйста, выберите ваш пол:</b>",
@@ -327,6 +368,36 @@ _RU: Dict[str, str] = {
     "persona.temp.choleric": "Холерик",
     "persona.temp.phlegmatic": "Флегматик",
     "persona.temp.melancholic": "Меланхолик",
+
+    # Persona labels
+    "persona.zodiac.aries": "Овен",
+    "persona.zodiac.taurus": "Телец",
+    "persona.zodiac.gemini": "Близнецы",
+    "persona.zodiac.cancer": "Рак",
+    "persona.zodiac.leo": "Лев",
+    "persona.zodiac.virgo": "Дева",
+    "persona.zodiac.libra": "Весы",
+    "persona.zodiac.scorpio": "Скорпион",
+    "persona.zodiac.sagittarius": "Стрелец",
+    "persona.zodiac.capricorn": "Козерог",
+    "persona.zodiac.aquarius": "Водолей",
+    "persona.zodiac.pisces": "Рыбы",
+    "persona.archetype.nomad": "Кочевник",
+    "persona.archetype.architect": "Архитектор",
+    "persona.archetype.mirror": "Зеркало",
+    "persona.archetype.spark": "Искра",
+    "persona.archetype.ghost": "Призрак",
+    "persona.archetype.anchor": "Якорь",
+    "persona.archetype.muse": "Муза",
+    "persona.archetype.trickster": "Трикстер",
+    "persona.archetype.hero": "Герой",
+    "persona.archetype.sage": "Мудрец",
+    "persona.archetype.explorer": "Исследователь",
+    "persona.archetype.creator": "Творец",
+    "persona.archetype.caregiver": "Опекун",
+    "persona.archetype.rebel": "Бунтарь",
+    "persona.archetype.lover": "Любовник",
+    "persona.archetype.jester": "Шут",
 
     # Shop
     "shop.title": "<b>🛒 Магазин</b>",

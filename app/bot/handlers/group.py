@@ -621,15 +621,30 @@ async def _maybe_handle_battle(message: Message, *, trigger: str, has_battle_cmd
         opponent_id = consts.BOT_ID
 
     if int(opponent_id) == int(challenger_id):
-        await send_message_safe(bot, cid, "🤔 You can't challenge yourself.", reply_to_message_id=message.message_id)
+        await send_message_safe(
+            bot,
+            cid,
+            await tr(cid, "group.battle.self", "🤔 You can't challenge yourself."),
+            reply_to_message_id=message.message_id,
+        )
         return True
 
     if int(opponent_id) != consts.BOT_ID and await redis_client.sismember("battle:opt_out", str(opponent_id)):
-        await send_message_safe(bot, cid, "🚫 That user has opted out of Battles.", reply_to_message_id=message.message_id)
+        await send_message_safe(
+            bot,
+            cid,
+            await tr(cid, "group.battle.opponent_opted_out", "🚫 That user has opted out of Battles."),
+            reply_to_message_id=message.message_id,
+        )
         return True
 
     if await redis_client.sismember("battle:opt_out", str(challenger_id)):
-        await send_message_safe(bot, cid, "🚫 You opted out of Battles. DM /battle_on to opt in.", reply_to_message_id=message.message_id)
+        await send_message_safe(
+            bot,
+            cid,
+            await tr(cid, "group.battle.you_opted_out", "🚫 You opted out of Battles. DM /battle_on to opt in."),
+            reply_to_message_id=message.message_id,
+        )
         return True
 
     dedup_key = f"battle:req:{cid}:{challenger_id}:{opponent_id}"
@@ -644,7 +659,11 @@ async def _maybe_handle_battle(message: Message, *, trigger: str, has_battle_cmd
         await send_message_safe(
             bot,
             cid,
-            "❌ Couldn't start the battle (opponent might be unavailable or an internal error occurred).",
+            await tr(
+                cid,
+                "group.battle.start_failed",
+                "❌ Couldn't start the battle (opponent might be unavailable or an internal error occurred).",
+            ),
             reply_to_message_id=message.message_id,
         )
     return True
