@@ -30,9 +30,20 @@ _redis_by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, "
 _redis_by_thread: threading.local = threading.local()  # safer than id-based keys (no id reuse); cleanup happens in close_redis_pools()
 _redis_lock = threading.Lock()
 _local_spam: Dict[tuple[int, int], tuple[int, float]] = {}
-# Async lock avoids blocking the event loop; cleanup is deque-based with time/size eviction.
-_local_spam_lock = asyncio.Lock()
+_local_spam_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
+_local_spam_locks_guard = threading.Lock()
+_local_spam_guard = threading.Lock()
 _local_spam_order: deque[tuple[float, tuple[int, int]]] = deque()
+
+
+def _get_local_spam_lock_for_current_loop() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    with _local_spam_locks_guard:
+        lock = _local_spam_locks.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            _local_spam_locks[loop] = lock
+        return lock
 
 def _get_default_tz():
     try:
@@ -696,28 +707,29 @@ async def is_spam(chat_id: int, user_id: int) -> bool:
         except Exception:
             local_max_size = 5000
         # Fallback-only counter; consider moving TTL/size limits to settings (e.g. LOCAL_SPAM_MAX_SIZE).
-        async with _local_spam_lock:
-            now = time_module.time()
-            c, ts = _local_spam.get(k, (0, now))
-            if now - ts > window:
-                c, ts = 0, now
-            c += 1
-            _local_spam[k] = (c, ts)
-            _local_spam_order.append((ts, k))
-            while _local_spam_order:
-                oldest_ts, oldest_key = _local_spam_order[0]
-                if now - oldest_ts <= local_ttl:
-                    break
-                _local_spam_order.popleft()
-                current = _local_spam.get(oldest_key)
-                if current is not None and current[1] == oldest_ts:
-                    _local_spam.pop(oldest_key, None)
-            if local_max_size > 0:
-                while len(_local_spam) > local_max_size and _local_spam_order:
-                    oldest_ts, oldest_key = _local_spam_order.popleft()
+        async with _get_local_spam_lock_for_current_loop():
+            with _local_spam_guard:
+                now = time_module.time()
+                c, ts = _local_spam.get(k, (0, now))
+                if now - ts > window:
+                    c, ts = 0, now
+                c += 1
+                _local_spam[k] = (c, ts)
+                _local_spam_order.append((ts, k))
+                while _local_spam_order:
+                    oldest_ts, oldest_key = _local_spam_order[0]
+                    if now - oldest_ts <= local_ttl:
+                        break
+                    _local_spam_order.popleft()
                     current = _local_spam.get(oldest_key)
                     if current is not None and current[1] == oldest_ts:
                         _local_spam.pop(oldest_key, None)
+                if local_max_size > 0:
+                    while len(_local_spam) > local_max_size and _local_spam_order:
+                        oldest_ts, oldest_key = _local_spam_order.popleft()
+                        current = _local_spam.get(oldest_key)
+                        if current is not None and current[1] == oldest_ts:
+                            _local_spam.pop(oldest_key, None)
         return c > limit
 
 async def inc_msg_count(chat_id: int) -> None:
