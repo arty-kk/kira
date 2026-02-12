@@ -14,7 +14,7 @@ import unicodedata
 import asyncio.subprocess as asp
 
 import time as time_module
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
 from aiogram.enums import ChatAction
 from aiogram.exceptions import (
@@ -25,7 +25,7 @@ from aiogram.types import FSInputFile
 
 from app.config import settings
 from app.clients.telegram_client import get_bot
-from app.clients.elevenlabs_client import ElevenLabsClient
+from app.clients.elevenlabs_client import choose_elevenlabs_voice, shutdown_elevenlabs_client
 from app.bot.components.constants import redis_client
 from app.emo_engine import get_persona
 
@@ -76,7 +76,6 @@ _CLAUSE_BREAK_IT = re.compile(r"\b(però|ma|sebbene|perché|quando|a proposito)\
 _CLAUSE_BREAK_TR = re.compile(r"\b(ancak|ama|fakat|çünkü|bu arada|ne zaman)\b", re.IGNORECASE)
 _CLAUSE_BREAK_PL = re.compile(r"\b(jednak|ale|choć|ponieważ|kiedy|swoją drogą)\b", re.IGNORECASE)
 
-_EL_CLIENT: ElevenLabsClient | None = None
 _EMOJI_OR_SYMBOLS_ONLY = re.compile(r'^[\W_]+$', flags=re.UNICODE)
 
 _LATIN_HINTS: list[tuple[str, re.Pattern]] = [
@@ -184,22 +183,11 @@ def l10n(lang: str) -> dict[str,str]:
     lang_code = (lang or "en").split("-")[0].lower()
     return _I18N_TOKENS.get(lang_code, _I18N_TOKENS["en"])
 
-async def _get_el_client() -> ElevenLabsClient:
-    global _EL_CLIENT
-    if _EL_CLIENT is None:
-        _EL_CLIENT = ElevenLabsClient.from_settings()
-    return _EL_CLIENT
-
 async def shutdown_tts() -> None:
-
-    global _EL_CLIENT
     try:
-        if _EL_CLIENT is not None:
-            await _EL_CLIENT.close()
+        await shutdown_elevenlabs_client()
     except Exception:
         logger.debug("shutdown_tts: ignore close error", exc_info=True)
-    finally:
-        _EL_CLIENT = None
 
 def atexit_shutdown():
     try:
@@ -784,34 +772,8 @@ def looks_like_only_symbols(text: str) -> bool:
         return False
     return bool(_EMOJI_OR_SYMBOLS_ONLY.match(t))
 
-async def choose_voice(user_id: int, lang: str, override_voice_id: Optional[str]) -> Tuple[ElevenLabsClient, Optional[str]]:
-    client = await _get_el_client()
-    voice_id = await client.pick_voice(user_id=user_id, lang=lang, override_voice_id=override_voice_id)
-    if not voice_id:
-        fallback_map = {
-            "uk": "ru",
-            "be": "ru",
-            "zh-cn": "zh",
-            "zh-hans": "zh",
-            "zh-hant": "zh",
-        }
-        fb_lang = fallback_map.get(lang.lower())
-        if fb_lang and fb_lang != lang.lower():
-            try:
-                voice_id = await client.pick_voice(user_id=user_id, lang=fb_lang, override_voice_id=override_voice_id)
-            except Exception:
-                voice_id = None
-        if not voice_id:
-            try:
-                voice_id = await client.pick_voice(user_id=user_id, lang="multi", override_voice_id=override_voice_id)
-            except Exception:
-                voice_id = None
-        if not voice_id and lang.lower() != "en":
-            try:
-                voice_id = await client.pick_voice(user_id=user_id, lang="en", override_voice_id=override_voice_id)
-            except Exception:
-                voice_id = None
-    return client, voice_id
+async def choose_voice(user_id: int, lang: str, override_voice_id: Optional[str]):
+    return await choose_elevenlabs_voice(user_id=user_id, lang=lang, override_voice_id=override_voice_id)
 
 async def generate_voice_for_reply(
     *,

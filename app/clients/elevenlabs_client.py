@@ -16,17 +16,60 @@ logger = logging.getLogger(__name__)
 
 _EL_CLIENT: ElevenLabsClient | None = None
 _ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
+_VOICE_FALLBACK_MAP: Dict[str, str] = {
+    "uk": "ru",
+    "be": "ru",
+    "zh-cn": "zh",
+    "zh-hans": "zh",
+    "zh-hant": "zh",
+}
 
-async def _get_el_client() -> ElevenLabsClient:
+async def get_elevenlabs_client() -> ElevenLabsClient:
     global _EL_CLIENT
     if _EL_CLIENT is None:
         _EL_CLIENT = ElevenLabsClient.from_settings()
     return _EL_CLIENT
 
-async def _choose_voice(user_id: int, lang: str, override_voice_id: Optional[str]):
-    client = await _get_el_client()
+async def choose_elevenlabs_voice(
+    user_id: int,
+    lang: str,
+    override_voice_id: Optional[str],
+) -> tuple[ElevenLabsClient, Optional[str]]:
+    client = await get_elevenlabs_client()
     voice_id = await client.pick_voice(user_id=user_id, lang=lang, override_voice_id=override_voice_id)
+
+    if voice_id:
+        return client, voice_id
+
+    lang_l = (lang or "").lower()
+    fb_lang = _VOICE_FALLBACK_MAP.get(lang_l)
+    if fb_lang and fb_lang != lang_l:
+        try:
+            voice_id = await client.pick_voice(user_id=user_id, lang=fb_lang, override_voice_id=override_voice_id)
+        except Exception:
+            voice_id = None
+
+    if not voice_id:
+        try:
+            voice_id = await client.pick_voice(user_id=user_id, lang="multi", override_voice_id=override_voice_id)
+        except Exception:
+            voice_id = None
+
+    if not voice_id and lang_l != "en":
+        try:
+            voice_id = await client.pick_voice(user_id=user_id, lang="en", override_voice_id=override_voice_id)
+        except Exception:
+            voice_id = None
+
     return client, voice_id
+
+async def shutdown_elevenlabs_client() -> None:
+    global _EL_CLIENT
+    try:
+        if _EL_CLIENT is not None:
+            await _EL_CLIENT.close()
+    finally:
+        _EL_CLIENT = None
 
 def _load_voice_map() -> Dict[str, str]:
 
