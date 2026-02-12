@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Queue payload schemas used to validate job payloads before enqueueing."""
 
-from typing import Any, Optional
+from typing import Any, Optional, Annotated
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -15,6 +15,7 @@ class BotQueueJob(BaseModel):
     reply_to: Optional[int] = None
     tg_reply_to: Optional[int] = None
     reservation_id: Optional[int] = None
+    reservation_ids: Optional[list[Annotated[int, Field(strict=True, gt=0)]]] = None
     is_group: bool = False
     is_channel_post: bool = False
     channel_title: Optional[str] = None
@@ -30,6 +31,7 @@ class BotQueueJob(BaseModel):
     entities: list[Any] = Field(default_factory=list)
 
     model_config = {"extra": "allow"}
+
 
 
 class ApiQueueJob(BaseModel):

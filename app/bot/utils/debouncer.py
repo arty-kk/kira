@@ -50,11 +50,36 @@ def compute_typing_delay(text: str) -> float:
 
 
 async def _enqueue(payload: dict):
+    reservation_ids: list[int] = []
+    seen_reservation_ids: set[int] = set()
+
+    raw_reservation_ids = payload.get("reservation_ids")
+    if isinstance(raw_reservation_ids, list):
+        for raw_reservation_id in raw_reservation_ids:
+            try:
+                reservation_id_item = int(raw_reservation_id)
+            except Exception:
+                continue
+            if reservation_id_item <= 0 or reservation_id_item in seen_reservation_ids:
+                continue
+            seen_reservation_ids.add(reservation_id_item)
+            reservation_ids.append(reservation_id_item)
+
     reservation_id = 0
     try:
         reservation_id = int(payload.get("reservation_id") or 0)
     except Exception:
         reservation_id = 0
+    if reservation_id > 0 and reservation_id not in seen_reservation_ids:
+        reservation_ids.append(reservation_id)
+
+    async def _refund_reservations() -> None:
+        for reservation_id_item in reservation_ids:
+            try:
+                await refund_reservation_by_id(reservation_id_item)
+            except Exception:
+                logger.exception("debouncer: failed to refund reservation_id=%s", reservation_id_item)
+
     try:
         chat_id = int(payload.get("chat_id") or 0)
     except Exception:
@@ -79,15 +104,13 @@ async def _enqueue(payload: dict):
                 "msg_id": msg_id,
             },
         )
-        if reservation_id:
-            await refund_reservation_by_id(reservation_id)
+        await _refund_reservations()
         return
     try:
         data = json.dumps(payload, ensure_ascii=False)
     except Exception:
         logger.exception("debouncer: failed to encode queue payload")
-        if reservation_id:
-            await refund_reservation_by_id(reservation_id)
+        await _refund_reservations()
         return
     payload_bytes = data.encode("utf-8")
     if BOT_QUEUE_MAX_PAYLOAD_BYTES > 0 and len(payload_bytes) > BOT_QUEUE_MAX_PAYLOAD_BYTES:
@@ -95,15 +118,13 @@ async def _enqueue(payload: dict):
             "debouncer: payload too large (%d bytes), dropping",
             len(payload_bytes),
         )
-        if reservation_id:
-            await refund_reservation_by_id(reservation_id)
+        await _refund_reservations()
         return
     try:
         await consts.redis_queue.lpush(settings.QUEUE_KEY, data)
     except Exception:
         logger.exception("debouncer: enqueue failed")
-        if reservation_id:
-            await refund_reservation_by_id(reservation_id)
+        await _refund_reservations()
 
 async def schedule_response(key: str):
     global total_buffered
@@ -233,6 +254,17 @@ async def _merge_and_send(msgs: list[dict]):
             payload = batch[-1].copy()
             payload["text"] = "\n".join((b.get("text") or "") for b in batch).strip()
             payload["merged_msg_ids"] = [b.get("msg_id") for b in batch if b.get("msg_id") is not None]
+            reservation_ids: list[int] = []
+            seen_reservation_ids: set[int] = set()
+            for b in batch:
+                try:
+                    reservation_id = int(b.get("reservation_id") or 0)
+                except Exception:
+                    reservation_id = 0
+                if reservation_id > 0 and reservation_id not in seen_reservation_ids:
+                    seen_reservation_ids.add(reservation_id)
+                    reservation_ids.append(reservation_id)
+            payload["reservation_ids"] = reservation_ids
             if any(bool(b.get("allow_web")) for b in batch):
                 payload["allow_web"] = True
             picked_reply_to = _pick_first_nonzero(batch, "reply_to")

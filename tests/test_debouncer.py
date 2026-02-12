@@ -58,6 +58,29 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured[0]["text"], "hi\nthere")
         self.assertEqual(captured[0]["merged_msg_ids"], [1, 2])
 
+    async def test_merge_mode_collects_unique_reservation_ids(self) -> None:
+        captured = []
+
+        async def _capture(payload):
+            captured.append(payload)
+
+        debouncer.DEBOUNCE_MODE = "merge"
+        debouncer._enqueue = _capture
+
+        key = "1:1"
+        debouncer.message_buffers[key] = [
+            {"chat_id": 1, "user_id": 1, "text": "hi", "msg_id": 1, "reservation_id": 10},
+            {"chat_id": 1, "user_id": 1, "text": "there", "msg_id": 2, "reservation_id": 20},
+            {"chat_id": 1, "user_id": 1, "text": "again", "msg_id": 3, "reservation_id": 10},
+        ]
+        debouncer.total_buffered = 3
+
+        await debouncer.schedule_response(key)
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["reservation_ids"], [10, 20])
+        self.assertEqual(captured[0]["reservation_id"], 10)
+
     async def test_enqueue_rejects_invalid_payload_before_redis_and_refunds(self) -> None:
         lpush_mock = AsyncMock()
         refund_mock = AsyncMock()
@@ -72,7 +95,8 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
                     "user_id": 1,
                     "text": "hi",
                     "msg_id": 0,
-                    "reservation_id": 11,
+                    "reservation_ids": [11, 12, 11],
+                    "reservation_id": 12,
                     "is_group": True,
                     "is_channel_post": False,
                     "entities": [],
@@ -80,7 +104,7 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
             )
 
         lpush_mock.assert_not_awaited()
-        refund_mock.assert_awaited_once_with(11)
+        self.assertEqual([call.args[0] for call in refund_mock.await_args_list], [11, 12])
 
 
 if __name__ == "__main__":
