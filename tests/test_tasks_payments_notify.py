@@ -97,6 +97,9 @@ def _load_payments_module():
             def __eq__(self, _other):
                 return self
 
+            def __lt__(self, _other):
+                return self
+
             def is_(self, _other):
                 return self
 
@@ -106,6 +109,8 @@ def _load_payments_module():
         id = _Column()
         notified_at = _Column()
         lease_token = _Column()
+        leased_at = _Column()
+        updated_at = _Column()
         telegram_payment_charge_id = "telegram_payment_charge_id"
 
     target_modules["app.core.models"].GiftPurchase = _Model
@@ -192,9 +197,18 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
 
         send_mock.assert_awaited_once()
         self.assertEqual(len(update_calls), 3)
-        self.assertEqual(update_calls[0].values_kwargs, {"notified_at": "now", "lease_token": "notify-token"})
-        self.assertEqual(update_calls[1].values_kwargs, {"lease_token": None})
-        self.assertEqual(update_calls[2].values_kwargs, {"notified_at": "now", "lease_token": "notify-token"})
+        self.assertEqual(
+            update_calls[0].values_kwargs,
+            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+        )
+        self.assertEqual(
+            update_calls[1].values_kwargs,
+            {"notified_at": "now", "lease_token": None, "leased_at": None, "updated_at": "now"},
+        )
+        self.assertEqual(
+            update_calls[2].values_kwargs,
+            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+        )
 
     async def test_notify_rolls_back_claim_when_send_fails(self):
         payments = _load_payments_module()
@@ -234,8 +248,67 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(outbox.notified_at)
         self.assertEqual(db.execute_calls, 2)
-        self.assertEqual(update_calls[0].values_kwargs, {"notified_at": "now", "lease_token": "notify-token"})
-        self.assertEqual(update_calls[1].values_kwargs, {"notified_at": None, "lease_token": None})
+        self.assertEqual(
+            update_calls[0].values_kwargs,
+            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+        )
+        self.assertEqual(
+            update_calls[1].values_kwargs,
+            {"lease_token": None, "leased_at": None, "updated_at": "now"},
+        )
+
+    async def test_notify_releases_claim_when_send_raises_before_finalize(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            id=22,
+            user_id=77,
+            kind="buy",
+            requests_amount=2,
+            gift_title=None,
+            gift_emoji=None,
+            gift_code=None,
+            stars_amount=10,
+            telegram_payment_charge_id="charge_error",
+            notified_at=None,
+        )
+        db = _FakeDB([1, 1, 1, 1])
+        update_calls = []
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        def _fake_update(*_args, **_kwargs):
+            stmt = _UpdateChain()
+            update_calls.append(stmt)
+            return stmt
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(payments, "send_message_safe", AsyncMock(side_effect=[RuntimeError("boom"), object()])),
+            patch.object(payments, "t", AsyncMock(return_value="sent")),
+            patch.object(payments, "update", _fake_update),
+            patch.object(payments, "func", _Func()),
+            patch.object(
+                payments.uuid,
+                "uuid4",
+                side_effect=[SimpleNamespace(hex="notify-token-1"), SimpleNamespace(hex="notify-token-2")],
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                await payments._notify_payment_result(outbox, remaining=1, duplicate=False)
+            self.assertIsNone(outbox.notified_at)
+            await payments._notify_payment_result(outbox, remaining=1, duplicate=False)
+
+        self.assertEqual(len(update_calls), 4)
+        self.assertEqual(
+            update_calls[1].values_kwargs,
+            {"lease_token": None, "leased_at": None, "updated_at": "now"},
+        )
+        self.assertEqual(
+            update_calls[3].values_kwargs,
+            {"notified_at": "now", "lease_token": None, "leased_at": None, "updated_at": "now"},
+        )
 
     async def test_gift_side_effects_run_after_successful_send_only(self):
         payments = _load_payments_module()
@@ -282,7 +355,10 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         send_mock.assert_awaited_once()
         push_mock.assert_awaited_once()
         send_task_mock.assert_called_once()
-        self.assertEqual(update_calls[1].values_kwargs, {"lease_token": None})
+        self.assertEqual(
+            update_calls[1].values_kwargs,
+            {"notified_at": "now", "lease_token": None, "leased_at": None, "updated_at": "now"},
+        )
 
 
 class _FakeRequeueNotifyResult:

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import bindparam, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.bot.utils.telegram_safe import send_message_safe
@@ -131,8 +131,18 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
     async with session_scope(stmt_timeout_ms=3000) as db:
         claim_stmt = (
             update(PaymentOutbox)
-            .where(PaymentOutbox.id == outbox.id, PaymentOutbox.notified_at.is_(None))
-            .values(notified_at=func.now(), lease_token=notify_token)
+            .where(
+                PaymentOutbox.id == outbox.id,
+                PaymentOutbox.notified_at.is_(None),
+                text("(lease_token IS NULL OR leased_at < now() - make_interval(secs => :lease_ttl_seconds))").bindparams(
+                    bindparam("lease_ttl_seconds", OUTBOX_LEASE_TTL_SECONDS)
+                ),
+            )
+            .values(
+                lease_token=notify_token,
+                leased_at=func.now(),
+                updated_at=func.now(),
+            )
             .returning(PaymentOutbox.id)
         )
         claimed_id = (await db.execute(claim_stmt)).scalar_one_or_none()
@@ -149,36 +159,43 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
 
     if outbox.kind == "buy":
         if duplicate:
-            text = (
+            message_text = (
                 await _tr("payments.success_duplicate", "", remaining=remaining)
                 or await _tr("payments.success", "", req=outbox.requests_amount, remaining=remaining)
                 or f"✅ Payment already processed. Remaining: {remaining}"
             )
         else:
-            text = (
+            message_text = (
                 await _tr("payments.success", "", req=outbox.requests_amount, remaining=remaining)
                 or f"✅ Success! +{outbox.requests_amount} requests. Remaining: {remaining}"
             )
     else:
         if duplicate:
-            text = await _tr("payments.success_duplicate_short", "✅ Payment already processed.")
+            message_text = await _tr("payments.success_duplicate_short", "✅ Payment already processed.")
         else:
-            text = await _tr("payments.gift_delivered", "✅ Gift delivered.")
+            message_text = await _tr("payments.gift_delivered", "✅ Gift delivered.")
 
-    sent_message = await send_message_safe(bot, int(outbox.user_id), text, parse_mode="HTML")
-
-    if sent_message is None:
+    async def _release_notify_lease() -> None:
         async with session_scope(stmt_timeout_ms=3000) as db:
-            rollback_stmt = (
+            release_stmt = (
                 update(PaymentOutbox)
                 .where(
                     PaymentOutbox.id == outbox.id,
-                    PaymentOutbox.notified_at.is_not(None),
+                    PaymentOutbox.notified_at.is_(None),
                     PaymentOutbox.lease_token == notify_token,
                 )
-                .values(notified_at=None, lease_token=None)
+                .values(lease_token=None, leased_at=None, updated_at=func.now())
             )
-            await db.execute(rollback_stmt)
+            await db.execute(release_stmt)
+
+    try:
+        sent_message = await send_message_safe(bot, int(outbox.user_id), message_text, parse_mode="HTML")
+    except Exception:
+        await _release_notify_lease()
+        raise
+
+    if sent_message is None:
+        await _release_notify_lease()
 
         logger.warning(
             "payment_outbox: notify skipped charge_id=%s user_id=%s",
@@ -192,10 +209,10 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             update(PaymentOutbox)
             .where(
                 PaymentOutbox.id == outbox.id,
-                PaymentOutbox.notified_at.is_not(None),
+                PaymentOutbox.notified_at.is_(None),
                 PaymentOutbox.lease_token == notify_token,
             )
-            .values(lease_token=None)
+            .values(notified_at=func.now(), lease_token=None, leased_at=None, updated_at=func.now())
             .returning(PaymentOutbox.id)
         )
         finalized_id = (await db.execute(finalize_stmt)).scalar_one_or_none()
