@@ -25,6 +25,7 @@ TWEET_TYPES = [
     "a reflective insight",
     "a motivational line",
 ]
+SAFE_DEFAULT_TWEET = "Stay curious, stay resilient — crypto never sleeps. #crypto"
 MAX_HISTORY = 12
 
 MAX_TEMPERATURE = 0.8
@@ -210,6 +211,15 @@ async def generate_and_post_tweet() -> None:
     messages = [system_msg] + history + [{"role": "user", "content": user_prompt}]
 
     tweet = None
+    raw_fallbacks = getattr(settings, "TWITTER_FALLBACK_TWEETS", None)
+    fallbacks: list[str] = []
+    if isinstance(raw_fallbacks, (list, tuple)):
+        for fallback in raw_fallbacks:
+            if isinstance(fallback, str):
+                normalized_fallback = fallback.strip()
+                if normalized_fallback:
+                    fallbacks.append(normalized_fallback)
+
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
@@ -229,7 +239,14 @@ async def generate_and_post_tweet() -> None:
         logger.exception("twitter_manager: failed to generate tweet")
 
     if not tweet:
-        tweet = random.choice(getattr(settings, 'TWITTER_FALLBACK_TWEETS', []))
+        if fallbacks:
+            tweet = random.choice(fallbacks)
+        else:
+            tweet = SAFE_DEFAULT_TWEET
+
+    tweet = (tweet or "").strip()
+    if not tweet:
+        tweet = SAFE_DEFAULT_TWEET
 
     if len(tweet) > 250:
         tweet = tweet[:247] + "..."
