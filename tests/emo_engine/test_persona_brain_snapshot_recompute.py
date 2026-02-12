@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import os
 import unittest
 
@@ -23,6 +24,7 @@ _seed_env()
 
 from app.emo_engine.persona.brain import PersonaBrain
 from app.emo_engine.persona.constants.emotions import (
+    ALL_METRICS,
     FAT_CLAMP,
     SECONDARY_EMOTIONS,
     TERTIARY_EMOTIONS,
@@ -106,6 +108,29 @@ class PersonaUpdateSelfPatternsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(persona._brain_top_tones), 3)
         self.assertEqual(persona._brain_top_tones[0][0], Tone.Optimism)
         self.assertGreater(persona._brain_top_tones[0][1], 0.0)
+
+
+class PersonaBrainLearnedMetricsIsolationTests(unittest.TestCase):
+    def test_learned_metric_is_local_to_persona_and_recomputed(self) -> None:
+        persona_a = Persona(chat_id=1001)
+        persona_a.brain.config.activation_threshold = 0.1
+        persona_a.brain.config.learn_threshold = 1
+
+        persona_a.brain.update_state({"joy": 0.9, "trust": 0.8}, mode="set")
+
+        self.assertTrue(persona_a.brain.learned_metrics)
+        learned_name, parents = next(iter(persona_a.brain.learned_metrics.items()))
+        self.assertEqual(parents, ("joy", "trust"))
+
+        expected = FAT_CLAMP(0.5 * (persona_a.brain.state["joy"] + persona_a.brain.state["trust"]))
+        self.assertAlmostEqual(persona_a.brain.state[learned_name], expected)
+
+        self.assertNotIn(learned_name, ALL_METRICS)
+        self.assertNotIn(learned_name, SECONDARY_EMOTIONS.get("derived", {}))
+
+        persona_b = Persona(chat_id=1002)
+        self.assertNotIn(learned_name, persona_b.brain.state)
+        self.assertNotIn(learned_name, persona_b.state)
 
 
 if __name__ == "__main__":
