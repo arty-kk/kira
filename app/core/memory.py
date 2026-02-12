@@ -16,6 +16,7 @@ import weakref
 
 from typing import Any, Dict, List, Optional, Union
 from redis.asyncio import Redis, from_url
+from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -88,6 +89,18 @@ def _create_client(name: str) -> Redis:
 
 WARN_MS = int(getattr(settings, "REDIS_SLOW_WARN_MS", 100))
 
+READONLY_OR_IDEMPOTENT_COMMANDS = {
+    "get", "mget", "hget", "hgetall", "lrange", "llen", "ttl", "exists", "zrange", "smembers", "scan", "scan_iter",
+}
+
+NON_IDEMPOTENT_COMMANDS = {
+    "incr", "incrby", "hincrby", "rpush", "lpop", "sadd", "zadd", "expire", "set", "eval", "evalsha",
+}
+
+
+def _is_transport_or_timeout_error(exc: Exception) -> bool:
+    return isinstance(exc, (asyncio.TimeoutError, TimeoutError, OSError, RedisTimeoutError, RedisConnectionError))
+
 class SafeRedis:
     def __init__(self, client: Redis, attempts: int = 3) -> None:
         self._client = client
@@ -98,23 +111,35 @@ class SafeRedis:
         if not asyncio.iscoroutinefunction(orig):
             return orig
 
+        cmd_name = (name or "").lower()
+        is_retry_allowed = cmd_name in READONLY_OR_IDEMPOTENT_COMMANDS
+        is_known_non_idempotent = cmd_name in NON_IDEMPOTENT_COMMANDS
+        max_attempts = self._attempts if is_retry_allowed else 1
+
         async def _wrapper(*args, **kwargs):
-            for n in range(self._attempts):
+            for n in range(max_attempts):
                 start = time.perf_counter()
                 try:
                     return await orig(*args, **kwargs)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    if n == self._attempts - 1:
+                    if (is_known_non_idempotent or not is_retry_allowed) and _is_transport_or_timeout_error(exc):
+                        logger.warning(
+                            "Redis cmd %s failed: retry skipped due to non-idempotent semantics (%s)",
+                            name,
+                            exc,
+                        )
+                        raise
+                    if n == max_attempts - 1:
                         logger.exception(
                             "Redis cmd %s failed after %d attempts: %s",
-                            name, self._attempts, exc,
+                            name, max_attempts, exc,
                         )
                         raise
                     logger.warning(
                         "Redis cmd %s failed (try %d/%d): %s",
-                        name, n + 1, self._attempts, exc,
+                        name, n + 1, max_attempts, exc,
                     )
                     await asyncio.sleep(0.5 * (2 ** n))
                 finally:
@@ -148,36 +173,20 @@ class SafeRedis:
 
         class SafePipeline:
 
-            def __init__(self, pipe, attempts: int) -> None:
+            def __init__(self, pipe) -> None:
                 self._pipe = pipe
-                self._attempts = attempts
 
             def __getattr__(self, item):
                 return getattr(self._pipe, item)
 
             async def execute(self):
-                for n in range(self._attempts):
-                    start = time.perf_counter()
-                    try:
-                        return await self._pipe.execute()
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        if n == self._attempts - 1:
-                            logger.exception(
-                                "Redis pipeline failed after %d attempts: %s",
-                                self._attempts, exc,
-                            )
-                            raise
-                        logger.warning(
-                            "Redis pipeline failed (try %d/%d): %s",
-                            n + 1, self._attempts, exc,
-                        )
-                        await asyncio.sleep(0.5 * (2 ** n))
-                    finally:
-                        dt_ms = (time.perf_counter() - start) * 1000
-                        if dt_ms > WARN_MS:
-                            logger.warning("Redis slow: pipeline %.1f ms", dt_ms)
+                start = time.perf_counter()
+                try:
+                    return await self._pipe.execute()
+                finally:
+                    dt_ms = (time.perf_counter() - start) * 1000
+                    if dt_ms > WARN_MS:
+                        logger.warning("Redis slow: pipeline %.1f ms", dt_ms)
 
             async def __aenter__(self):
                 await self._pipe.__aenter__()
@@ -186,7 +195,7 @@ class SafeRedis:
             async def __aexit__(self, exc_type, exc, tb):
                 return await self._pipe.__aexit__(exc_type, exc, tb)
 
-        return SafePipeline(raw_pipe, self._attempts)
+        return SafePipeline(raw_pipe)
 
 def get_redis(name: str = "default") -> SafeRedis:
     try:
@@ -692,11 +701,21 @@ async def is_spam(chat_id: int, user_id: int) -> bool:
     redis = get_redis()
 
     try:
-        async with redis.pipeline(transaction=False) as p:
-            p.hincrby(key, str(user_id), 1)
-            p.expire(key, max(1, window + 2))
-            res_incr, _ = await p.execute()
-        count = int(res_incr or 0)
+        res = await redis.eval(
+            """
+local key = KEYS[1]
+local field = ARGV[1]
+local ttl = tonumber(ARGV[2])
+local count = redis.call('HINCRBY', key, field, 1)
+redis.call('EXPIRE', key, ttl)
+return count
+""",
+            1,
+            key,
+            str(user_id),
+            max(1, window + 2),
+        )
+        count = int(res or 0)
         return count > limit
     except Exception:
         logger.exception("is_spam error for chat %s (fallback to local counter)", chat_id)
