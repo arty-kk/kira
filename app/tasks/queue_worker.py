@@ -1572,11 +1572,22 @@ async def _sweep_chatbusy(redis: Redis) -> None:
             await redis.delete(key)
             continue
 
-        exists = False
-        async for _ in redis.scan_iter(match=f"q:job:{chat_id}:*", count=1):
-            exists = True
-            break
-        if not exists:
+        has_inflight = False
+        async for job_key in redis.scan_iter(match=f"q:job:{chat_id}:*", count=100):
+            try:
+                val = await redis.get(job_key)
+            except Exception:
+                val = None
+
+            if isinstance(val, bytes):
+                with suppress(Exception):
+                    val = val.decode("utf-8", "ignore")
+
+            if isinstance(val, str) and val.startswith("inflight:"):
+                has_inflight = True
+                break
+
+        if not has_inflight:
             await redis.delete(key)
 
 
