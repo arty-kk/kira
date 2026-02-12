@@ -178,6 +178,35 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], "busy:A")
         self.assertEqual(args[1], 5000)
 
+    def test_is_bullet_list_text_detects_only_bullet_lines(self) -> None:
+        self.assertTrue(queue_worker._is_bullet_list_text("- one.\n- two;\n- three."))
+        self.assertFalse(queue_worker._is_bullet_list_text("- one.\nplain line"))
+
+    async def test_send_chatty_reply_keeps_bullet_list_in_single_message(self) -> None:
+        sent = []
+
+        async def _fake_send_reply(**kwargs):
+            sent.append(kwargs)
+
+        with (
+            patch.object(queue_worker, "_send_reply", _fake_send_reply),
+            patch.object(queue_worker, "compute_typing_delay", lambda *_args, **_kwargs: 0.0),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=42,
+                text="- Первый пункт.\n- Второй пункт;\n- Третий пункт.",
+                reply_to=100,
+                msg_id=200,
+                merged_ids=[200],
+                user_id=1,
+                enable_typing=False,
+            )
+
+        self.assertEqual(len(sent), 1)
+        self.assertIn("- Первый пункт.", sent[0]["text"])
+        self.assertIn("- Второй пункт;", sent[0]["text"])
+        self.assertIn("- Третий пункт.", sent[0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()
