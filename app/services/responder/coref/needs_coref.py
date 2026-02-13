@@ -6,28 +6,12 @@ from typing import Any, Dict, List, Optional
 
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.config import settings
+from app.prompts_base import COREF_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 
-COREF_SYSTEM = """You are a multilingual classifier that decides whether a user message contains references that may require coreference or deixis resolution AGAINST PRIOR CHAT HISTORY.
-
-Return NO if:
-- the text contains no alphabetic characters, OR
-- the text contains only first- or second-person forms (including possessives), and no third-person / demonstrative / deictic references.
-
-Return YES if the text contains any:
-(A) third-person personal pronouns (any language),
-(B) demonstrative pronouns used pronominally / stand-alone (e.g. EN this/that/these/those; RU это/то),
-(C) deictic adverbs that likely refer to prior discourse context (e.g. EN here/there/now/then; RU здесь/тут/там/сюда/туда/сейчас/теперь/тогда).
-
-Return NO when:
-- demonstratives are used as determiners before a noun (e.g. "that book", RU "эта/этот/эти + NOUN"),
-- "that"/equivalent is used as a complementizer/conjunction introducing a clause (EN "I think that ...", RU "что" as conjunction),
-- for EN existential constructions: "there is/are/was/were ..." or "there's".
-
-Output JSON ONLY: {"answer":"YES"|"NO"} (uppercase). No extra text.
-"""
+COREF_SYSTEM = COREF_SYSTEM_PROMPT
 
 def _fast_no_coref(text: str) -> bool:
     """

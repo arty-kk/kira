@@ -30,6 +30,26 @@ from app.services.responder.prompt_builder import build_system_prompt
 from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message, get_redis
 from app.config import settings
+from app.prompts_base import (
+    TG_POST_BONNIE_STYLE_TEMPLATE,
+    TG_POST_EXTRACT_SYSTEM_SUFFIX,
+    TG_POST_JUDGE_SYSTEM_PROMPT,
+    TG_POST_JUDGE_USER_TEMPLATE,
+    TG_POST_KEYWORDS_PROMPT,
+    TG_POST_NEWS_DIGEST_USER_PROMPT_TEMPLATE,
+    TG_POST_POLISH_SYSTEM_PROMPT,
+    TG_POST_POLISH_USER_TEMPLATE,
+    TG_POST_DRAFT_USER_PROMPT_TEMPLATE,
+    TG_POST_EXTRACT_SYSTEM_PROMPT,
+    TG_POST_IMAGE_SYSTEM_PROMPT,
+    TG_POST_REMOVE_CTA_USER_TEMPLATE,
+    TG_POST_REWRITE_USER_PROMPT_TEMPLATE,
+    TG_POST_REMOVE_CTA_SYSTEM_PROMPT,
+    TG_POST_REWRITE_SYSTEM_PROMPT,
+    TG_POST_STORY_BLOCK_FALLBACK,
+    TG_POST_SYSTEM_FALLBACK,
+    TG_POST_TOPICS_SYSTEM_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -483,16 +503,11 @@ async def _rephrase_opening_once(
         return None
 
     avoid_line = f'Не начинай с: «{avoid_prefix}». ' if avoid_prefix else ""
-    user_prompt = (
-        "Перепиши пост так, чтобы он начинался по-другому (другой первый заход/первая фраза), "
-        "но смысл и факты сохрани. "
-        f"{avoid_line}"
-        "Никаких списков, нумерации, эмодзи, хэштегов, призывов к действиям. "
-        f"Длина до {char_limit} символов.\n\n"
-        "Факты можно брать только отсюда:\n"
-        f"{story_block}\n\n"
-        "Текущий текст:\n"
-        f"{draft}"
+    user_prompt = TG_POST_REWRITE_USER_PROMPT_TEMPLATE.format(
+        avoid_line=avoid_line,
+        char_limit=char_limit,
+        story_block=story_block,
+        draft=draft,
     )
     try:
         resp = await asyncio.wait_for(
@@ -501,7 +516,7 @@ async def _rephrase_opening_once(
                 model=model,
                 input=_to_responses_input(
                     [
-                        {"role": "system", "content": "Ты аккуратно редактируешь текст по-русски, соблюдая требования к стилю."},
+                        {"role": "system", "content": TG_POST_REWRITE_SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ]
                 ),
@@ -997,32 +1012,13 @@ async def _fetch_ai_news_digest(local_now: datetime) -> list[NewsItem]:
     lookback_h = int(getattr(settings, "AI_NEWS_LOOKBACK_HOURS", DEFAULT_NEWS_LOOKBACK_HOURS) or DEFAULT_NEWS_LOOKBACK_HOURS)
     max_items = int(getattr(settings, "AI_NEWS_MAX_ITEMS", DEFAULT_NEWS_MAX_ITEMS) or DEFAULT_NEWS_MAX_ITEMS)
 
-    user_prompt = (
-        "Собери компактный дайджест событий по индустрии ИИ за последние "
-        f"{lookback_h} часов относительно времени: {local_now.isoformat()}.\n"
-        "В тексте используй индустриальные термины, названия компаний, технологий в международном формате (AI, Nvidia, RAG и т.д.).\n\n"
-        "Требования:\n"
-        f"- верни JSON-массив из 0–{max_items} объектов (не заполняй ради количества);\n"
-        "- каждый объект: {\n"
-        '  "id": "n1",\n'
-        '  "type": "PRODUCT|RESEARCH|BUSINESS|POLICY|INCIDENT|TOOL",\n'
-        '  "title": "короткий заголовок по-русски",\n'
-        '  "what": "что произошло (1–2 предложения, без воды)",\n'
-        '  "why": "почему важно для практики/рынка (1 предложение)",\n'
-        '  "source": "название источника (издание/блог/регулятор)",\n'
-        '  "url": "https://...",\n'
-        '  "published_at": "ISO-8601 UTC",\n'
-        '  "confidence": "high|medium|low"\n'
-        "}\n"
-        "- если точная дата/время неочевидны — ставь confidence=low и обозначь неопределённость в what;\n"
-        "- отсекай явный маркетинг, реферальные ссылки, курсы и инвестиционный контент;\n"
-        "- не выдумывай цифры, цитаты и «слухи».\n"
+    user_prompt = TG_POST_NEWS_DIGEST_USER_PROMPT_TEMPLATE.format(
+        lookback_h=lookback_h,
+        iso_now=local_now.isoformat(),
+        max_items=max_items,
     )
 
-    system_text = (
-        "Ты — техредактор по индустрии ИИ. Твоя цель — достать факты и оформить их в строгий JSON. "
-        "Используй web_search. Если источники противоречат — confidence=low и никаких выводов."
-    )
+    system_text = TG_POST_EXTRACT_SYSTEM_PROMPT + TG_POST_EXTRACT_SYSTEM_SUFFIX
 
     try:
         resp = await asyncio.wait_for(
@@ -1063,11 +1059,7 @@ async def _summarize_keywords(items: list[NewsItem]) -> str:
         return ""
 
     compact = "\n".join(f"- [{it.type}] {it.title}: {it.what}" for it in items[:10])
-    prompt = (
-        "Дай 3–6 коротких русских тем (через запятую), которые описывают общий набор новостей.\n"
-        "Без воды. Можно 1–2 технических термина (RAG/eval), если это реально тема дня.\n"
-        "Верни только строку."
-    )
+    prompt = TG_POST_KEYWORDS_PROMPT
 
     try:
         resp = await asyncio.wait_for(
@@ -1076,7 +1068,7 @@ async def _summarize_keywords(items: list[NewsItem]) -> str:
                 model=model,
                 input=_to_responses_input(
                     [
-                        {"role": "system", "content": "Ты аккуратно выделяешь темы и не выдумываешь факты."},
+                        {"role": "system", "content": TG_POST_TOPICS_SYSTEM_PROMPT},
                         {"role": "user", "content": f"{prompt}\n\nНОВОСТИ:\n{compact}"},
                     ]
                 ),
@@ -1596,27 +1588,16 @@ def _build_bonnie_style_block(
     else:
         humor_line = "- тон спокойный, без попытки «шутить ради шутки»;\n"
 
-    return (
-        "\nТы — Bonnie, женская ИИ-персона проекта Synchatica. Ты ведёшь публичный телеграм-канал о применении "
-        "и развитии ИИ-технологий.\n"
-        "Тон: умная редакторка и практик. Главная ценность: превращать шум новостей в понятный смысл и практический вывод.\n\n"
-        "Термины:\n"
-        "- в тексте используй оригинальные названия компаний, терминологию и названия технологий (в международном формате: AI, RAG, Apple и т.д.);\n\n"
-        f"Рубрика: {rubric} (структура: {rubric_desc}).\n"
-        f"Контекст: mood={mood}, intensity={intensity}, слот={time_bucket_label}.\n\n"
-        "Требования:\n"
-        "- до 7 коротких предложений, которые просто читать;\n"
-        "- каждое предложение - с новой строки;\n"
-        "- один главный сюжет и целостное содержание;\n"
-        "- факты можно брать только из story_block;\n"
-        "- если деталей мало — прямо скажи, что деталей пока мало;\n"
-        "- без списков, нумерации, маркеров;\n"
-        "- без эмодзи и хэштегов;\n"
-        "- без призывов к действиям, без продаж и инвестиционных советов;\n"
-        f"- стартовый ход: {hook};\n"
-        f"{humor_line}"
-        f"{source_line}"
-        f"- лимит: до {char_limit} символов.\n"
+    return TG_POST_BONNIE_STYLE_TEMPLATE.format(
+        rubric=rubric,
+        rubric_desc=rubric_desc,
+        mood=mood,
+        intensity=intensity,
+        time_bucket_label=time_bucket_label,
+        hook=hook,
+        humor_line=humor_line,
+        source_line=source_line,
+        char_limit=char_limit,
     )
 
 
@@ -1668,15 +1649,9 @@ async def _rewrite_post_without_calls(post_text: str, char_limit: int = POST_CHA
     if not model:
         return None
 
-    system_prompt = (
-        "Ты получаешь текст поста для телеграм-канала про индустрию ИИ.\n"
-        "- Перепиши на русском в том же тоне, но убери прямые призывы к действиям "
-        "(подписаться, лайкнуть, репостнуть, перейти по ссылке, купить, зарегистрироваться, инвестировать и т.п.).\n"
-        "- Не добавляй новых фактов.\n"
-        "- Верни только переписанный текст."
-    )
+    system_prompt = TG_POST_REMOVE_CTA_SYSTEM_PROMPT
 
-    user_prompt = f"Исходный текст:\n{post_text}\n\nПерепиши по правилам."
+    user_prompt = TG_POST_REMOVE_CTA_USER_TEMPLATE.format(post_text=post_text)
 
     try:
         resp = await asyncio.wait_for(
@@ -1705,26 +1680,13 @@ async def _judge_candidate_llm(candidate: str, story_block: str, rubric: str, re
     if not model:
         return None
 
-    system_text = (
-        "Ты — строгий редактор качества телеграм-постов про индустрию ИИ. "
-        "Оценивай фактологию и качество текста. Никаких советов по продвижению."
-    )
+    system_text = TG_POST_JUDGE_SYSTEM_PROMPT
 
-    user_text = (
-        "Оцени кандидат на пост.\n\n"
-        "Правила:\n"
-        "- факты можно брать только из story_block;\n"
-        "- если кандидат содержит утверждения, которых нет в story_block — это риск галлюцинации;\n"
-        "- без списков, эмодзи, хэштегов, CTA.\n\n"
-        f"RUBRIC: {rubric}\n\n"
-        f"STORY_BLOCK:\n{story_block}\n\n"
-        f"RECENT_POSTS:\n{recent_posts}\n\n"
-        f"CANDIDATE:\n{candidate}\n\n"
-        "Верни ТОЛЬКО JSON:\n"
-        '{ "score": 0-100, "hallucination_risk": "low|medium|high", '
-        '"has_cta": true|false, "has_list": true|false, "has_emoji_or_hashtags": true|false, '
-        '"too_similar": true|false, "tone": "ok|too_dry|too_funny", '
-        '"notes": ["короткие замечания"] }'
+    user_text = TG_POST_JUDGE_USER_TEMPLATE.format(
+        rubric=rubric,
+        story_block=story_block,
+        recent_posts=recent_posts,
+        candidate=candidate,
     )
 
     try:
@@ -1825,20 +1787,13 @@ async def _polish_post(draft: str, story_block: str, rubric: str, char_limit: in
     if not model:
         return None
 
-    system_text = (
-        "Ты — редактор, улучшающий телеграм-пост про индустрию ИИ. "
-        "Нельзя добавлять новые факты: допускается только переформулировать и сделать текст лучше."
-    )
+    system_text = TG_POST_POLISH_SYSTEM_PROMPT
 
-    user_text = (
-        "Улучши текст: сделай его более цепким, но спокойным и умным. "
-        "Сохрани структуру рубрики. Оставь один главный факт из story_block. "
-        "Если в story_block мало деталей — добавь короткую оговорку про недостаток деталей, без фантазии.\n\n"
-        f"RUBRIC: {rubric}\n\n"
-        f"STORY_BLOCK:\n{story_block}\n\n"
-        f"DRAFT:\n{draft}\n\n"
-        f"Ограничения: 3–7 предложений, без списков/эмодзи/хэштегов/CTA, до {char_limit} символов.\n"
-        "Верни только улучшенный текст."
+    user_text = TG_POST_POLISH_USER_TEMPLATE.format(
+        rubric=rubric,
+        story_block=story_block,
+        draft=draft,
+        char_limit=char_limit,
     )
 
     try:
@@ -2272,7 +2227,7 @@ async def _generate_post_image_bytes(redis, channel_id: int, story: NewsItem | N
                 model=tool_model,
                 input=_to_responses_input(
                     [
-                        {"role": "system", "content": "Generate one image. No text, no logos, no watermarks."},
+                        {"role": "system", "content": TG_POST_IMAGE_SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ]
                 ),
@@ -2555,7 +2510,7 @@ async def generate_and_post_tg() -> None:
             system_base = await build_system_prompt(persona, guidelines, user_gender=None)
         except Exception:
             logger.exception("tg_post_manager build_system_prompt failed")
-            system_base = "Ты — Bonnie. Пиши по-русски, коротко и по делу."
+            system_base = TG_POST_SYSTEM_FALLBACK
 
         history_block = ""
         if recent_posts:
@@ -2620,25 +2575,13 @@ async def generate_and_post_tg() -> None:
                     f"{_format_story_for_prompt(story)}\n\n"
                 )
             else:
-                story_block = (
-                    "story_block: сегодня нет явного главного сюжета. "
-                    "Пиши evergreen-заметку про практику внедрения ИИ (качество, оценка, безопасность, данные), "
-                    "без новых фактов и без упоминаний «сегодня в новостях».\n\n"
-                )
+                story_block = TG_POST_STORY_BLOCK_FALLBACK
 
-            user_prompt = (
-                history_block
-                + story_block
-                + "Задача: напиши один пост для публичного телеграм-канала.\n"
-                "Требования:\n"
-                "- начни сразу с мысли, без приветствий;\n"
-                "- один главный сюжет;\n"
-                "- 3–7 предложений;\n"
-                "- встрой 1 конкретный факт из story_block (если story_block содержит новость);\n"
-                "- затем: что это значит и практический вывод;\n"
-                "- без списков/нумераций/эмодзи/хэштегов/CTA;\n"
-                f"Контекст дня: {focus_label}; темы: {kw or '—'}.\n"
-                "Верни только готовый текст поста.\n"
+            user_prompt = TG_POST_DRAFT_USER_PROMPT_TEMPLATE.format(
+                history_block=history_block,
+                story_block=story_block,
+                focus_label=focus_label,
+                kw=kw or '—',
             )
 
             include_url_local = include_url

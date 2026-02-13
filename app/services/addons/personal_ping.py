@@ -22,6 +22,20 @@ from app.core.memory import get_redis, load_context, push_message, get_cached_ge
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.clients.telegram_client import get_bot
 from app.config import settings
+from app.prompts_base import (
+    PERSONAL_PING_CONTEXT_CLASSIFIER_SYSTEM_TEMPLATE,
+    PERSONAL_PING_CONTEXT_CLASSIFIER_USER_TEMPLATE,
+    PERSONAL_PING_CARE_RULE,
+    PERSONAL_PING_CTX_TEMPLATE,
+    PERSONAL_PING_LANGUAGE_RULE_FROM_HISTORY,
+    PERSONAL_PING_LANGUAGE_RULE_WITH_EXEMPLAR_TEMPLATE,
+    PERSONAL_PING_ANCHOR_LINE_TEMPLATE,
+    PERSONAL_PING_Q_RULE_ALLOW,
+    PERSONAL_PING_Q_RULE_NO,
+    PERSONAL_PING_RULES_COMMON_TEMPLATE,
+    PERSONAL_PING_SIGNAL_CLASSIFIER_SYSTEM_PROMPT,
+    PERSONAL_PING_SIGNAL_CLASSIFIER_USER_TEMPLATE,
+)
 from app.emo_engine import get_persona
 from app.services.responder.prompt_builder import build_system_prompt
 from app.services.addons.voice_generator import (
@@ -291,14 +305,8 @@ async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optio
     )
 
     taxo = ",".join(sorted(MOTIVES.keys()))
-    system_msg = (
-        "You are a fast multilingual context classifier. "
-        "Return ONLY minified JSON with keys: motive (one of [" + taxo + "] or null), "
-        "care_needed (bool), care_reason (short or null), anchor (short or null). "
-        "Detect if user was ill/sad/stressed/tired/anxious/grieving/busy recently. "
-        "If such, set care_needed=true and pick the closest care-like motive."
-    )
-    user_msg = f"Classify transcript:\n{transcript}\nOnly JSON."
+    system_msg = PERSONAL_PING_CONTEXT_CLASSIFIER_SYSTEM_TEMPLATE.format(taxo=taxo)
+    user_msg = PERSONAL_PING_CONTEXT_CLASSIFIER_USER_TEMPLATE.format(transcript=transcript)
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
@@ -563,19 +571,8 @@ async def classify_signals_llm(personal_msgs: list[dict], summary: Optional[str]
         empty_fallback="(no messages)",
     )
 
-    system_msg = (
-        "You are a fast, multilingual conversation signal classifier. "
-        "Return ONLY a minified JSON object with three booleans: "
-        "{\"negative\":true|false, \"open_loop\":true|false, \"has_hook\":true|false}. "
-        "negative = user expresses do-not-disturb / busy / later / stop / sleeping / driving / in a meeting / "
-        "boundaries like 'don't text', in ANY language. "
-        "open_loop = assistant's last turn contains a question/request OR there is an explicit unresolved item that expects a user reply. "
-        "has_hook = there is a specific, topical anchor (topic/decision/promise/todo/progress) that makes a short follow-up meaningful and naturally on-topic."
-    )
-    user_msg = (
-        f"Classify the following transcript:\n{transcript}\n\n"
-        "Return EXACTLY JSON with keys: negative, open_loop, has_hook."
-    )
+    system_msg = PERSONAL_PING_SIGNAL_CLASSIFIER_SYSTEM_PROMPT
+    user_msg = PERSONAL_PING_SIGNAL_CLASSIFIER_USER_TEMPLATE.format(transcript=transcript)
 
     try:
         resp = await asyncio.wait_for(
@@ -1074,41 +1071,21 @@ def build_prompt(
 
     if lang_exemplar:
         _ex = " ".join(lang_exemplar.split())[:160]
-        language_rule = (
-            f"LANGUAGE LOCK: Write STRICTLY in the same language as this exemplar: «{_ex}». "
-            "Do not translate, do not switch languages, keep the same script/punctuation style."
-        )
+        language_rule = PERSONAL_PING_LANGUAGE_RULE_WITH_EXEMPLAR_TEMPLATE.format(exemplar=_ex)
     else:
-        language_rule = (
-            "LANGUAGE LOCK: Write in the same language I used in my last message to the user "
-            "(infer from the history). Do not switch languages."
-        )
+        language_rule = PERSONAL_PING_LANGUAGE_RULE_FROM_HISTORY
 
-    rules_common = (
-        f"{language_rule} "
-        "Strictly adhere to the persona's style and mood provided in the SYSTEM message; do not override that tone. "
-        "Return ONLY the message text. 1–2 short sentences (≤ 35 words total). "
-        + ("" if allow_generic_checkin else "No greetings, ")
-        + "no meta, no hashtags, no markdown. "
-        + ("" if allow_generic_checkin else
-           "Avoid generic check-ins (e.g., 'how are you?') unless this is a care check-in. ")
-        + "Use first-person singular and reference EXACTLY one concrete detail from the history."
+    rules_common = PERSONAL_PING_RULES_COMMON_TEMPLATE.format(
+        language_rule=language_rule,
+        greeting_rule="" if allow_generic_checkin else "No greetings, ",
+        generic_rule="" if allow_generic_checkin else "Avoid generic check-ins (e.g., 'how are you?') unless this is a care check-in. ",
     )
 
-    q_rule = (
-        "You may include at most ONE short, specific question strictly tied to the unresolved item or the user's well-being."
-        if allow_question else
-        "Avoid question marks; invite softly instead (e.g., 'if you'd like')."
-    )
+    q_rule = PERSONAL_PING_Q_RULE_ALLOW if allow_question else PERSONAL_PING_Q_RULE_NO
 
-    care_rule = (
-        "If this is a care check-in, you MAY include ONE short well-being question in the user's language "
-        "(e.g., 'how are you feeling', 'how's your energy?'). Keep it warm and light."
-        if allow_generic_checkin else
-        ""
-    )
-    anchor_line = f"ANCHOR_HINT: {anchor_hint}\n" if anchor_hint else ""
-    ctx = f"Conversation history:\n{mem_ctx}\n__________\n" if mem_ctx else ""
+    care_rule = PERSONAL_PING_CARE_RULE if allow_generic_checkin else ""
+    anchor_line = PERSONAL_PING_ANCHOR_LINE_TEMPLATE.format(anchor_hint=anchor_hint) if anchor_hint else ""
+    ctx = PERSONAL_PING_CTX_TEMPLATE.format(mem_ctx=mem_ctx) if mem_ctx else ""
 
     variation_seed = random.randint(1, 10_000)
     microstyle = random.choice([

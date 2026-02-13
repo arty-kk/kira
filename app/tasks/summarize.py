@@ -20,6 +20,13 @@ from app.core.memory import (
 )
 from app.config import settings
 from app.emo_engine.persona.memory import PersonaMemory, get_embedding
+from app.prompts_base import (
+    SUMMARIZE_COMPRESS_INSTRUCTIONS,
+    SUMMARIZE_CONSOLIDATE_INSTRUCTIONS,
+    summarize_compress_prompt,
+    summarize_events_prompt,
+    summarize_merge_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,45 +64,12 @@ def _limits(is_private: bool) -> Tuple[int, int, int, int]:
 def _compress_prompt(lines: List[str]) -> str:
 
     block = "\n".join(lines)
-    return (
-        "You are compressing a mid-term chat slice into long-term user memory.\n"
-        "Keep ONLY durable knowledge: stable facts, preferences, constraints, context, and behavior patterns.\n"
-        "Exclude small talk, transient Q&A, emotions, guesses, or speculation.\n"
-        "Exclude sensitive identifiers (emails, phone numbers, addresses, tokens, links, IDs) unless the user explicitly asked to save them.\n"
-        "If unsure whether something is durable, DROP it (prefer under-inclusion).\n"
-        "If unsure, DROP the content. Prefer under-inclusion to over-inclusion.\n"
-        "Treat role prefixes like 'user:'/'assistant:' as metadata; ignore them for language detection.\n"
-        "CRITICAL:\n"
-        "- Preserve factual details exactly when you keep them (names, numbers, dates, relationships).\n"
-        "- Do NOT invert who did what to whom or who feels what about whom.\n"
-        "Write concisely as bullet points or short paragraphs, with no headings or markup.\n"
-        "LANGUAGE: Use the dominant language of the input excerpts; DO NOT translate.\n"
-        "-----\n"
-        f"{block}\n"
-        "-----\n"
-        "Return ONLY the cleaned text."
-    )
+    return summarize_compress_prompt(block)
 
 
 def _merge_prompt(old: str, new: str, max_tokens: int) -> str:
 
-    return (
-        "You are merging long-term memory about a user.\n"
-        "Task: combine the OLD memory and the NEW snippet, remove duplicates, keep ONLY durable facts, preferences, "
-        "constraints, context, and behavior patterns. No speculation. Be compact.\n"
-        f"Target hard limit ≈ {max_tokens} tokens.\n"
-        "Exclude sensitive identifiers unless the user explicitly asked to save them. Prefer under-inclusion.\n"
-        "CRITICAL:\n"
-        "- When you keep a fact (numbers, dates, names, relationships), do not change it.\n"
-        "- Do NOT invert who did what to whom or who feels what about whom.\n"
-        "LANGUAGE: Preserve the original language(s) from inputs; DO NOT translate.\n"
-        "-----\n[OLD_LTM]\n"
-        f"{old or ''}\n"
-        "-----\n[NEW_SNIPPET]\n"
-        f"{new}\n"
-        "-----\n"
-        "Return ONLY the cleaned merged text (no headings or labels)."
-    )
+    return summarize_merge_prompt(old, new, max_tokens)
 
 
 async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> None:
@@ -350,13 +324,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
 
     def _mk_prompt(block: list[str]) -> str:
         snippet = " ||| ".join(block)
-        return (
-            "You compress related autobiographical events into a single memory entry.\n"
-            "LANGUAGE: Keep the language of the EVENTS; DO NOT translate.\n\n"
-            f"EVENTS (delimiter = '|||'):\n{snippet}\n\n"
-            "TASK: Produce 1-2 short sentences (≤ 50 words total) in past tense, "
-            "objective and free of speculation. Return ONLY the consolidated sentence."
-        )
+        return summarize_events_prompt(snippet)
 
     try:
         try:
@@ -376,7 +344,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                     _call_openai_with_retry(
                         endpoint="responses.create",
                         model=settings.REASONING_MODEL,
-                        instructions="You are a precise summarisation assistant.",
+                        instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
                         input=prompt,
                         max_output_tokens=192,
                         temperature=0,
@@ -395,7 +363,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
-                    instructions="You are a precise summarisation assistant.",
+                    instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
                     input=prompt,
                     max_output_tokens=192,
                     temperature=0,
@@ -412,7 +380,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
-                    instructions="You consolidate summaries into one.",
+                    instructions=SUMMARIZE_CONSOLIDATE_INSTRUCTIONS,
                     input=prompt,
                     max_output_tokens=192,
                     temperature=0,

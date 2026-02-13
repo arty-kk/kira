@@ -15,6 +15,7 @@ from typing import Dict
 from collections import Counter
 
 from app.config import settings
+from app.prompts_base import SOCIAL_SIGNALS_SYSTEM_PROMPT, SOCIAL_SIGNALS_USER_PROMPT_TEMPLATE
 from app.core.memory import load_context
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from .executor import EXECUTOR
@@ -514,28 +515,8 @@ def _compute_states(state, readings, change_rates):
 
 async def _detect_social_signals_llm(self, text: str, *, timeout: float | None = None) -> Dict[str, bool]:
 
-    system_prompt = (
-        "You are a multilingual, deterministic text classifier. Read a single user message "
-        "and decide whether it explicitly contains each of the following pragmatic signals. "
-        "You MUST output EXACTLY ONE minified JSON object that STRICTLY conforms to the provided JSON schema.\n"
-        "\n"
-        "Signals (set 1 if present explicitly, else 0):\n"
-        "- apology: explicit remorse words (e.g., 'sorry', 'apologize', 'извини', 'простите', 'сорри', 'my bad').\n"
-        "- promise: explicit future commitment (e.g., 'I will/I'll', 'I promise', 'обещаю', 'сделаю'). "
-        "  Exclude questions/hedges like 'maybe', 'I'll try', 'should I'.\n"
-        "- fulfill: explicit completion report (e.g., 'done', 'finished', 'готово', 'сделал', 'completed', 'delivered').\n"
-        "- clingy: attention-seeking to keep engaging (e.g., 'please reply', 'are you there', 'ответь', repeated '???'/'pls', 'не уходи').\n"
-        "- boundary: explicit limits/refusals or stop requests (e.g., 'I won't', 'don't contact me', 'не пиши', 'не буду', 'stop').\n"
-        "\n"
-        "Rules:\n"
-        "- Output JSON only (one line), no prose/markdown, ASCII keys only, integer values 0/1.\n"
-        "- Base the decision on THIS message only; ignore prior context; do not infer unstated intent.\n"
-        "- Hypotheticals, quotes, or uncertainty → 0.\n"
-        "- Multiple signals may be 1 simultaneously."
-    )
-    user_prompt = (
-        f"INPUT:\n{text}\n\nReturn ONLY a single minified JSON object."
-    )
+    system_prompt = SOCIAL_SIGNALS_SYSTEM_PROMPT
+    user_prompt = SOCIAL_SIGNALS_USER_PROMPT_TEMPLATE.format(text=text)
 
     schema = {
         "type": "object",  

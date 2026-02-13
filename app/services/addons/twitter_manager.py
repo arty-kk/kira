@@ -9,6 +9,13 @@ from app.services.responder.prompt_builder import build_system_prompt
 from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message
 from app.config import settings
+from app.prompts_base import (
+    TWITTER_FALLBACK_SYSTEM_BASE,
+    TWITTER_NEWS_PROMPT,
+    TWITTER_NEWS_SYSTEM_PROMPT,
+    TWITTER_STRATEGIST_SUFFIX,
+    TWITTER_USER_PROMPT_TEMPLATE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -154,18 +161,14 @@ async def generate_and_post_tweet() -> None:
     except Exception:
         pass
 
-    news_prompt = (
-        "Provide a concise 10-bullet summary of today's top crypto price movements and related industry events, "
-        "each bullet up to 3 sentences. "
-        "No commentary, only the bullet summary."
-    )
+    news_prompt = TWITTER_NEWS_PROMPT
     try:
         news_resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.POST_MODEL,
                 input=_to_responses_input([
-                    {"role": "system", "content": "You are a professional crypto journalist."},
+                    {"role": "system", "content": TWITTER_NEWS_SYSTEM_PROMPT},
                     {"role": "user", "content": news_prompt},
                 ]),
                 tools=[{"type": "web_search"}],
@@ -188,26 +191,13 @@ async def generate_and_post_tweet() -> None:
         system_base = await build_system_prompt(persona, guidelines, user_gender=None)
     except Exception:
         logger.exception("twitter_manager: build_system_prompt failed")
-        system_base = "You are a helpful assistant."
+        system_base = TWITTER_FALLBACK_SYSTEM_BASE
         
     system_msg = {
         "role": "system",
-        "content": (
-            system_base
-            + "\nYou are a seasoned Twitter strategist. "
-            "Your tweets consistently captivate and energize your audience — deliver maximum impact."
-        ),
+        "content": system_base + TWITTER_STRATEGIST_SUFFIX,
     }
-    user_prompt = (
-        f"News digest:\n{news_snippet}\n\n"
-        f"Write one '{tweet_type}' tweet that engages twitter users:\n"
-        "- Transform the summary into a fresh, punchy insight\n"
-        "- Weave in some high-impact and trending hashtags + #crypto\n"
-        "- Write in a natural, first-person style\n"
-        "- Do not include explanations or commentary—only the tweet text.\n"
-        "- Keep it under 250 characters\n"
-        "Your goal: make readers stop scrolling and react instantly to your tweet."
-    )
+    user_prompt = TWITTER_USER_PROMPT_TEMPLATE.format(news_snippet=news_snippet, tweet_type=tweet_type)
     messages = [system_msg] + history + [{"role": "user", "content": user_prompt}]
 
     tweet = None

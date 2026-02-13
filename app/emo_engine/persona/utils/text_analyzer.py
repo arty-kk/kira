@@ -10,6 +10,11 @@ from random import Random
 from typing import Dict, Optional
 
 from app.config import settings
+from app.prompts_base import (
+    TEXT_ANALYZER_SYSTEM_PROMPT_TEMPLATE,
+    TEXT_ANALYZER_USER_PROMPT_NO_CTX_TEMPLATE,
+    TEXT_ANALYZER_USER_PROMPT_WITH_CTX_TEMPLATE,
+)
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from ..constants.emotions import ALL_METRICS, ANALYSIS_METRICS
 
@@ -168,32 +173,12 @@ class TextAnalyzer:
             )
 
         metric_list = ", ".join(f'"{m}"' for m in ANALYSIS_METRICS)
-        system_prompt = (
-            "You are a professional analyzer of emotional metrics based on the conversation context.\n"
-            "Task: determine the current values of the user's emotion metrics based on their last message and taking into account the conversation context.\n"
-            f"Output: exactly JSON object that MUST validate against the provided JSON schema and contain exactly these keys: {metric_list}.\n"
-            "Rules:\n"
-            "- Use only numbers (no strings), decimal point '.', no NaN/Inf/','.\n"
-            "- Ranges: valence in [-1.00, 1.00]; all others in [0.00, 1.00].\n"
-            "- Metrics evaluation should be honest, without making up their values.\n"
-            "- If you can't determine values for any metrics, use default values: valence 0.00; arousal/dominance 0.40, others 0.00.\n"
-            "- Consider emojis and punctuation marks ('...', '!', '!!!', '?', '???') in your analysis."
-        )
+        system_prompt = TEXT_ANALYZER_SYSTEM_PROMPT_TEMPLATE.format(metric_list=metric_list)
 
         if ctx_dialog:
-            user_prompt = (
-                "Conversation (oldest→newest):\n"
-                f"{prompt_base}\n\n"
-                "Determine the current values of the user's emotion metrics based on their last message and taking into account the conversation context.\n"
-                "Return ONLY a single minified JSON object."
-            )
+            user_prompt = TEXT_ANALYZER_USER_PROMPT_WITH_CTX_TEMPLATE.format(prompt_base=prompt_base)
         else:
-            user_prompt = (
-                "User last message:\n"
-                f"{text}\n\n"
-                "Determine current values of the user emotion metrics based on their last message.\n"
-                "Return ONLY a single minified JSON object."
-            )
+            user_prompt = TEXT_ANALYZER_USER_PROMPT_NO_CTX_TEMPLATE.format(text=text)
 
         try:
             resp = await asyncio.wait_for(
