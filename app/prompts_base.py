@@ -1,5 +1,3 @@
-"""Базовые текстовые промпты проекта."""
-
 from __future__ import annotations
 
 
