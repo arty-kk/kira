@@ -442,7 +442,13 @@ async def _auth_api_key(
     if authorization:
         scheme, _, tail = authorization.partition(" ")
         if scheme.lower() == "bearer":
-            raw = tail.strip()
+            bearer_raw = tail.strip()
+            if bearer_raw:
+                raw = bearer_raw
+            elif x_api_key:
+                x_api_key_raw = x_api_key.strip()
+                if x_api_key_raw:
+                    raw = x_api_key_raw
         elif x_api_key:
             raw = x_api_key.strip()
     elif x_api_key:
