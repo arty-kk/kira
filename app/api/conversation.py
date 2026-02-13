@@ -79,6 +79,12 @@ return {api_count, ip_count, api_exceeded, ip_exceeded}
 """
 _RATE_LIMIT_LUA_SHA: Optional[str] = None
 
+_DETERMINISTIC_4XX_IDEMPOTENCY_CODES = {
+    "invalid_payload",
+    "payload_too_large",
+    "no_requests",
+}
+
 
 def _get_api_queue_key() -> str:
     return getattr(settings, "API_QUEUE_KEY", "queue:api")
@@ -770,7 +776,7 @@ async def conversation_endpoint(
         should_store = False
         if 200 <= status_code < 300:
             should_store = True
-        elif 400 <= status_code < 500 and detail_code in {"invalid_payload", "payload_too_large"}:
+        elif 400 <= status_code < 500 and detail_code in _DETERMINISTIC_4XX_IDEMPOTENCY_CODES:
             should_store = True
         if not should_store:
             try:
