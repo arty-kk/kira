@@ -116,8 +116,13 @@ async def list_keys_for_user(db, user_id: int) -> list[ApiKey]:
 
 
 async def get_key_for_user(db, user_id: int) -> Optional[ApiKey]:
-    res = await db.execute(select(ApiKey).where(ApiKey.user_id == user_id))
-    return res.scalar_one_or_none()
+    res = await db.execute(
+        select(ApiKey)
+        .where(ApiKey.user_id == user_id)
+        .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
+        .limit(1)
+    )
+    return res.scalars().first()
 
 
 async def get_key_and_stats_for_user(db, user_id: int) -> Tuple[Optional[ApiKey], Optional[ApiKeyStats]]:
