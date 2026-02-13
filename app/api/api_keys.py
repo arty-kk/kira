@@ -118,7 +118,10 @@ async def list_keys_for_user(db, user_id: int) -> list[ApiKey]:
 async def get_key_for_user(db, user_id: int) -> Optional[ApiKey]:
     res = await db.execute(
         select(ApiKey)
-        .where(ApiKey.user_id == user_id)
+        .where(
+            ApiKey.user_id == user_id,
+            ApiKey.active.is_(True),
+        )
         .order_by(ApiKey.created_at.desc(), ApiKey.id.desc())
         .limit(1)
     )
