@@ -36,16 +36,16 @@ class _FakeGetKeyDb:
 
 
 class ApiKeysGetKeyForUserTests(unittest.TestCase):
-    def test_get_key_for_user_uses_order_limit_and_first_result(self) -> None:
-        older = api_keys.ApiKey(id=21, user_id=7, key_hash="k-tie-low")
-        latest = api_keys.ApiKey(id=22, user_id=7, key_hash="k-tie-high")
-        db = _FakeGetKeyDb([latest, older])
+    def test_get_key_for_user_returns_latest_active_key(self) -> None:
+        active_older = api_keys.ApiKey(id=21, user_id=7, key_hash="k-active", active=True)
+        inactive_newer = api_keys.ApiKey(id=22, user_id=7, key_hash="k-inactive", active=False)
+        db = _FakeGetKeyDb([active_older, inactive_newer])
 
         result = asyncio.run(api_keys.get_key_for_user(db, user_id=7))
 
         self.assertIsNotNone(result)
-        self.assertEqual(result.id, 22)
-        self.assertEqual(result.key_hash, "k-tie-high")
+        self.assertEqual(result.id, 21)
+        self.assertEqual(result.key_hash, "k-active")
 
         self.assertIsNotNone(db.last_stmt)
         compiled = str(
@@ -56,6 +56,7 @@ class ApiKeysGetKeyForUserTests(unittest.TestCase):
         ).lower()
         self.assertIn("from api_keys", compiled)
         self.assertIn("where api_keys.user_id = 7", compiled)
+        self.assertIn("api_keys.active is true", compiled)
         self.assertIn("order by api_keys.created_at desc, api_keys.id desc", compiled)
         self.assertIn("limit 1", compiled)
 
