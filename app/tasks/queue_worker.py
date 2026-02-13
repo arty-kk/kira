@@ -1692,6 +1692,46 @@ async def _cleanup_chat_locks_loop(stop_evt: asyncio.Event) -> None:
         pass
 
 
+def _is_redis_loop_failure(exc: Exception, *, context: str | None = None) -> bool:
+    if isinstance(exc, RedisError):
+        return True
+
+    if REDIS_QUEUE is None or not hasattr(REDIS_QUEUE, "brpoplpush"):
+        return True
+
+    if context == "brpoplpush":
+        return True
+
+    message = str(exc).lower()
+    redis_markers = (
+        "redis",
+        "connection reset",
+        "connection refused",
+        "connection closed",
+        "connection error",
+        "pool",
+        "brpoplpush",
+        "lrem",
+        "redis client",
+    )
+    return any(marker in message for marker in redis_markers)
+
+
+async def _recover_redis_queue_client(reason: Exception) -> None:
+    global REDIS_QUEUE
+
+    logger.error("Redis queue client failure: %s — reconnecting", reason)
+    with suppress(Exception):
+        await close_redis_pools()
+
+    await asyncio.sleep(_jitter(1.0, 0.5))
+    try:
+        REDIS_QUEUE = get_redis_queue()
+    except Exception as ex:
+        logger.critical("Failed to recreate Redis queue client: %s", ex)
+        await asyncio.sleep(_jitter(5.0, 0.5))
+
+
 async def queue_worker(stop_evt: asyncio.Event) -> None:
 
     global REDIS_QUEUE
@@ -1715,6 +1755,7 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
     sweeper = asyncio.create_task(_sweeper_loop(stop_evt, queue_key, processing_key))
     try:
         while not stop_evt.is_set():
+            loop_context = "idle"
             try:
                 while (len(PROCESSING_TASKS) >= MAX_INFLIGHT_TASKS) and (not stop_evt.is_set()):
                     if PROCESSING_TASKS:
@@ -1723,6 +1764,7 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
                         )
                     else:
                         await asyncio.sleep(0.2)
+                loop_context = "brpoplpush"
                 raw = await REDIS_QUEUE.brpoplpush(queue_key, processing_key, timeout=1)
                 if stop_evt.is_set():
                     break
@@ -1730,24 +1772,20 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
                     continue
 
                 logger.debug("BRPOPLPUSH → %r", raw)
+                loop_context = "processing"
                 await _try_start_task_or_requeue(raw, queue_key, processing_key)
 
             except RedisError as e:
-                logger.error("RedisError in queue_worker: %s — reconnecting", e)
-                with suppress(Exception):
-                    await close_redis_pools()
-                await asyncio.sleep(_jitter(1.0, 0.5))
-                try:
-                    REDIS_QUEUE = get_redis_queue()
-                except Exception as ex:
-                    logger.critical("Failed to recreate Redis client: %s", ex)
-                    await asyncio.sleep(_jitter(5.0, 0.5))
+                await _recover_redis_queue_client(e)
 
             except asyncio.CancelledError:
                 logger.info("queue_worker received shutdown signal")
                 break
 
             except Exception as e:
+                if _is_redis_loop_failure(e, context=loop_context):
+                    await _recover_redis_queue_client(e)
+                    continue
                 logger.exception("Unexpected error in queue_worker: %s", e)
                 await asyncio.sleep(1)
     finally:
