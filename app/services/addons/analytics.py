@@ -9,6 +9,7 @@ from typing import Optional, Dict, Tuple, List
 
 from aiogram.exceptions import TelegramRetryAfter, TelegramBadRequest, TelegramForbiddenError
 from app.config import settings
+from app.prompts_base import ANALYTICS_LLM_INSIGHTS_SYSTEM_PROMPT
 from app.clients.telegram_client import get_bot
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import get_redis
@@ -425,15 +426,7 @@ async def _llm_insights(markdown_metrics: str) -> Optional[str]:
                 endpoint="responses.create",
                 model=settings.REASONING_MODEL,
                 input=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a community activity analyst. "
-                            "Focus on engagement, on-topic relevance, and safety. "
-                            "Treat response time as informational only and do NOT flag it as an issue "
-                            "unless avg response time exceeds 60000 ms or there are model timeouts."
-                        ),
-                    },
+                    {"role": "system", "content": ANALYTICS_LLM_INSIGHTS_SYSTEM_PROMPT},
                     {
                         "role": "user",
                         "content": (

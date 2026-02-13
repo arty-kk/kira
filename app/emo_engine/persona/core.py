@@ -20,6 +20,7 @@ from collections.abc import Callable
 from types import MethodType
 
 from app.config import settings
+from app.prompts_base import CORE_SELECT_MEMORIES_SYSTEM_TEMPLATE, CORE_SELECT_MEMORIES_USER_PROMPT
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import record_activity as _mem_record_activity
 
@@ -1057,16 +1058,9 @@ class Persona:
         if not (candidates["past"] or candidates["present"] or candidates["future"]):
             return {"past": [], "present": [], "future": []}
 
-        system_prompt = (
-            "Select relevant memory ITEMS by index.\n"
-            "- Items may be any language; do not translate or paraphrase.\n"
-            "- Choose up to 2 indices per category (past/present/future) relevant to NOW and the context.\n"
-            "- Output ONLY JSON with keys past,present,future and integer arrays.\n"
-            f"Now: {now}\n"
-            f"Context: {context}\n"
-        )
+        system_prompt = CORE_SELECT_MEMORIES_SYSTEM_TEMPLATE.format(now=now, context=context)
 
-        user_prompt = "Select indices."
+        user_prompt = CORE_SELECT_MEMORIES_USER_PROMPT
 
         for cat, items in candidates.items():
             if items:

@@ -8,6 +8,7 @@ import unicodedata
 from uuid import uuid4
 
 from app.config import settings
+from app.prompts_base import GIFTS_REACT_HARD_RULES_PROMPT, GIFTS_REACT_REWRITE_WARNING_PROMPT
 from app.tasks.celery_app import celery, _run
 from app.clients.telegram_client import get_bot
 from app.bot.components.constants import redis_client
@@ -319,19 +320,9 @@ def _build_prompt(
         base += f"- Tone hint (use subtly): {tone_hint}.\n"
     if micro_style:
         base += f"- Micro-style: {micro_style}.\n"
-    base += (
-        "\n"
-        "HARD RULES\n"
-        "- Do NOT mention payments, stars, invoices, shop, limits, requests, or any meta labels.\n"
-        "- Do NOT mention any names, @usernames, or 'from someone'.\n"
-        "- Output ONLY the final message.\n"
-    )
+    base += GIFTS_REACT_HARD_RULES_PROMPT
     if strict:
-        base += (
-            "\n"
-            "REWRITE WARNING\n"
-            "- Your previous attempt broke the rules or sounded templated. Rewrite more naturally while obeying HARD RULES.\n"
-        )
+        base += GIFTS_REACT_REWRITE_WARNING_PROMPT
     return base
 
 @celery.task(name="gifts.react")

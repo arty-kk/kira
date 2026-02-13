@@ -14,6 +14,7 @@ from app.core.models import User
 from app.core.memory import get_cached_gender, push_message, get_redis
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.services.responder.prompt_builder import build_system_prompt
+from app.prompts_base import WELCOME_PRIVATE_PROMPT_TEMPLATE, WELCOME_PROMPT_NO_TEXT_TEMPLATE, WELCOME_PROMPT_WITH_TEXT_TEMPLATE
 from app.emo_engine import get_persona 
 from app.config import settings
 
@@ -169,20 +170,10 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
         pass
 
     if text:
-        prompt = (
-            f"A new member just joined the chat and wrote:\n{text}.\n\n"
-            f"Write a short and creative welcome on your behalf. "
-            f"Use language '{lang_code}' only (1–2 sentences). "
-            "Do NOT include the user's mention in your reply."
-        )
+        prompt = WELCOME_PROMPT_WITH_TEXT_TEMPLATE.format(text=text, lang_code=lang_code)
         asyncio.create_task(persona.process_interaction(user.id, text))
     else:
-        prompt = (
-            "A new member just joined the chat.\n"
-            f"Write a short and creative welcome on your behalf. "
-            f"Use language '{lang_code}' only (1–2 sentences). "
-            "Do NOT include the user's mention in your reply."
-        )
+        prompt = WELCOME_PROMPT_NO_TEXT_TEMPLATE.format(lang_code=lang_code)
 
     generated: Optional[str] = None
     try:
@@ -315,12 +306,7 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
     except Exception:
         pass
 
-    prompt = (
-        "A user just started a private chat with you.\n"
-        f"The user's language code is {lang_code}. Use this language to respond to the user.\n"
-        "Greet him short and punchy on your own behalf."
-        #"Tell them that you can be their personal conseillerie, psychologist, coach, friend, or just a pleasant conversational partner, and that your abilities are limited only by their imagination."
-    )
+    prompt = WELCOME_PRIVATE_PROMPT_TEMPLATE.format(lang_code=lang_code)
 
     generated = None
     try:

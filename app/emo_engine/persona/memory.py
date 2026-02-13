@@ -48,6 +48,7 @@ from app.core.memory import (
 )
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.config import settings
+from app.prompts_base import EVENT_FRAME_SYSTEM_PROMPT, event_frame_user_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -1691,33 +1692,8 @@ class PersonaMemory:
             informative = (len(t) >= 60) or has_digits
             if not informative:
                 return None
-            system_prompt = (
-                "You are an information-extraction model that outputs ONE JSON object "
-                "that STRICTLY matches the provided JSON schema.\n"
-                "Rules:\n"
-                "- Output ONLY minified JSON on a single line. No prose, no markdown.\n"
-                "- Keys must be exactly: type, when_iso, tense, participants, intent, commitments, places, tags.\n"
-                "- Use lowercase ENGLISH for 'type', 'tense', and 'tags'.\n"
-                "- 'tense' must be one of: past, present, future (if unclear, choose the closest).\n"
-                "- 'when_iso' must be ISO8601 UTC in the form YYYY-MM-DDTHH:MM:SSZ. "
-                "  If the text does NOT give a concrete absolute time/date, set an empty string \"\".\n"
-                "- 'participants' is a list of short names/roles. Use 'user' for the speaker and "
-                "  keep any explicit names from the text (shortened if needed). Deduplicate.\n"
-                "- 'intent' is a LIST (0–2 items) of short verb phrases in English (≤ 40 chars each) "
-                "  describing the user's main intent; use [] if none.\n"
-                "- 'commitments' is a list of short action items (≤ 40 chars each) if any promises/obligations exist, else [].\n"
-                "- 'places' is a list of short place names if any, else [].\n"
-                "- 'tags' is a list (0-5) of helpful lowercase keywords in English (e.g., 'meeting', 'deadline'); if unclear, include 'other'. "
-                "  include 'relative-time' if only relative timing is mentioned.\n"
-                "- Do NOT invent facts. If unknown: use empty string for scalars (when a string is required), [] for arrays.\n"
-                "- Do NOT add extra fields."
-            )
-            user_prompt = (
-                "Extract the event frame from the text below.\n"
-                "Text:\n"
-                f"{t}\n\n"
-                "Return ONLY a single minified JSON object."
-            )
+            system_prompt = EVENT_FRAME_SYSTEM_PROMPT
+            user_prompt = event_frame_user_prompt(t)
             try:
                 resp = await asyncio.wait_for(
                     _call_openai_with_retry(

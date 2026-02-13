@@ -24,6 +24,8 @@ from app.config import settings
 from app.core.memory import get_redis, load_context, push_message
 from app.emo_engine import get_persona
 from app.services.responder.prompt_builder import build_system_prompt
+from app.prompts_base import GROUP_PING_PROMPT_NO_CTX_TEMPLATE, GROUP_PING_PROMPT_WITH_CTX_TEMPLATE
+from app.prompts_base import GROUP_PING_PROMPT_NO_CTX_TEMPLATE, GROUP_PING_PROMPT_WITH_CTX_TEMPLATE
 from app.services.addons.analytics import record_ping_sent
 
 logger = logging.getLogger(__name__)
@@ -894,25 +896,9 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         return
 
     if mem_ctx:
-        prompt = (
-            f"Below is a conversation history with this user inside the group chat:\n"
-            f"{mem_ctx}\n"
-            "____________\n"
-            "Do NOT quote it directly; use it only to understand why the talk stopped.\n"
-            f"STRATEGY_HINT: {arm_hint}\n"
-            "Write ONE short message (1–2 sentences, up to 35 words) on your behalf "
-            "that will naturally re-engage this user in the group.\n"
-            "No meta-commentary, no placeholders, no markdown, no emojis unless they fit your style. "
-            "Make it feel personal and context-aware."
-        )
+        prompt = GROUP_PING_PROMPT_WITH_CTX_TEMPLATE.format(mem_ctx=mem_ctx, arm_hint=arm_hint)
     else:
-        prompt = (
-            "The group chat has been quiet for a while.\n"
-            f"STRATEGY_HINT: {arm_hint}\n"
-            "Write ONE creative, but natural message (1–2 sentences, up to 35 words) "
-            "addressed to the selected user to make them want to reply in the group.\n"
-            "No meta-commentary, no placeholders, no markdown."
-        )
+        prompt = GROUP_PING_PROMPT_NO_CTX_TEMPLATE.format(arm_hint=arm_hint)
 
     try:
         resp = await asyncio.wait_for(

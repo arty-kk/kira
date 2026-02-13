@@ -10,6 +10,7 @@ from typing import List, Dict, Any
 
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.config import settings
+from app.prompts_base import COREF_EXTRACT_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -213,25 +214,7 @@ def _looks_like_first_or_second(pronoun: str) -> bool:
     return s in en or s in lat or s in cjk or s in ar
 
 
-_EXTRACT_PROMPT = """You extract coreference/deixis links between the latest user QUERY and prior chat SNIPPET.
-
-SNIPPET is a JSON array of objects: {"i":int, "r":"u"|"a", "c":string}
-Antecedent offsets MUST be measured inside SNIPPET[msg_index].c.
-
-Return links ONLY when HIGH confidence and UNAMBIGUOUS:
-- third-person pronouns (stand-alone forms),
-- pronominal demonstratives (stand-alone; not determiner),
-- discourse deictic adverbs (here/there/now/then; здесь/там/сейчас/тогда etc) ONLY if SNIPPET contains a concrete antecedent span.
-
-Exclude:
-- any 1st/2nd person forms,
-- demonstratives used as determiners before a noun,
-- complementizer/conjunction "that"/"что",
-- EN existential "there is/are/was/were" / "there's",
-- anchored deictics like "here in X" or "там в Y".
-
-Output must match the given JSON schema. JSON only, no extra text.
-"""
+_EXTRACT_PROMPT = COREF_EXTRACT_PROMPT
 
 _EXTRACT_SCHEMA = {
     "type": "object",

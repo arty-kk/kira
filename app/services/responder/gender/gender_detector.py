@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Dict
 
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.config import settings
+from app.prompts_base import GENDER_SYSTEM_PROMPT, gender_user_prompt
 
 __all__ = ["detect_gender"]
 
@@ -71,19 +72,10 @@ def _gender_schema() -> dict:
     }
 
 def _build_system_prompt() -> str:
-    return (
-        "You are a multilingual onomastics classifier.\n"
-        "Return ONLY minified JSON that conforms to the provided json_schema.\n"
-        "Policy:\n"
-        "- Choose 'unknown' unless you are at least 90% certain the name/message indicates 'male' or 'female'.\n"
-        "- No explanations, no markdown, no code fences.\n"
-        "Return only the JSON."
-    )
+    return GENDER_SYSTEM_PROMPT
 
 def _build_user_prompt(name: str, message: Optional[str] = None) -> str:
-    if message:
-        return f'Name: "{name}"\nMessage: "{message}"\nTask: Output the JSON.'
-    return f'Name: "{name}"\nTask: Output the JSON.'
+    return gender_user_prompt(name, message)
 
 def _norm_gender(v: Optional[str]) -> Optional[str]:
     if not isinstance(v, str):

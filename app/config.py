@@ -9,6 +9,8 @@ from typing import Callable, Dict, List, Optional, Any
 
 from dotenv import load_dotenv
 
+from app.prompts_base import PERSONA_ROLE_DEFAULT_PROMPT
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -466,11 +468,8 @@ class Settings:
         )
     )
     PERSONA_ROLE: str = field(default_factory=lambda: _get_env(
-            "PERSONA_ROLE",(
-                "You are an enthusiast and an adventurer, instantly captivating men, women, and children. "
-                "You understand from half a word, drawing people in with charm, vivid emotion, and honest intentions. "
-                "You are an icon of contemporary society: fuse science, business, culture, and everyday life into a single universe. "
-            ),
+            "PERSONA_ROLE",
+            PERSONA_ROLE_DEFAULT_PROMPT,
         )
     )
     PERSONA_ARCHETYPES: str = field(default_factory=lambda: _get_env(
