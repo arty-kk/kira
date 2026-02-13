@@ -5,23 +5,34 @@ import pathlib
 import sys
 import types
 import unittest
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
 
 class _FakeColumn:
+    def __init__(self, name):
+        self.name = name
+
     def __eq__(self, other):
-        return _FakeWhereValue(other)
+        return _FakeWhereValue(self.name, "eq", other)
+
+    def __ge__(self, other):
+        return _FakeWhereValue(self.name, "ge", other)
+
+    def is_not(self, other):
+        return _FakeWhereValue(self.name, "is_not", other)
 
 
 class _FakeModel:
-    id = _FakeColumn()
+    id = _FakeColumn("id")
 
 
 class _FakeRefundOutboxModel(_FakeModel):
-    status = _FakeColumn()
-    lease_token = _FakeColumn()
+    status = _FakeColumn("status")
+    lease_token = _FakeColumn("lease_token")
+    leased_at = _FakeColumn("leased_at")
 
 
 class _FakeUserModel(_FakeModel):
@@ -31,8 +42,10 @@ class _FakeUserModel(_FakeModel):
 class _SelectStmt:
     def __init__(self, model):
         self.model = model
+        self._where_criteria = []
 
-    def where(self, *_args, **_kwargs):
+    def where(self, *args, **_kwargs):
+        self._where_criteria = args
         return self
 
     def with_for_update(self):
@@ -56,7 +69,9 @@ class _ClaimResult:
 
 
 class _FakeWhereValue:
-    def __init__(self, value):
+    def __init__(self, field, operator, value):
+        self.left = type("_Left", (), {"name": field})()
+        self.operator = operator
         self.right = type("_Right", (), {"value": value})()
 
 
@@ -107,7 +122,19 @@ class _FakeDB:
 
     async def execute(self, stmt):
         if getattr(stmt, "model", None) is _FakeRefundOutboxModel:
-            return _DummyResult(self._state["outbox"])
+            outbox = self._state["outbox"]
+            for criterion in getattr(stmt, "_where_criteria", []):
+                if not hasattr(criterion, "left"):
+                    continue
+                current_value = getattr(outbox, criterion.left.name)
+                expected_value = criterion.right.value
+                if criterion.operator == "eq" and current_value != expected_value:
+                    return _DummyResult(None)
+                if criterion.operator == "is_not" and current_value is expected_value:
+                    return _DummyResult(None)
+                if criterion.operator == "ge" and current_value < expected_value:
+                    return _DummyResult(None)
+            return _DummyResult(outbox)
         if getattr(stmt, "model", None) is _FakeUserModel:
             return _DummyResult(self._state["user"])
         raise AssertionError(f"Unexpected statement: {stmt}")
@@ -295,7 +322,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
                 status="pending",
                 attempts=0,
                 lease_attempts=0,
-                leased_at="lease",
+                leased_at=datetime.now(timezone.utc),
                 lease_token="token",
                 last_error=None,
                 processed_at=None,
@@ -319,7 +346,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
-            refunds.process_refund_outbox_task(7)
+            refunds.process_refund_outbox_task(7, "token")
 
         self.assertEqual(state["user"].free_requests, 0)
         self.assertEqual(state["user"].used_requests, 1)
@@ -329,13 +356,16 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         self.assertIsNone(state["outbox"].lease_token)
         self.assertIsNotNone(state["outbox"].last_error)
 
+        state["outbox"].lease_token = "token-2"
+        state["outbox"].leased_at = datetime.now(timezone.utc)
+
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
-            refunds.process_refund_outbox_task(7)
+            refunds.process_refund_outbox_task(7, "token-2")
 
         self.assertEqual(state["user"].free_requests, 1)
         self.assertEqual(state["user"].used_requests, 0)
@@ -383,7 +413,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
                 status="pending",
                 attempts=0,
                 lease_attempts=0,
-                leased_at="lease",
+                leased_at=datetime.now(timezone.utc),
                 lease_token="token",
                 last_error=None,
                 processed_at=None,
@@ -395,7 +425,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
         ):
-            refunds.process_refund_outbox_task(8)
+            refunds.process_refund_outbox_task(8, "token")
 
         self.assertEqual(state["outbox"].status, "failed")
         self.assertEqual(state["outbox"].last_error, "invalid_billing_tier")
@@ -416,7 +446,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
                 status="pending",
                 attempts=refunds.REFUND_OUTBOX_MAX_ATTEMPTS - 1,
                 lease_attempts=0,
-                leased_at="lease",
+                leased_at=datetime.now(timezone.utc),
                 lease_token="token",
                 last_error=None,
                 processed_at=None,
@@ -432,7 +462,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_always_fail),
         ):
-            refunds.process_refund_outbox_task(9)
+            refunds.process_refund_outbox_task(9, "token")
 
         self.assertEqual(state["outbox"].attempts, refunds.REFUND_OUTBOX_MAX_ATTEMPTS)
         self.assertEqual(state["outbox"].status, "failed")
@@ -452,7 +482,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
                 status="pending",
                 attempts=0,
                 lease_attempts=0,
-                leased_at="lease",
+                leased_at=datetime.now(timezone.utc),
                 lease_token="token",
                 last_error=None,
                 processed_at=None,
@@ -464,7 +494,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
         ):
-            refunds.process_refund_outbox_task(13)
+            refunds.process_refund_outbox_task(13, "token")
 
         self.assertEqual(state["user"].free_requests, 1)
         self.assertEqual(state["user"].used_requests, 0)
@@ -475,11 +505,46 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
             patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
         ):
-            refunds.process_refund_outbox_task(13)
+            refunds.process_refund_outbox_task(13, "token")
 
         self.assertEqual(state["user"].free_requests, 1)
         self.assertEqual(state["user"].used_requests, 0)
         self.assertEqual(state["outbox"].attempts, 1)
+
+    def test_stale_lease_token_does_not_change_outbox_state(self):
+        refunds = _load_refunds_module()
+        stale_lease_time = datetime.now(timezone.utc) - timedelta(seconds=refunds.REFUND_OUTBOX_LEASE_TTL_SECONDS + 1)
+        state = {
+            "user": SimpleNamespace(id=10, free_requests=0, paid_requests=0, used_requests=1),
+            "outbox": SimpleNamespace(
+                id=14,
+                owner_id=10,
+                billing_tier="free",
+                request_id="req-stale-lease",
+                status="pending",
+                attempts=1,
+                lease_attempts=1,
+                leased_at=stale_lease_time,
+                lease_token="new-token",
+                last_error="prev",
+                processed_at=None,
+            ),
+        }
+        snapshot = copy.deepcopy(state["outbox"])
+
+        with (
+            patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
+            patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
+            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+        ):
+            refunds.process_refund_outbox_task(14, "old-token")
+
+        self.assertEqual(state["outbox"].attempts, snapshot.attempts)
+        self.assertEqual(state["outbox"].status, snapshot.status)
+        self.assertEqual(state["outbox"].leased_at, snapshot.leased_at)
+        self.assertEqual(state["outbox"].lease_token, snapshot.lease_token)
+        self.assertEqual(state["outbox"].last_error, snapshot.last_error)
+        self.assertEqual(state["outbox"].processed_at, snapshot.processed_at)
 
     def test_requeue_pending_refund_outbox_releases_lease_after_enqueue_error(self):
         refunds = _load_refunds_module()
@@ -501,6 +566,14 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
             self.assertEqual(second_scanned, 1)
             self.assertEqual(second_enqueued, 1)
             self.assertEqual(send_task_mock.call_count, 2)
+            first_call_args = send_task_mock.call_args_list[0].kwargs["args"]
+            second_call_args = send_task_mock.call_args_list[1].kwargs["args"]
+            self.assertEqual(len(first_call_args), 2)
+            self.assertEqual(len(second_call_args), 2)
+            self.assertEqual(first_call_args[0], 11)
+            self.assertEqual(second_call_args[0], 11)
+            self.assertNotEqual(first_call_args[1], second_call_args[1])
+            self.assertEqual(second_call_args[1], state[0]["lease_token"])
             self.assertEqual(state[0]["lease_attempts"], 2)
             self.assertIsNotNone(state[0]["lease_token"])
             self.assertEqual(state[0]["last_error"], "broker down")
