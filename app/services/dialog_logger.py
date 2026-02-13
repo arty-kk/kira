@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import unicodedata
 
@@ -10,6 +11,22 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from app.config import settings
+
+
+logger = logging.getLogger(__name__)
+_WARNED_ISSUES: set[str] = set()
+
+
+def _warn_once(issue_scope: str, reason: Exception, dialogs_dir: str) -> None:
+    issue_key = f"{issue_scope}:{dialogs_dir}:{type(reason).__name__}:{reason}"
+    if issue_key in _WARNED_ISSUES:
+        return
+    _WARNED_ISSUES.add(issue_key)
+    logger.warning(
+        "Dialog logging is unavailable for DIALOGS_DIR=%s: %s",
+        dialogs_dir,
+        reason,
+    )
 
 
 def _get_tz():
@@ -33,14 +50,17 @@ def _sanitize(text: str | None) -> str:
 
 
 async def _write_line(user_id: int, line: str) -> None:
+    dialogs_dir = "dialogs"
     try:
-        base = Path(getattr(settings, "DIALOGS_DIR", "dialogs"))
+        dialogs_dir = getattr(settings, "DIALOGS_DIR", "dialogs")
+        base = Path(dialogs_dir)
     except Exception:
         base = Path("dialogs")
     try:
         base.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        _warn_once("mkdir", exc, str(dialogs_dir))
+        return
 
     path = base / f"{user_id}.txt"
 
@@ -48,7 +68,10 @@ async def _write_line(user_id: int, line: str) -> None:
         with open(path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
 
-    await asyncio.to_thread(_sync_write)
+    try:
+        await asyncio.to_thread(_sync_write)
+    except Exception as exc:
+        _warn_once("write", exc, str(dialogs_dir))
 
 
 async def log_user_message(user_id: int, user_name: str, text: str) -> None:
