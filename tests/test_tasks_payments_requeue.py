@@ -4,6 +4,8 @@ import sys
 import types
 import unittest
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 
@@ -29,7 +31,6 @@ class _FakePaymentOutbox:
     leased_at = _FakeColumn()
     lease_token = _FakeColumn()
     notified_at = _FakeColumn()
-
 
 
 class _FakeWhereValue:
@@ -208,7 +209,7 @@ class RequeuePendingOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second_enqueued, 0)
         self.assertEqual(second_errors, 0)
         self.assertEqual(send_task_mock.call_count, 1)
-        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_1"])
+        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_1", state[0]["lease_token"]])
 
     async def test_requeue_pending_outbox_releases_lease_after_enqueue_error(self):
         payments = _load_payments_module()
@@ -251,7 +252,7 @@ class RequeueAppliedUnnotifiedOutboxTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(enqueued, 1)
         self.assertEqual(errors, 0)
-        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_applied"])
+        send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_applied", state[0]["lease_token"]])
 
     async def test_requeue_applied_unnotified_outbox_releases_lease_on_enqueue_error(self):
         payments = _load_payments_module()
@@ -276,6 +277,143 @@ class RequeueAppliedUnnotifiedOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(state[0]["notified_at"])
         self.assertIsNotNone(state[0]["lease_token"])
         self.assertEqual(state[0]["last_error"], "broker down")
+
+
+class _ApplyOutboxResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one_or_none(self):
+        return self._value
+
+
+class _ApplyOutboxDB:
+    def __init__(self, outbox, receipt_id):
+        self.outbox = outbox
+        self.receipt_id = receipt_id
+        self.execute_calls = 0
+
+    async def execute(self, _stmt, _params=None):
+        self.execute_calls += 1
+        if self.execute_calls == 1:
+            return _ApplyOutboxResult(self.outbox)
+        if self.execute_calls == 2:
+            return _ApplyOutboxResult(self.receipt_id)
+        raise AssertionError("Unexpected execute call")
+
+    async def get(self, _model, _user_id):
+        return SimpleNamespace(id=1)
+
+    async def flush(self):
+        return None
+
+    async def refresh(self, _user):
+        return None
+
+
+class _ApplySelectChain:
+    def where(self, *_args, **_kwargs):
+        return self
+
+    def with_for_update(self):
+        return self
+
+
+class _FakeReceiptInsert:
+    def __init__(self, _model, capture):
+        self.capture = capture
+
+    def values(self, **_kwargs):
+        return self
+
+    def on_conflict_do_nothing(self, *, index_elements):
+        self.capture["index_elements"] = list(index_elements)
+        return self
+
+    def returning(self, *_args, **_kwargs):
+        return self
+
+
+class ProcessOutboxLeaseTokenTests(unittest.IsolatedAsyncioTestCase):
+    async def test_apply_outbox_skips_stale_lease_without_mutation(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            telegram_payment_charge_id="charge_race",
+            lease_token="fresh-token",
+            leased_at=datetime.now(timezone.utc),
+            status="pending",
+            attempts=3,
+            last_error="old",
+            applied_at=None,
+        )
+        db = _ApplyOutboxDB(outbox=outbox, receipt_id=None)
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(payments, "select", lambda *_args, **_kwargs: _ApplySelectChain()),
+            patch.object(payments.logger, "info") as info_mock,
+        ):
+            result = await payments._apply_outbox("charge_race", "stale-token")
+
+        self.assertEqual(result, (None, None, False))
+        self.assertEqual(outbox.attempts, 3)
+        self.assertEqual(outbox.status, "pending")
+        self.assertEqual(outbox.last_error, "old")
+        self.assertIsNone(outbox.applied_at)
+        self.assertEqual(db.execute_calls, 1)
+        info_mock.assert_any_call(
+            "payment_outbox: stale lease skip charge_id=%s expected_lease_token=%s actual_lease_token=%s",
+            "charge_race",
+            "stale-token",
+            "fresh-token",
+        )
+
+    async def test_apply_outbox_with_valid_lease_keeps_receipt_idempotency_guard(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            telegram_payment_charge_id="charge_ok",
+            provider_payment_charge_id="prov",
+            user_id=1,
+            kind="buy",
+            status="pending",
+            requests_amount=2,
+            stars_amount=10,
+            invoice_payload="buy_2",
+            lease_token="fresh-token",
+            leased_at=datetime.now(timezone.utc),
+            attempts=0,
+            last_error="some",
+            applied_at=None,
+        )
+        db = _ApplyOutboxDB(outbox=outbox, receipt_id=None)
+        insert_capture = {}
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(payments, "select", lambda *_args, **_kwargs: _ApplySelectChain()),
+            patch.object(payments, "pg_insert", lambda model: _FakeReceiptInsert(model, insert_capture)),
+            patch.object(payments, "compute_remaining", lambda _user: 11),
+            patch.object(payments, "add_paid_requests", AsyncMock()) as add_paid_requests_mock,
+        ):
+            row, remaining, duplicate = await payments._apply_outbox("charge_ok", "fresh-token")
+
+        self.assertIs(row, outbox)
+        self.assertEqual(remaining, 11)
+        self.assertTrue(duplicate)
+        self.assertEqual(outbox.attempts, 1)
+        self.assertEqual(outbox.status, "applied")
+        self.assertIsNotNone(outbox.applied_at)
+        self.assertIsNone(outbox.lease_token)
+        self.assertEqual(insert_capture["index_elements"], ["telegram_payment_charge_id"])
+        add_paid_requests_mock.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -188,15 +188,18 @@ class PaymentOutboxTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "send_transient_notice", AsyncMock()),
             patch.object(payments, "tr", AsyncMock(side_effect=lambda *_args, **_kwargs: _kwargs.get("default", ""))),
             patch.object(payments, "purchase_tiers", lambda: {1: 1}),
+            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="lease-123")),
             patch.object(payments.celery, "send_task") as send_task,
         ):
             await payments.on_payment_success(dummy_message)
 
-        send_task.assert_called_with("payments.process_outbox", args=["charge_123"])
+        send_task.assert_called_with("payments.process_outbox", args=["charge_123", "lease-123"])
 
     async def test_payment_success_keeps_outbox_pending_when_enqueue_fails(self) -> None:
         payments = _load_payments_module()
         fake_db = _FakeDB()
+        fake_db.row.lease_token = "lease-456"
+        fake_db.row.leased_at = "now"
 
         @asynccontextmanager
         async def _fake_session_scope(*_args, **_kwargs):
@@ -233,6 +236,7 @@ class PaymentOutboxTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "send_transient_notice", AsyncMock()) as send_notice,
             patch.object(payments, "tr", AsyncMock(side_effect=_fake_tr)),
             patch.object(payments, "purchase_tiers", lambda: {1: 1}),
+            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="lease-456")),
             patch.object(payments.celery, "send_task", side_effect=Exception("broker down")),
         ):
             await payments.on_payment_success(dummy_message)
@@ -243,6 +247,8 @@ class PaymentOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(sent_text, "✅ Processing payment now.")
         self.assertEqual(fake_db.row.status, "pending")
         self.assertEqual(fake_db.row.last_error, "broker down")
+        self.assertIsNone(fake_db.row.lease_token)
+        self.assertIsNone(fake_db.row.leased_at)
         self.assertEqual(fake_db.execute_calls, 2)
 
 
