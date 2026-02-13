@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from sqlalchemy import select, text, update
+from sqlalchemy import bindparam, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import session_scope
@@ -22,16 +22,23 @@ async def _refund_balance_for_outbox(db: AsyncSession, owner_id: int, billing_ti
 
 
 @celery.task(name="refunds.process_outbox")
-def process_refund_outbox_task(outbox_id: int) -> None:
-    async def _run_task() -> None:
+def process_refund_outbox_task(outbox_id: int, lease_token: str) -> None:
+    async def _run_task(lease_token: str) -> None:
         async with session_scope(stmt_timeout_ms=5000) as db:
             res = await db.execute(
                 select(RefundOutbox)
-                .where(RefundOutbox.id == int(outbox_id))
+                .where(
+                    RefundOutbox.id == int(outbox_id),
+                    RefundOutbox.status == "pending",
+                    RefundOutbox.lease_token == str(lease_token),
+                    text("leased_at IS NOT NULL AND leased_at >= now() - make_interval(secs => :lease_ttl_seconds)").bindparams(
+                        bindparam("lease_ttl_seconds", REFUND_OUTBOX_LEASE_TTL_SECONDS)
+                    ),
+                )
                 .with_for_update()
             )
             outbox = res.scalar_one_or_none()
-            if outbox is None or outbox.status != "pending":
+            if outbox is None:
                 return
 
             outbox.attempts = int(outbox.attempts or 0) + 1
@@ -69,7 +76,7 @@ def process_refund_outbox_task(outbox_id: int) -> None:
                     outbox.request_id,
                 )
 
-    _run(_run_task())
+    _run(_run_task(str(lease_token)))
 
 
 async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_SIZE) -> tuple[int, int]:
@@ -108,7 +115,7 @@ async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_S
     enqueued = 0
     for outbox_id, row_lease_token in claimed_rows:
         try:
-            celery.send_task("refunds.process_outbox", args=[int(outbox_id)])
+            celery.send_task("refunds.process_outbox", args=[int(outbox_id), str(row_lease_token)])
             enqueued += 1
         except Exception as exc:
             async with session_scope(stmt_timeout_ms=3000) as db:
