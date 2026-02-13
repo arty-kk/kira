@@ -402,6 +402,69 @@ class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
             "idempotency_key_reused_with_different_payload",
         )
 
+    async def test_idempotency_replays_no_requests_without_reprocessing(self) -> None:
+        fake_redis = _ScenarioFakeRedis(get_results=[None], set_nx_results=[True])
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        check_rate_limit_mock = unittest.mock.AsyncMock()
+        send_job_mock = unittest.mock.AsyncMock()
+
+        session_scope_calls = 0
+
+        class _Result:
+            def scalar_one_or_none(self):
+                return None
+
+        class _Db:
+            async def execute(self, _stmt):
+                return _Result()
+
+        @asynccontextmanager
+        async def _fake_session_scope(**_kwargs):
+            nonlocal session_scope_calls
+            session_scope_calls += 1
+            yield _Db()
+
+        with (
+            unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+            unittest.mock.patch.object(conversation, "_check_rate_limit", new=check_rate_limit_mock),
+            unittest.mock.patch.object(conversation, "_send_job_and_wait", new=send_job_mock),
+            unittest.mock.patch.object(conversation, "session_scope", _fake_session_scope),
+        ):
+            with self.assertRaises(conversation.HTTPException) as first_exc:
+                await conversation.conversation_endpoint(
+                    payload,
+                    request,
+                    api_key={"user_id": 1, "id": 2},
+                    idempotency_key="no-requests-idem",
+                )
+
+            with self.assertRaises(conversation.HTTPException) as second_exc:
+                await conversation.conversation_endpoint(
+                    payload,
+                    request,
+                    api_key={"user_id": 1, "id": 2},
+                    idempotency_key="no-requests-idem",
+                )
+
+        self.assertEqual(first_exc.exception.status_code, 402)
+        self.assertEqual(first_exc.exception.detail.get("code"), "no_requests")
+        self.assertEqual(second_exc.exception.status_code, 402)
+        self.assertEqual(second_exc.exception.detail.get("code"), "no_requests")
+
+        self.assertEqual(check_rate_limit_mock.await_count, 1)
+        self.assertEqual(session_scope_calls, 1)
+        send_job_mock.assert_not_awaited()
+
 
     async def test_final_idempotency_store_failure_refunds_and_clears_inflight(self) -> None:
         fake_redis = _ScenarioFakeRedis(
