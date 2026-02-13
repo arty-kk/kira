@@ -665,60 +665,81 @@ class _EmbedBatcher:
         async with self._lock:
             self._queue.append((norm, fut))
             if len(self._queue) >= _BG_BATCH_MAX:
-                await self._flush_locked()
+                if not self._flush_task:
+                    self._schedule_next_flush_locked()
             elif not self._flush_task:
                 self._flush_task = loop.create_task(self._delayed_flush())
         return await fut
 
     async def _delayed_flush(self):
+        current = asyncio.current_task()
         try:
             await asyncio.sleep(_BG_BATCH_WAIT_MS / 1000)
-            async with self._lock:
-                await self._flush_locked()
-        finally:
-            self._flush_task = None
+        except asyncio.CancelledError:
+            await self._finalize_flush_task(current)
+            raise
+        await self._flush_scheduled()
 
-    async def _flush_locked(self):
-        while self._queue:
-            batch = self._queue[:_BG_BATCH_MAX]
-            self._queue = self._queue[_BG_BATCH_MAX:]
-            uniq_map: dict[str, dict] = {}
-            uniq_list: list[str] = []
-            key_order: list[str] = []
-            for text_norm, fut in batch:
-                model_for_key = str(getattr(settings, "EMBEDDING_MODEL", "")).strip()
-                cache_key = (
-                    f"emb:{model_for_key}:{_DIM}:"
-                    + hashlib.md5(text_norm.encode("utf-8")).hexdigest()
-                )
-                if cache_key in uniq_map:
-                    uniq_map[cache_key]["futs"].append(fut)
-                else:
-                    uniq_map[cache_key] = {"text": text_norm, "futs": [fut]}
-                    uniq_list.append(text_norm)
-                    key_order.append(cache_key)
-            try:
-                rds = get_redis()
-                cached = await rds.mget(key_order) if key_order else []
-                miss_keys = []
-                miss_texts = []
-                if cached:
-                    for i, b64 in enumerate(cached):
-                        if not b64:
-                            miss_keys.append(key_order[i])
-                            miss_texts.append(uniq_list[i])
-                            continue
-                        try:
-                            raw = base64.b64decode(b64)
-                            if len(raw) != _DIM * 4:
-                                try:
-                                    await rds.delete(key_order[i])
-                                except Exception:
-                                    pass
-                                miss_keys.append(key_order[i])
-                                miss_texts.append(uniq_list[i])
-                                continue
-                        except Exception:
+    def _take_batch_locked(self) -> list[tuple[str, asyncio.Future]]:
+        if not self._queue:
+            return []
+        batch = self._queue[:_BG_BATCH_MAX]
+        self._queue = self._queue[_BG_BATCH_MAX:]
+        return batch
+
+    def _schedule_next_flush_locked(self):
+        loop = asyncio.get_running_loop()
+        self._flush_task = loop.create_task(self._flush_scheduled())
+
+    async def _flush_scheduled(self):
+        current = asyncio.current_task()
+        try:
+            async with self._lock:
+                if self._flush_task is not current:
+                    return
+                batch = self._take_batch_locked()
+            if batch:
+                await self._flush_batch(batch)
+        finally:
+            await self._finalize_flush_task(current)
+
+    async def _finalize_flush_task(self, current):
+        async with self._lock:
+            if self._flush_task is current:
+                self._flush_task = None
+            if self._queue and not self._flush_task:
+                self._schedule_next_flush_locked()
+
+    async def _flush_batch(self, batch: list[tuple[str, asyncio.Future]]):
+        uniq_map: dict[str, dict] = {}
+        uniq_list: list[str] = []
+        key_order: list[str] = []
+        for text_norm, fut in batch:
+            model_for_key = str(getattr(settings, "EMBEDDING_MODEL", "")).strip()
+            cache_key = (
+                f"emb:{model_for_key}:{_DIM}:"
+                + hashlib.md5(text_norm.encode("utf-8")).hexdigest()
+            )
+            if cache_key in uniq_map:
+                uniq_map[cache_key]["futs"].append(fut)
+            else:
+                uniq_map[cache_key] = {"text": text_norm, "futs": [fut]}
+                uniq_list.append(text_norm)
+                key_order.append(cache_key)
+        try:
+            rds = get_redis()
+            cached = await rds.mget(key_order) if key_order else []
+            miss_keys = []
+            miss_texts = []
+            if cached:
+                for i, b64 in enumerate(cached):
+                    if not b64:
+                        miss_keys.append(key_order[i])
+                        miss_texts.append(uniq_list[i])
+                        continue
+                    try:
+                        raw = base64.b64decode(b64)
+                        if len(raw) != _DIM * 4:
                             try:
                                 await rds.delete(key_order[i])
                             except Exception:
@@ -726,109 +747,117 @@ class _EmbedBatcher:
                             miss_keys.append(key_order[i])
                             miss_texts.append(uniq_list[i])
                             continue
-                        for fut in uniq_map[key_order[i]]["futs"]:
+                    except Exception:
+                        try:
+                            await rds.delete(key_order[i])
+                        except Exception:
+                            pass
+                        miss_keys.append(key_order[i])
+                        miss_texts.append(uniq_list[i])
+                        continue
+                    for fut in uniq_map[key_order[i]]["futs"]:
+                        if not fut.done():
+                            fut.set_result(raw)
+            else:
+                miss_keys = key_order[:]
+                miss_texts = uniq_list[:]
+
+            items = []
+            if miss_texts:
+                model = settings.EMBEDDING_MODEL
+                timeout_s = settings.EMBEDDING_TIMEOUT
+                if not model:
+                    logger.error("EMBEDDING_MODEL is not configured; returning zero embeddings for %d items", len(miss_texts))
+                    items = []
+                else:
+                    _t0 = time.perf_counter()
+                    try:
+                        resp = await asyncio.wait_for(
+                            _call_openai_with_retry(
+                                endpoint="embeddings.create",
+                                input=miss_texts,
+                                model=model,
+                                encoding_format="float"
+                            ),
+                            timeout=timeout_s,
+                        )
+                        items = getattr(resp, "data", []) or []
+                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                        logger.info("openai_timing: embeddings.create batch ok t=%.1fms model=%s batch=%d",
+                                    _dt_ms, model, len(miss_texts))
+                    except asyncio.TimeoutError:
+                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                        logger.warning("openai_timing: embeddings.create batch TIMEOUT t=%.1fms model=%s batch=%d",
+                                       _dt_ms, model, len(miss_texts))
+                        items = []
+                    except Exception as e:
+                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                        logger.warning("openai_timing: embeddings.create batch FAIL t=%.1fms model=%s batch=%d err=%s",
+                                       _dt_ms, model, len(miss_texts), e)
+                        items = []
+
+            n_items = len(items)
+            to_cache = []
+            for i, cache_key in enumerate(miss_keys):
+                futs = uniq_map.get(cache_key, {}).get("futs", [])
+                try:
+                    if i < n_items:
+                        vec = items[i].embedding
+                        if isinstance(vec, str):
+                            try:
+                                raw = base64.b64decode(vec)
+                                arr = np.frombuffer(raw, dtype=np.float32)
+                            except Exception:
+                                arr = np.zeros(_DIM, dtype=np.float32)
+                        else:
+                            arr = np.asarray(vec, dtype=np.float32)
+                        strict_dim = bool(getattr(settings, "EMBED_STRICT_DIM", True))
+                        if arr.shape[0] != _DIM:
+                            if strict_dim:
+                                logger.error("embed-batch: embedding dim=%d != EMBED_DIM=%d", arr.shape[0], _DIM)
+                                arr = np.zeros(_DIM, dtype=np.float32)
+                            else:
+                                arr = arr[:_DIM] if arr.shape[0] > _DIM else np.pad(arr, (0, _DIM - arr.shape[0])).astype(np.float32)
+                        try:
+                            norm = float(np.linalg.norm(arr))
+                            if norm > 0.0:
+                                arr = arr / norm
+                        except Exception:
+                            pass
+                        raw = arr.tobytes()
+                        to_cache.append((cache_key, raw))
+                        for fut in futs:
                             if not fut.done():
                                 fut.set_result(raw)
-                else:
-                    miss_keys = key_order[:]
-                    miss_texts = uniq_list[:]
-
-                items = []
-                if miss_texts:
-                    model = settings.EMBEDDING_MODEL
-                    timeout_s = settings.EMBEDDING_TIMEOUT
-                    if not model:
-                        logger.error("EMBEDDING_MODEL is not configured; returning zero embeddings for %d items", len(miss_texts))
-                        items = []
                     else:
-                        _t0 = time.perf_counter()
-                        try:
-                            resp = await asyncio.wait_for(
-                                _call_openai_with_retry(
-                                    endpoint="embeddings.create",
-                                    input=miss_texts,
-                                    model=model,
-                                    encoding_format="float"
-                                ),
-                                timeout=timeout_s,
-                            )
-                            items = getattr(resp, "data", []) or []
-                            _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                            logger.info("openai_timing: embeddings.create batch ok t=%.1fms model=%s batch=%d",
-                                        _dt_ms, model, len(miss_texts))
-                        except asyncio.TimeoutError:
-                            _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                            logger.warning("openai_timing: embeddings.create batch TIMEOUT t=%.1fms model=%s batch=%d",
-                                           _dt_ms, model, len(miss_texts))
-                            items = []
-                        except Exception as e:
-                            _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                            logger.warning("openai_timing: embeddings.create batch FAIL t=%.1fms model=%s batch=%d err=%s",
-                                           _dt_ms, model, len(miss_texts), e)
-                            items = []
-
-                n_items = len(items)
-                to_cache = []
-                for i, (cache_key, text) in enumerate(zip(miss_keys, miss_texts)):
-                    futs = uniq_map.get(cache_key, {}).get("futs", [])
-                    try:
-                        if i < n_items:
-                            vec = items[i].embedding
-                            if isinstance(vec, str):
-                                try:
-                                    raw = base64.b64decode(vec)
-                                    arr = np.frombuffer(raw, dtype=np.float32)
-                                except Exception:
-                                    arr = np.zeros(_DIM, dtype=np.float32)
-                            else:
-                                arr = np.asarray(vec, dtype=np.float32)
-                            strict_dim = bool(getattr(settings, "EMBED_STRICT_DIM", True))
-                            if arr.shape[0] != _DIM:
-                                if strict_dim:
-                                    logger.error("embed-batch: embedding dim=%d != EMBED_DIM=%d", arr.shape[0], _DIM)
-                                    arr = np.zeros(_DIM, dtype=np.float32)
-                                else:
-                                    arr = arr[:_DIM] if arr.shape[0] > _DIM else np.pad(arr, (0, _DIM - arr.shape[0])).astype(np.float32)
-                            try:
-                                norm = float(np.linalg.norm(arr))
-                                if norm > 0.0:
-                                    arr = arr / norm
-                            except Exception:
-                                pass
-                            raw = arr.tobytes()
-                            to_cache.append((cache_key, raw))
-                            for fut in futs:
-                                if not fut.done():
-                                    fut.set_result(raw)
-                        else:
-                            zero_raw = _ZERO_VEC
-                            for fut in futs:
-                                if not fut.done():
-                                    fut.set_result(zero_raw)
-                    except Exception:
                         zero_raw = _ZERO_VEC
                         for fut in futs:
                             if not fut.done():
                                 fut.set_result(zero_raw)
-                if to_cache:
-                    try:
-                        pipe = rds.pipeline(transaction=False)
-                        for md5_key, raw in to_cache:
-                            try:
-                                if not _is_zero_embedding(raw):
-                                    ttl = int(86400 * (0.9 + 0.2 * random.random()))
-                                    pipe.set(md5_key, base64.b64encode(raw).decode("ascii"), ex=ttl)
-                            except Exception:
-                                logger.debug("embed-batch: cache store failed for one item", exc_info=True)
-                                continue
-                        await pipe.execute()
-                    except Exception:
-                        pass
-            except Exception:
-                zero_raw = _ZERO_VEC
-                for _, fut in batch:
-                    if not fut.done():
-                        fut.set_result(zero_raw)
+                except Exception:
+                    zero_raw = _ZERO_VEC
+                    for fut in futs:
+                        if not fut.done():
+                            fut.set_result(zero_raw)
+            if to_cache:
+                try:
+                    pipe = rds.pipeline(transaction=False)
+                    for md5_key, raw in to_cache:
+                        try:
+                            if not _is_zero_embedding(raw):
+                                ttl = int(86400 * (0.9 + 0.2 * random.random()))
+                                pipe.set(md5_key, base64.b64encode(raw).decode("ascii"), ex=ttl)
+                        except Exception:
+                            logger.debug("embed-batch: cache store failed for one item", exc_info=True)
+                            continue
+                    await pipe.execute()
+                except Exception:
+                    pass
+        except Exception:
+            zero_raw = _ZERO_VEC
+            for _, fut in batch:
+                if not fut.done():
+                    fut.set_result(zero_raw)
 
 _EMBED_BATCHER = _EmbedBatcher()
 
