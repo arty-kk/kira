@@ -177,5 +177,89 @@ class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call["ex"], api_worker.REQUEUE_LOCK_TTL_SEC)
 
 
+class _FailThenRecoverRedisQueue:
+    def __init__(self, *, payload=None, error=None):
+        self.payload = payload
+        self.error = error or RuntimeError("redis down")
+        self.calls = 0
+
+    async def brpoplpush(self, *_args, **_kwargs):
+        self.calls += 1
+        await asyncio.sleep(0)
+        if self.calls == 1:
+            raise self.error
+        return self.payload
+
+    async def set(self, *_args, **_kwargs):
+        return False
+
+
+class _HealthyRedisQueue:
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = 0
+
+    async def brpoplpush(self, *_args, **_kwargs):
+        self.calls += 1
+        await asyncio.sleep(0)
+        if self.calls == 1:
+            return self.payload
+        return None
+
+    async def set(self, *_args, **_kwargs):
+        return False
+
+
+class ApiWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_recovers_after_brpoplpush_failure_and_uses_new_client(self) -> None:
+        stop_evt = asyncio.Event()
+        payload = '{"request_id":"1"}'
+        first_client = _FailThenRecoverRedisQueue()
+        second_client = _HealthyRedisQueue(payload)
+
+        get_redis_queue_mock = unittest.mock.Mock(side_effect=[first_client, second_client])
+        close_mock = unittest.mock.AsyncMock()
+        async def _fake_handle_job(raw, redis_client):
+            stop_evt.set()
+
+        with unittest.mock.patch.object(api_worker, "get_redis_queue", get_redis_queue_mock), unittest.mock.patch.object(
+            api_worker, "close_redis_pools", close_mock
+        ), unittest.mock.patch.object(api_worker, "_sweeper_loop", unittest.mock.AsyncMock()), unittest.mock.patch.object(
+            api_worker, "_queue_depth_loop", unittest.mock.AsyncMock()
+        ), unittest.mock.patch.object(api_worker, "_recovery_jitter", return_value=0.0), unittest.mock.patch.object(api_worker, "_handle_job", new=unittest.mock.AsyncMock(side_effect=_fake_handle_job)) as handle_job_mock:
+            await api_worker._worker_loop(stop_evt)
+
+        close_mock.assert_awaited_once()
+        self.assertEqual(get_redis_queue_mock.call_count, 2)
+        handle_job_mock.assert_awaited_once_with(payload, second_client)
+        self.assertEqual(first_client.calls, 1)
+        self.assertGreaterEqual(second_client.calls, 1)
+
+    async def test_worker_retries_when_recovered_client_is_none(self) -> None:
+        stop_evt = asyncio.Event()
+        payload = '{"request_id":"2"}'
+        first_client = _FailThenRecoverRedisQueue()
+        second_client = _HealthyRedisQueue(payload)
+
+        get_redis_queue_mock = unittest.mock.Mock(side_effect=[first_client, None, second_client])
+        close_mock = unittest.mock.AsyncMock()
+
+        async def _fake_handle_job(raw, redis_client):
+            stop_evt.set()
+
+        with unittest.mock.patch.object(api_worker, "get_redis_queue", get_redis_queue_mock), unittest.mock.patch.object(
+            api_worker, "close_redis_pools", close_mock
+        ), unittest.mock.patch.object(api_worker, "_sweeper_loop", unittest.mock.AsyncMock()), unittest.mock.patch.object(
+            api_worker, "_queue_depth_loop", unittest.mock.AsyncMock()
+        ), unittest.mock.patch.object(api_worker, "_recovery_jitter", return_value=0.0), unittest.mock.patch.object(api_worker, "_handle_job", new=unittest.mock.AsyncMock(side_effect=_fake_handle_job)) as handle_job_mock:
+            await api_worker._worker_loop(stop_evt)
+
+        self.assertEqual(get_redis_queue_mock.call_count, 3)
+        self.assertEqual(close_mock.await_count, 2)
+        handle_job_mock.assert_awaited_once_with(payload, second_client)
+        self.assertEqual(first_client.calls, 1)
+        self.assertGreaterEqual(second_client.calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

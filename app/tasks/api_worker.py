@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 import tempfile
 
@@ -69,6 +70,17 @@ JOB_TTL_SEC = max(
 )
 INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRIPTION_TIMEOUT
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "API_REQUEUE_LOCK_TTL_SEC", 300))
+REDIS_RECOVERY_BACKOFF_MIN_SEC = float(getattr(settings, "API_REDIS_RECOVERY_BACKOFF_MIN_SEC", 1.0))
+REDIS_RECOVERY_BACKOFF_MAX_SEC = float(getattr(settings, "API_REDIS_RECOVERY_BACKOFF_MAX_SEC", 15.0))
+
+
+def _recovery_jitter(base: float, spread: float = 0.35) -> float:
+    if base <= 0:
+        return 0.0
+    spread = max(0.0, min(spread, 1.0))
+    low = max(0.0, base * (1 - spread))
+    high = base * (1 + spread)
+    return random.uniform(low, high)
 
 def detect_voice_mime(audio: bytes) -> str | None:
     if not audio:
@@ -1031,6 +1043,54 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
 
     sweeper = asyncio.create_task(_sweeper_loop(stop_evt, redis_queue))
     depth_logger = asyncio.create_task(_queue_depth_loop(stop_evt, redis_queue))
+    redis_backoff_sec = REDIS_RECOVERY_BACKOFF_MIN_SEC
+
+    async def _recover_queue_client(*, reason: Exception | None = None, severity: str = "warning") -> bool:
+        nonlocal redis_queue, redis_backoff_sec
+
+        if reason is not None:
+            logger.warning(
+                "api_worker: temporary Redis read error in brpoplpush (%s); starting recovery",
+                reason,
+            )
+
+        with suppress(Exception):
+            await close_redis_pools()
+
+        current_backoff = redis_backoff_sec
+        await asyncio.sleep(_recovery_jitter(current_backoff))
+
+        try:
+            redis_queue = get_redis_queue()
+        except Exception as reconnect_error:
+            logger.critical(
+                "api_worker: failed to recreate Redis queue client (backoff=%.2fs); "
+                "will retry recovery: %s",
+                current_backoff,
+                reconnect_error,
+            )
+            redis_backoff_sec = min(
+                REDIS_RECOVERY_BACKOFF_MAX_SEC,
+                max(REDIS_RECOVERY_BACKOFF_MIN_SEC, current_backoff * 2),
+            )
+            return False
+
+        if redis_queue is None:
+            log_fn = logger.critical if severity == "critical" else logger.error
+            log_fn(
+                "api_worker: get_redis_queue() returned None during recovery (backoff=%.2fs); "
+                "will retry",
+                current_backoff,
+            )
+            redis_backoff_sec = min(
+                REDIS_RECOVERY_BACKOFF_MAX_SEC,
+                max(REDIS_RECOVERY_BACKOFF_MIN_SEC, current_backoff * 2),
+            )
+            return False
+
+        logger.info("api_worker: Redis queue client recovered successfully")
+        redis_backoff_sec = REDIS_RECOVERY_BACKOFF_MIN_SEC
+        return True
 
     try:
         while not stop_evt.is_set():
@@ -1041,13 +1101,17 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
                     timeout=1,
                 )
 
+            if redis_queue is None:
+                await _recover_queue_client(severity="critical")
+                continue
+
             try:
                 raw = await redis_queue.brpoplpush(API_QUEUE_KEY, PROCESSING_KEY, timeout=1)
+                redis_backoff_sec = REDIS_RECOVERY_BACKOFF_MIN_SEC
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("api_worker: Redis error in main loop: %s", e)
-                await asyncio.sleep(1)
+                await _recover_queue_client(reason=e)
                 continue
 
             if not raw:
