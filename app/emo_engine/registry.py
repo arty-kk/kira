@@ -137,13 +137,20 @@ async def get_persona(
             prefs = None
             ak = None
             try:
-                if user_id:
-                    with suppress(Exception):
-                        ak = await db.get(ApiKey, int(user_id))
-                if ak and getattr(ak, "persona_prefs", None):
-                    prefs = ak.persona_prefs
-                owner_uid = getattr(ak, "user_id", None) if ak else None
-                target_id = owner_uid or (user_id if not ak else None) or chat_id
+                # API_PERSONA_PER_KEY: True -> user_id can be ApiKey.id, False -> strict User.id scope.
+                if getattr(settings, "API_PERSONA_PER_KEY", True):
+                    if user_id:
+                        with suppress(Exception):
+                            ak = await db.get(ApiKey, int(user_id))
+                    # load persona_prefs: ApiKey prefs -> owner User prefs -> fallback User by user_id/chat_id.
+                    if ak and getattr(ak, "persona_prefs", None):
+                        prefs = ak.persona_prefs
+                    owner_uid = getattr(ak, "user_id", None) if ak else None
+                    target_id = owner_uid or (user_id if not ak else None) or chat_id
+                else:
+                    # load persona_prefs: user-scope only (User by user_id, else chat_id), no ApiKey lookup.
+                    target_id = user_id or chat_id
+
                 if prefs is None and target_id:
                     with suppress(Exception):
                         u = await db.get(User, int(target_id))
