@@ -29,7 +29,7 @@ def _is_active_lease(outbox: PaymentOutbox) -> bool:
     return outbox.leased_at >= datetime.now(timezone.utc) - timedelta(seconds=OUTBOX_LEASE_TTL_SECONDS)
 
 
-async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Optional[int], bool]:
+async def _apply_outbox(charge_id: str, lease_token: str) -> tuple[Optional[PaymentOutbox], Optional[int], bool]:
     async with session_scope(stmt_timeout_ms=5000) as db:
         res = await db.execute(
             select(PaymentOutbox)
@@ -39,6 +39,15 @@ async def _apply_outbox(charge_id: str) -> tuple[Optional[PaymentOutbox], Option
         outbox = res.scalar_one_or_none()
         if not outbox:
             logger.warning("payment_outbox: missing charge_id=%s", charge_id)
+            return None, None, False
+
+        if outbox.lease_token != lease_token:
+            logger.info(
+                "payment_outbox: stale lease skip charge_id=%s expected_lease_token=%s actual_lease_token=%s",
+                charge_id,
+                lease_token,
+                outbox.lease_token,
+            )
             return None, None, False
 
         if outbox.status == "applied":
@@ -261,9 +270,9 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
 
 
 @celery.task(name="payments.process_outbox", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 5})
-def process_outbox_task(charge_id: str) -> None:
+def process_outbox_task(charge_id: str, lease_token: str) -> None:
     async def _run_task():
-        outbox, remaining, duplicate = await _apply_outbox(charge_id)
+        outbox, remaining, duplicate = await _apply_outbox(charge_id, lease_token)
         if outbox is None:
             return
         if outbox.status != "applied":
@@ -311,7 +320,7 @@ async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_
     enqueue_errors = 0
     for charge_id, row_lease_token in claimed_rows:
         try:
-            celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            celery.send_task("payments.process_outbox", args=[str(charge_id), str(row_lease_token)])
             enqueued += 1
         except Exception as exc:
             enqueue_errors += 1
@@ -380,7 +389,7 @@ async def requeue_applied_unnotified_outbox(batch_size: int = REQUEUE_PENDING_OU
     enqueue_errors = 0
     for charge_id, row_lease_token in claimed_rows:
         try:
-            celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            celery.send_task("payments.process_outbox", args=[str(charge_id), str(row_lease_token)])
             enqueued += 1
         except Exception as exc:
             enqueue_errors += 1

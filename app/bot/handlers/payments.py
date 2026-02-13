@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
+from datetime import datetime, timezone
 
 from contextlib import suppress
 from dataclasses import dataclass
@@ -966,10 +968,12 @@ async def on_payment_success(message: Message) -> None:
             raise ValueError("Amount mismatch")
 
         outbox_status = "pending"
+        process_lease_token: Optional[str] = None
         for attempt in range(3):
             try:
                 async with session_scope(stmt_timeout_ms=5000) as db:
                     user = await get_or_create_user(db, message.from_user)
+                    enqueue_lease_token = uuid.uuid4().hex
 
                     stmt = (
                         pg_insert(PaymentOutbox)
@@ -985,19 +989,32 @@ async def on_payment_success(message: Message) -> None:
                             gift_code=gift.get("code") if gift else None,
                             gift_title=gift.get("title") if gift else None,
                             gift_emoji=gift.get("emoji") if gift else None,
+                            leased_at=datetime.now(timezone.utc),
+                            lease_token=enqueue_lease_token,
+                            lease_attempts=1,
                         )
                         .on_conflict_do_nothing(index_elements=["telegram_payment_charge_id"])
                         .returning(PaymentOutbox.status)
                     )
                     row = (await db.execute(stmt)).scalar_one_or_none()
                     if row is None:
-                        status_row = await db.execute(
-                            select(PaymentOutbox.status)
-                            .where(PaymentOutbox.telegram_payment_charge_id == str(charge_id))
-                        )
-                        outbox_status = status_row.scalar_one_or_none() or "pending"
+                        outbox_row = (
+                            await db.execute(
+                                select(PaymentOutbox)
+                                .where(PaymentOutbox.telegram_payment_charge_id == str(charge_id))
+                                .with_for_update()
+                            )
+                        ).scalar_one_or_none()
+                        outbox_status = getattr(outbox_row, "status", None) or "pending"
+                        process_lease_token = getattr(outbox_row, "lease_token", None)
+                        if outbox_row and outbox_status == "pending" and not process_lease_token:
+                            process_lease_token = enqueue_lease_token
+                            outbox_row.lease_token = process_lease_token
+                            outbox_row.leased_at = datetime.now(timezone.utc)
+                            outbox_row.lease_attempts = int(getattr(outbox_row, "lease_attempts", 0) or 0) + 1
                     else:
                         outbox_status = row
+                        process_lease_token = enqueue_lease_token
                 break
             except (OperationalError, DBAPIError):
                 if attempt == 2:
@@ -1012,7 +1029,10 @@ async def on_payment_success(message: Message) -> None:
             return
 
         try:
-            celery.send_task("payments.process_outbox", args=[str(charge_id)])
+            if not process_lease_token:
+                logger.info("on_payment_success: skip immediate outbox enqueue due to missing lease token for charge_id=%s", charge_id)
+            else:
+                celery.send_task("payments.process_outbox", args=[str(charge_id), str(process_lease_token)])
             processing_txt = await tr(
                 message.from_user.id,
                 "payments.processing",
@@ -1035,6 +1055,9 @@ async def on_payment_success(message: Message) -> None:
                 if row:
                     row.status = "pending"
                     row.last_error = safe_error
+                    if process_lease_token and getattr(row, "lease_token", None) == str(process_lease_token):
+                        row.leased_at = None
+                        row.lease_token = None
 
             error_txt = await tr(
                 message.from_user.id,

@@ -426,7 +426,7 @@ class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
 
             enqueued, errors = await payments.requeue_applied_unnotified_outbox(batch_size=10)
             self.assertEqual((enqueued, errors), (1, 0))
-            send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_retry_notify"])
+            send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_retry_notify", "lease-1"])
 
             await payments._notify_payment_result(outbox, remaining=15, duplicate=True)
 
