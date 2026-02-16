@@ -98,7 +98,7 @@ services:
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:80/misc/ping >/dev/null"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/misc/ping >/dev/null"]
       interval: 15s
       timeout: 5s
       start_period: 90s
