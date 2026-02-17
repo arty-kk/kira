@@ -17,5 +17,30 @@ export TWITTER_ACCESS_TOKEN="${TWITTER_ACCESS_TOKEN:-test}"
 export TWITTER_ACCESS_TOKEN_SECRET="${TWITTER_ACCESS_TOKEN_SECRET:-test}"
 export TWITTER_BEARER_TOKEN="${TWITTER_BEARER_TOKEN:-test}"
 
+echo "[check] pytest"
 pytest -q
+
+echo "[check] compileall"
 python -m compileall app
+
+if command -v ruff >/dev/null 2>&1; then
+  if [ -f "pyproject.toml" ] || [ -f "ruff.toml" ] || [ -f ".ruff.toml" ]; then
+    echo "[check] ruff"
+    ruff check .
+  else
+    echo "[check] ruff skipped (no ruff config file)"
+  fi
+else
+  echo "[check] ruff skipped (ruff is not installed)"
+fi
+
+if command -v pyright >/dev/null 2>&1; then
+  if [ -f "pyrightconfig.json" ]; then
+    echo "[check] pyright"
+    pyright
+  else
+    echo "[check] pyright skipped (no pyrightconfig.json)"
+  fi
+else
+  echo "[check] pyright skipped (pyright is not installed)"
+fi
