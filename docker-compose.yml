@@ -240,12 +240,18 @@ services:
     restart: unless-stopped
     env_file: .env
     init: true
+    # Queue/concurrency/prefetch/pool/loglevel are configurable via CELERY_TASKS_* without compose edits.
     environment:
       REDIS_PASSWORD:    ${REDIS_PASSWORD}
       REDIS_URL:         redis://:${REDIS_PASSWORD}@redis_kv:6379/0
       REDIS_URL_QUEUE:   redis://:${REDIS_PASSWORD}@redis_kv:6379/1
       REDIS_URL_VECTOR:  redis://:${REDIS_PASSWORD}@redis_vec:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis_kv:6379/2
+      CELERY_TASKS_QUEUE: ${CELERY_TASKS_QUEUE:-celery}
+      CELERY_TASKS_CONCURRENCY: ${CELERY_TASKS_CONCURRENCY:-10}
+      CELERY_TASKS_PREFETCH: ${CELERY_TASKS_PREFETCH:-1}
+      CELERY_TASKS_POOL: ${CELERY_TASKS_POOL:-threads}
+      CELERY_TASKS_LOGLEVEL: ${CELERY_TASKS_LOGLEVEL:-info}
       RUN_BOT: "false"
       ENABLE_SCHEDULER: "false"
       DIALOGS_DIR: "/data/dialogs"
@@ -269,10 +275,12 @@ services:
       - "-A"
       - app.tasks.celery_app.celery
       - worker
-      - --loglevel=info
-      - --pool=threads
+      - --loglevel=${CELERY_TASKS_LOGLEVEL:-info}
+      - --pool=${CELERY_TASKS_POOL:-threads}
+      - --concurrency=${CELERY_TASKS_CONCURRENCY:-10}
+      - --prefetch-multiplier=${CELERY_TASKS_PREFETCH:-1}
       - -Q
-      - celery
+      - ${CELERY_TASKS_QUEUE:-celery}
     ulimits:
       nofile:
         soft: 262144
