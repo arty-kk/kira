@@ -33,3 +33,4 @@ greenlet>=3.0.2; platform_python_implementation == "CPython"
 Pillow>=10.3,<11
 tiktoken>=0.7,<0.8
 backports.zoneinfo>=0.2.1; python_version < "3.9"
+pytest>=8.0,<9
