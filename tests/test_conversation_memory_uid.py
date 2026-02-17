@@ -159,6 +159,46 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job["memory_uid"], register_memory_uid)
         self.assertNotEqual(job["memory_uid"], job["chat_id"])
 
+    async def test_persona_profile_id_matches_for_equivalent_normalized_persona(self):
+        payload_a = conversation.ConversationRequest(
+            user_id="user-1",
+            message="hi",
+            persona=conversation.PersonaConfig(
+                name=" Ava ",
+                role=" Guide ",
+                archetypes=["Hero", "Hero", "Sage"],
+                temperament={"sanguine": 1.0, "choleric": 1.0},
+            ),
+        )
+        payload_b = conversation.ConversationRequest(
+            user_id="user-1",
+            message="hi",
+            persona=conversation.PersonaConfig(
+                name="Ava",
+                role="Guide",
+                archetypes=["Hero", "Sage", "Hero"],
+                temperament={"sanguine": 0.5, "choleric": 0.5},
+            ),
+        )
+
+        job_a, _ = await self._run_endpoint(payload_a)
+        job_b, _ = await self._run_endpoint(payload_b)
+
+        self.assertEqual(job_a["persona_profile_id"], job_b["persona_profile_id"])
+
+    async def test_persona_profile_id_none_for_empty_normalized_persona(self):
+        payload = conversation.ConversationRequest(
+            user_id="user-1",
+            message="hi",
+            persona=conversation.PersonaConfig(name="   ", role="\n\t"),
+        )
+
+        job, register_memory_uid = await self._run_endpoint(payload)
+
+        self.assertIsNone(job["persona_profile_id"])
+        self.assertEqual(job["memory_uid"], job["chat_id"])
+        self.assertEqual(job["memory_uid"], register_memory_uid)
+
     async def test_job_memory_uid_falls_back_without_persona(self):
         payload = conversation.ConversationRequest(user_id="user-1", message="hi")
 
