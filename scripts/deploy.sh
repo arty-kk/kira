@@ -4,18 +4,171 @@ set -euo pipefail
 DEPLOY_PATH=${DEPLOY_PATH:-}
 DEPLOY_BRANCH=${DEPLOY_BRANCH:-main}
 DEPLOY_REPO_URL=${DEPLOY_REPO_URL:-}
-API_SCALE=${API_SCALE:-}
-DIALOG_WORKER_SCALE=${DIALOG_WORKER_SCALE:-}
-RAG_WORKER_SCALE=${RAG_WORKER_SCALE:-}
-AUDIT_WORKER_SCALE=${AUDIT_WORKER_SCALE:-}
-MAINTENANCE_WORKER_SCALE=${MAINTENANCE_WORKER_SCALE:-}
-POSTGRES_SCALE=${POSTGRES_SCALE:-}
-REDIS_SCALE=${REDIS_SCALE:-}
-MIGRATE_SCALE=${MIGRATE_SCALE:-}
 
-if [[ -z "${DEPLOY_PATH}" ]]; then
-  echo "DEPLOY_PATH is required" >&2
-  exit 1
+DB_SCALE=${DB_SCALE:-}
+REDIS_KV_SCALE=${REDIS_KV_SCALE:-}
+REDIS_VEC_SCALE=${REDIS_VEC_SCALE:-}
+MIGRATE_SCALE=${MIGRATE_SCALE:-}
+API_SCALE=${API_SCALE:-}
+WORKER_TASKS_SCALE=${WORKER_TASKS_SCALE:-}
+WORKER_MODERATION_SCALE=${WORKER_MODERATION_SCALE:-}
+WORKER_MEDIA_SCALE=${WORKER_MEDIA_SCALE:-}
+WORKER_QUEUE_SCALE=${WORKER_QUEUE_SCALE:-}
+WORKER_API_SCALE=${WORKER_API_SCALE:-}
+COMPOSE_SCALE_OVERRIDES=${COMPOSE_SCALE_OVERRIDES:-}
+
+readonly LEGACY_SCALE_VARS=(
+  DIALOG_WORKER_SCALE
+  RAG_WORKER_SCALE
+  AUDIT_WORKER_SCALE
+  MAINTENANCE_WORKER_SCALE
+  POSTGRES_SCALE
+  REDIS_SCALE
+)
+
+readonly SCALE_WHITELIST=(
+  db
+  redis_kv
+  redis_vec
+  migrate
+  api
+  worker-tasks
+  worker-moderation
+  worker-media
+  worker-queue
+  worker-api
+)
+
+declare -A scale_values
+
+is_whitelisted_service() {
+  local candidate=$1
+  local service
+  for service in "${SCALE_WHITELIST[@]}"; do
+    if [[ "${service}" == "${candidate}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+require_non_empty() {
+  local name=$1
+  local value=$2
+  if [[ -z "${value}" ]]; then
+    echo "${name} is required and must be non-empty" >&2
+    exit 1
+  fi
+}
+
+validate_scale_value() {
+  local name=$1
+  local value=$2
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "${name} must be a non-negative integer, got: ${value}" >&2
+    exit 1
+  fi
+}
+
+set_scale_if_present() {
+  local service=$1
+  local env_name=$2
+  local env_value=$3
+
+  if [[ -z "${env_value}" ]]; then
+    return
+  fi
+
+  validate_scale_value "${env_name}" "${env_value}"
+  scale_values["${service}"]="${env_value}"
+}
+
+validate_no_legacy_scale_vars() {
+  local name
+  for name in "${LEGACY_SCALE_VARS[@]}"; do
+    if [[ -n "${!name:-}" ]]; then
+      echo "${name} is no longer supported; use the current scale variables for compose service names" >&2
+      exit 1
+    fi
+  done
+}
+
+parse_compose_scale_overrides() {
+  local raw_overrides=$1
+  local normalized
+  local pair
+  local service
+  local value
+
+  if [[ -z "${raw_overrides}" ]]; then
+    return
+  fi
+
+  normalized=$(echo "${raw_overrides}" | tr ',' '\n' | tr ';' '\n')
+
+  while IFS= read -r pair; do
+    pair=$(echo "${pair}" | xargs)
+    [[ -z "${pair}" ]] && continue
+
+    if [[ "${pair}" != *=* ]]; then
+      echo "COMPOSE_SCALE_OVERRIDES entry must be in <service>=<int> format: ${pair}" >&2
+      exit 1
+    fi
+
+    service=${pair%%=*}
+    value=${pair#*=}
+    service=$(echo "${service}" | xargs)
+    value=$(echo "${value}" | xargs)
+
+    if ! is_whitelisted_service "${service}"; then
+      echo "COMPOSE_SCALE_OVERRIDES contains unknown service: ${service}" >&2
+      exit 1
+    fi
+
+    validate_scale_value "COMPOSE_SCALE_OVERRIDES(${service})" "${value}"
+    scale_values["${service}"]="${value}"
+  done <<< "${normalized}"
+}
+
+build_scale_args() {
+  local service
+  local scale_args_ref_name=$1
+  local -n scale_args_ref="${scale_args_ref_name}"
+
+  for service in "${SCALE_WHITELIST[@]}"; do
+    if [[ -n "${scale_values[${service}]:-}" ]]; then
+      scale_args_ref+=(--scale "${service}=${scale_values[${service}]}")
+    fi
+  done
+}
+
+require_non_empty "DEPLOY_PATH" "${DEPLOY_PATH}"
+validate_no_legacy_scale_vars
+
+set_scale_if_present "db" "DB_SCALE" "${DB_SCALE}"
+set_scale_if_present "redis_kv" "REDIS_KV_SCALE" "${REDIS_KV_SCALE}"
+set_scale_if_present "redis_vec" "REDIS_VEC_SCALE" "${REDIS_VEC_SCALE}"
+set_scale_if_present "migrate" "MIGRATE_SCALE" "${MIGRATE_SCALE}"
+set_scale_if_present "api" "API_SCALE" "${API_SCALE}"
+set_scale_if_present "worker-tasks" "WORKER_TASKS_SCALE" "${WORKER_TASKS_SCALE}"
+set_scale_if_present "worker-moderation" "WORKER_MODERATION_SCALE" "${WORKER_MODERATION_SCALE}"
+set_scale_if_present "worker-media" "WORKER_MEDIA_SCALE" "${WORKER_MEDIA_SCALE}"
+set_scale_if_present "worker-queue" "WORKER_QUEUE_SCALE" "${WORKER_QUEUE_SCALE}"
+set_scale_if_present "worker-api" "WORKER_API_SCALE" "${WORKER_API_SCALE}"
+parse_compose_scale_overrides "${COMPOSE_SCALE_OVERRIDES}"
+
+scale_args=()
+build_scale_args scale_args
+
+if [[ "${DEPLOY_VALIDATE_ONLY:-0}" == "1" ]]; then
+  printf 'Validated scale args:'
+  if [[ ${#scale_args[@]} -eq 0 ]]; then
+    printf ' <none>'
+  else
+    printf ' %s' "${scale_args[@]}"
+  fi
+  printf '\n'
+  exit 0
 fi
 
 if [[ -d "${DEPLOY_PATH}/.git" ]]; then
@@ -47,32 +200,6 @@ git status
 docker compose down
 
 docker compose build --no-cache --pull
-
-scale_args=()
-if [[ -n "${POSTGRES_SCALE}" ]]; then
-  scale_args+=(--scale postgres="${POSTGRES_SCALE}")
-fi
-if [[ -n "${REDIS_SCALE}" ]]; then
-  scale_args+=(--scale redis="${REDIS_SCALE}")
-fi
-if [[ -n "${MIGRATE_SCALE}" ]]; then
-  scale_args+=(--scale migrate="${MIGRATE_SCALE}")
-fi
-if [[ -n "${API_SCALE}" ]]; then
-  scale_args+=(--scale api="${API_SCALE}")
-fi
-if [[ -n "${DIALOG_WORKER_SCALE}" ]]; then
-  scale_args+=(--scale dialog_worker="${DIALOG_WORKER_SCALE}")
-fi
-if [[ -n "${RAG_WORKER_SCALE}" ]]; then
-  scale_args+=(--scale rag_worker="${RAG_WORKER_SCALE}")
-fi
-if [[ -n "${AUDIT_WORKER_SCALE}" ]]; then
-  scale_args+=(--scale audit_worker="${AUDIT_WORKER_SCALE}")
-fi
-if [[ -n "${MAINTENANCE_WORKER_SCALE}" ]]; then
-  scale_args+=(--scale maintenance_worker="${MAINTENANCE_WORKER_SCALE}")
-fi
 
 docker compose up -d --force-recreate "${scale_args[@]}"
 
