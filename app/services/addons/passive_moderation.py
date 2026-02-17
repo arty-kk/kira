@@ -296,20 +296,24 @@ def contains_any_link_obfuscated(text: str) -> bool:
     return bool(domain_re.search(norm))
 
 
-def url_is_unwanted(url: str) -> bool:
+def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
     try:
         u = url if '://' in url else f'http://{url}'
         netloc = urlparse(u).netloc.lower().split(':', 1)[0]
     except Exception:
         return True
+
+    link_policy = str((policy or {}).get("link_policy", "group_default") or "group_default").strip().lower()
     if any(netloc == d or netloc.endswith("." + d) for d in TELEGRAM_DOMAINS):
-        return True
+        return link_policy != "relaxed"
+
     for kw in getattr(settings, "MODERATION_ALLOWED_LINK_KEYWORDS", []):
         kw = (kw or "").lower().strip(".")
         if not kw:
             continue
         if netloc == kw or netloc.endswith("." + kw):
             return False
+
     return True
 
 
@@ -423,6 +427,7 @@ async def check_light(
     text: str,
     entities: List[dict] | None = None,
     source: Literal["user", "bot", "channel"] = "user",
+    policy: dict[str, Any] | None = None,
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
@@ -437,20 +442,22 @@ async def check_light(
 
     urls = extract_urls(text or "", entities)
     logger.debug("check_light: urls=%r", urls)
+    link_policy = str((policy or {}).get("link_policy", "group_default") or "group_default").strip().lower()
+    links_blocked = link_policy != "relaxed"
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 
     external_mentions = await extract_external_mentions(chat_id, text or "", entities)
-    if external_mentions:
+    if external_mentions and links_blocked:
         logger.debug("check_light: external_mentions=%r", external_mentions)
         return "link_violation"
 
-    if any(is_telegram_link(u) for u in urls) or contains_telegram_obfuscated(text or ""):
+    if links_blocked and contains_telegram_obfuscated(text or ""):
         return "link_violation"
 
     for u in urls:
-        if url_is_unwanted(u):
+        if links_blocked and url_is_unwanted(u, policy=policy):
             return "link_violation"
 
     # Keep toxicity checks user-scoped to avoid applying user-specific heuristics to channel/bot sources.

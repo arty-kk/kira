@@ -238,6 +238,16 @@ async def handle_passive_moderation(
     if not (text and text.strip()) and not image_b64:
         return "clean"
 
+    if is_comment_context is not None:
+        moderation_context = "comment" if bool(is_comment_context) else "group"
+    elif is_channel_post is not None:
+        moderation_context = "comment" if bool(is_channel_post) else "group"
+    elif message is not None:
+        moderation_context = _resolve_message_context(message, from_linked=False)
+    else:
+        moderation_context = "group"
+    light_policy = resolve_moderation_policy(moderation_context, settings)
+
     try:
         targets = get_targets()
 
@@ -253,6 +263,7 @@ async def handle_passive_moderation(
                     text,
                     all_entities,
                     source=normalized_source,
+                    policy=light_policy,
                     image_b64=image_b64,
                     image_mime=image_mime,
                 ),
