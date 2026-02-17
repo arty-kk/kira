@@ -13,6 +13,7 @@ os.environ.setdefault("REDIS_URL_VECTOR", "redis://localhost:6379/2")
 from aiogram.enums import ChatType
 
 from app.bot.handlers import moderation
+from app.services.addons import passive_moderation
 
 
 class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
@@ -151,6 +152,80 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         policy = moderation.resolve_moderation_policy("comment", cfg)
         self.assertFalse(policy["delete_external_channel_msgs"])
         self.assertFalse(policy["delete_channel_forwards"])
+
+    async def test_check_light_comment_relaxed_keeps_allowed_link_clean(self) -> None:
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=False, MODERATION_SPAM_LINK_THRESHOLD=5),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=["https://example.com/page"]),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=["external_channel"])),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=True),
+        ):
+            status = await passive_moderation.check_light(
+                1,
+                2,
+                "check https://example.com/page",
+                [{"type": "url", "offset": 6, "length": 24}],
+                source="user",
+                policy={"link_policy": "relaxed"},
+            )
+
+        self.assertEqual(status, "clean")
+
+    async def test_check_light_group_default_still_blocks_same_link(self) -> None:
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=False, MODERATION_SPAM_LINK_THRESHOLD=5),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=["https://example.com/page"]),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=["external_channel"])),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=True),
+        ):
+            status = await passive_moderation.check_light(
+                1,
+                2,
+                "check https://example.com/page",
+                [{"type": "url", "offset": 6, "length": 24}],
+                source="user",
+                policy={"link_policy": "group_default"},
+            )
+
+        self.assertEqual(status, "link_violation")
+
+    def test_url_is_unwanted_allows_whitelisted_non_telegram_domain(self) -> None:
+        with patch.object(
+            passive_moderation,
+            "settings",
+            types.SimpleNamespace(MODERATION_ALLOWED_LINK_KEYWORDS=["example.com"]),
+        ):
+            self.assertFalse(
+                passive_moderation.url_is_unwanted(
+                    "https://sub.example.com/path",
+                    policy={"link_policy": "group_default"},
+                )
+            )
+
+    def test_url_is_unwanted_keeps_telegram_block_in_group_default_even_if_whitelisted(self) -> None:
+        with patch.object(
+            passive_moderation,
+            "settings",
+            types.SimpleNamespace(MODERATION_ALLOWED_LINK_KEYWORDS=["t.me"]),
+        ):
+            self.assertTrue(
+                passive_moderation.url_is_unwanted(
+                    "https://t.me/test",
+                    policy={"link_policy": "group_default"},
+                )
+            )
 
 
 if __name__ == "__main__":
