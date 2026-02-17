@@ -236,7 +236,7 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
 
     uid = getattr(user, "id", chat_id)
     
-    persona = await get_persona(chat_id)
+    persona = await get_persona(chat_id=uid, user_id=uid)
     try:
         await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
     except Exception:
