@@ -1,59 +1,41 @@
-name: 🚀 Deploy to Server
+name: CD
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches:
       - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
 
 jobs:
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Copy code via SCP
-        uses: appleboy/scp-action@v1
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          source: "./"
-          target: "/Synchatica"
-          rm: true
-          overwrite: true
-
-      - name: Rebuild virtualenv & install deps
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
           script: |
-            cd /Synchatica
-            rm -rf venv
-            python3 -m venv venv
-            source venv/bin/activate
-            pip install --upgrade pip
-            pip install -r requirements.txt
-
-      - name: Restart app via PM2
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 22
-          script: |
-            cd /Synchatica
-            export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
-            pm2 delete synchatica --silent
-            pm2 start main.py \
-              --name synchatica \
-              --interpreter /Synchatica/venv/bin/python3 \
-              --cwd /Synchatica \
-              --update-env
-            pm2 save
+            export DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
+            export DEPLOY_BRANCH="${{ secrets.DEPLOY_BRANCH }}"
+            export DEPLOY_REPO_URL="${{ secrets.DEPLOY_REPO_URL }}"
+            export API_SCALE="${{ secrets.API_SCALE }}"
+            export DIALOG_WORKER_SCALE="${{ secrets.DIALOG_WORKER_SCALE }}"
+            export RAG_WORKER_SCALE="${{ secrets.RAG_WORKER_SCALE }}"
+            export AUDIT_WORKER_SCALE="${{ secrets.AUDIT_WORKER_SCALE }}"
+            export MAINTENANCE_WORKER_SCALE="${{ secrets.MAINTENANCE_WORKER_SCALE }}"
+            export POSTGRES_SCALE="${{ secrets.POSTGRES_SCALE }}"
+            export REDIS_SCALE="${{ secrets.REDIS_SCALE }}"
+            export MIGRATE_SCALE="${{ secrets.MIGRATE_SCALE }}"
+            bash "${{ secrets.DEPLOY_PATH }}/scripts/deploy.sh"
