@@ -525,6 +525,7 @@ def _is_valid_event_frame(obj: dict) -> bool:
 async def get_embedding(text: str) -> bytes:
     
     rds = get_redis()
+    cache_ok = rds is not None
     text_norm = _norm_text_for_embed(text)
 
     min_len = int(getattr(settings, "EMBED_MIN_LEN", 1))
@@ -533,20 +534,30 @@ async def get_embedding(text: str) -> bytes:
 
     model_for_key = str(getattr(settings, "EMBEDDING_MODEL", "")).strip()
     md5_key = (f"emb:{model_for_key}:{_DIM}:" + hashlib.md5(text_norm.encode("utf-8")).hexdigest())
-    if cached := await rds.get(md5_key):
+    cached = None
+    if cache_ok:
+        try:
+            cached = await rds.get(md5_key)
+        except redis.exceptions.RedisError as e:
+            logger.warning("get_embedding: Redis cache read failed: %s", e)
+            cache_ok = False
+        except Exception as e:
+            logger.warning("get_embedding: cache read failed: %s", e)
+            cache_ok = False
+
+    if cached:
         try:
             raw = base64.b64decode(cached)
             if len(raw) == _DIM * 4:
                 return raw
-            else:
-                logger.warning(
-                    "get_embedding: cached vector size mismatch (%d != %d*4). Drop & recompute.",
-                    len(raw), _DIM
-                )
-                try:
-                    await rds.delete(md5_key)
-                except Exception:
-                    pass
+            logger.warning(
+                "get_embedding: cached vector size mismatch (%d != %d*4). Drop & recompute.",
+                len(raw), _DIM
+            )
+            try:
+                await rds.delete(md5_key)
+            except Exception:
+                pass
         except Exception:
             logger.warning("get_embedding: cached embedding decode failed, drop & recompute")
             try:
@@ -636,12 +647,15 @@ async def get_embedding(text: str) -> bytes:
     except Exception:
         pass
     arr = arr.tobytes()
-    try:
-        if not _is_zero_embedding(arr):
-            ttl = int(86400 * (0.9 + 0.2 * random.random()))
-            await rds.set(md5_key, base64.b64encode(arr).decode("ascii"), ex=ttl)
-    except redis.exceptions.RedisError as e:
-        logger.warning("get_embedding: Redis cache store failed: %s", e)
+    if cache_ok:
+        try:
+            if not _is_zero_embedding(arr):
+                ttl = int(86400 * (0.9 + 0.2 * random.random()))
+                await rds.set(md5_key, base64.b64encode(arr).decode("ascii"), ex=ttl)
+        except redis.exceptions.RedisError as e:
+            logger.warning("get_embedding: Redis cache store failed: %s", e)
+        except Exception as e:
+            logger.warning("get_embedding: cache store failed: %s", e)
     return arr
 
 
@@ -726,12 +740,17 @@ class _EmbedBatcher:
                 uniq_map[cache_key] = {"text": text_norm, "futs": [fut]}
                 uniq_list.append(text_norm)
                 key_order.append(cache_key)
+        rds = None
+        cache_ok = False
+        miss_keys = key_order[:]
+        miss_texts = uniq_list[:]
         try:
             rds = get_redis()
-            cached = await rds.mget(key_order) if key_order else []
-            miss_keys = []
-            miss_texts = []
-            if cached:
+            cache_ok = rds is not None
+            if cache_ok and key_order:
+                cached = await rds.mget(key_order)
+                miss_keys = []
+                miss_texts = []
                 for i, b64 in enumerate(cached):
                     if not b64:
                         miss_keys.append(key_order[i])
@@ -758,106 +777,109 @@ class _EmbedBatcher:
                     for fut in uniq_map[key_order[i]]["futs"]:
                         if not fut.done():
                             fut.set_result(raw)
+        except redis.exceptions.RedisError as e:
+            logger.warning("embed-batch: Redis lookup failed: %s", e)
+            cache_ok = False
+            miss_keys = key_order[:]
+            miss_texts = uniq_list[:]
+        except Exception as e:
+            logger.warning("embed-batch: cache lookup failed: %s", e)
+            cache_ok = False
+            miss_keys = key_order[:]
+            miss_texts = uniq_list[:]
+
+        items = []
+        if miss_texts:
+            model = settings.EMBEDDING_MODEL
+            timeout_s = settings.EMBEDDING_TIMEOUT
+            if not model:
+                logger.error("EMBEDDING_MODEL is not configured; returning zero embeddings for %d items", len(miss_texts))
+                items = []
             else:
-                miss_keys = key_order[:]
-                miss_texts = uniq_list[:]
-
-            items = []
-            if miss_texts:
-                model = settings.EMBEDDING_MODEL
-                timeout_s = settings.EMBEDDING_TIMEOUT
-                if not model:
-                    logger.error("EMBEDDING_MODEL is not configured; returning zero embeddings for %d items", len(miss_texts))
-                    items = []
-                else:
-                    _t0 = time.perf_counter()
-                    try:
-                        resp = await asyncio.wait_for(
-                            _call_openai_with_retry(
-                                endpoint="embeddings.create",
-                                input=miss_texts,
-                                model=model,
-                                encoding_format="float"
-                            ),
-                            timeout=timeout_s,
-                        )
-                        items = getattr(resp, "data", []) or []
-                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                        logger.info("openai_timing: embeddings.create batch ok t=%.1fms model=%s batch=%d",
-                                    _dt_ms, model, len(miss_texts))
-                    except asyncio.TimeoutError:
-                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                        logger.warning("openai_timing: embeddings.create batch TIMEOUT t=%.1fms model=%s batch=%d",
-                                       _dt_ms, model, len(miss_texts))
-                        items = []
-                    except Exception as e:
-                        _dt_ms = (time.perf_counter() - _t0) * 1000.0
-                        logger.warning("openai_timing: embeddings.create batch FAIL t=%.1fms model=%s batch=%d err=%s",
-                                       _dt_ms, model, len(miss_texts), e)
-                        items = []
-
-            n_items = len(items)
-            to_cache = []
-            for i, cache_key in enumerate(miss_keys):
-                futs = uniq_map.get(cache_key, {}).get("futs", [])
+                _t0 = time.perf_counter()
                 try:
-                    if i < n_items:
-                        vec = items[i].embedding
-                        if isinstance(vec, str):
-                            try:
-                                raw = base64.b64decode(vec)
-                                arr = np.frombuffer(raw, dtype=np.float32)
-                            except Exception:
-                                arr = np.zeros(_DIM, dtype=np.float32)
-                        else:
-                            arr = np.asarray(vec, dtype=np.float32)
-                        strict_dim = bool(getattr(settings, "EMBED_STRICT_DIM", True))
-                        if arr.shape[0] != _DIM:
-                            if strict_dim:
-                                logger.error("embed-batch: embedding dim=%d != EMBED_DIM=%d", arr.shape[0], _DIM)
-                                arr = np.zeros(_DIM, dtype=np.float32)
-                            else:
-                                arr = arr[:_DIM] if arr.shape[0] > _DIM else np.pad(arr, (0, _DIM - arr.shape[0])).astype(np.float32)
+                    resp = await asyncio.wait_for(
+                        _call_openai_with_retry(
+                            endpoint="embeddings.create",
+                            input=miss_texts,
+                            model=model,
+                            encoding_format="float"
+                        ),
+                        timeout=timeout_s,
+                    )
+                    items = getattr(resp, "data", []) or []
+                    _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                    logger.info("openai_timing: embeddings.create batch ok t=%.1fms model=%s batch=%d",
+                                _dt_ms, model, len(miss_texts))
+                except asyncio.TimeoutError:
+                    _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                    logger.warning("openai_timing: embeddings.create batch TIMEOUT t=%.1fms model=%s batch=%d",
+                                   _dt_ms, model, len(miss_texts))
+                    items = []
+                except Exception as e:
+                    _dt_ms = (time.perf_counter() - _t0) * 1000.0
+                    logger.warning("openai_timing: embeddings.create batch FAIL t=%.1fms model=%s batch=%d err=%s",
+                                   _dt_ms, model, len(miss_texts), e)
+                    items = []
+
+        n_items = len(items)
+        to_cache = []
+        for i, cache_key in enumerate(miss_keys):
+            futs = uniq_map.get(cache_key, {}).get("futs", [])
+            try:
+                if i < n_items:
+                    vec = items[i].embedding
+                    if isinstance(vec, str):
                         try:
-                            norm = float(np.linalg.norm(arr))
-                            if norm > 0.0:
-                                arr = arr / norm
+                            raw = base64.b64decode(vec)
+                            arr = np.frombuffer(raw, dtype=np.float32)
                         except Exception:
-                            pass
-                        raw = arr.tobytes()
-                        to_cache.append((cache_key, raw))
-                        for fut in futs:
-                            if not fut.done():
-                                fut.set_result(raw)
+                            arr = np.zeros(_DIM, dtype=np.float32)
                     else:
-                        zero_raw = _ZERO_VEC
-                        for fut in futs:
-                            if not fut.done():
-                                fut.set_result(zero_raw)
-                except Exception:
+                        arr = np.asarray(vec, dtype=np.float32)
+                    strict_dim = bool(getattr(settings, "EMBED_STRICT_DIM", True))
+                    if arr.shape[0] != _DIM:
+                        if strict_dim:
+                            logger.error("embed-batch: embedding dim=%d != EMBED_DIM=%d", arr.shape[0], _DIM)
+                            arr = np.zeros(_DIM, dtype=np.float32)
+                        else:
+                            arr = arr[:_DIM] if arr.shape[0] > _DIM else np.pad(arr, (0, _DIM - arr.shape[0])).astype(np.float32)
+                    try:
+                        norm = float(np.linalg.norm(arr))
+                        if norm > 0.0:
+                            arr = arr / norm
+                    except Exception:
+                        pass
+                    raw = arr.tobytes()
+                    to_cache.append((cache_key, raw))
+                    for fut in futs:
+                        if not fut.done():
+                            fut.set_result(raw)
+                else:
                     zero_raw = _ZERO_VEC
                     for fut in futs:
                         if not fut.done():
                             fut.set_result(zero_raw)
-            if to_cache:
-                try:
-                    pipe = rds.pipeline(transaction=False)
-                    for md5_key, raw in to_cache:
-                        try:
-                            if not _is_zero_embedding(raw):
-                                ttl = int(86400 * (0.9 + 0.2 * random.random()))
-                                pipe.set(md5_key, base64.b64encode(raw).decode("ascii"), ex=ttl)
-                        except Exception:
-                            logger.debug("embed-batch: cache store failed for one item", exc_info=True)
-                            continue
-                    await pipe.execute()
-                except Exception:
-                    pass
-        except Exception:
-            zero_raw = _ZERO_VEC
-            for _, fut in batch:
-                if not fut.done():
-                    fut.set_result(zero_raw)
+            except Exception:
+                zero_raw = _ZERO_VEC
+                for fut in futs:
+                    if not fut.done():
+                        fut.set_result(zero_raw)
+        if to_cache and cache_ok and rds is not None:
+            try:
+                pipe = rds.pipeline(transaction=False)
+                for md5_key, raw in to_cache:
+                    try:
+                        if not _is_zero_embedding(raw):
+                            ttl = int(86400 * (0.9 + 0.2 * random.random()))
+                            pipe.set(md5_key, base64.b64encode(raw).decode("ascii"), ex=ttl)
+                    except Exception:
+                        logger.debug("embed-batch: cache store failed for one item", exc_info=True)
+                        continue
+                await pipe.execute()
+            except Exception as e:
+                logger.warning("embed-batch: cache pipeline execute failed: %s", e)
+                logger.debug("embed-batch: cache pipeline execute failed", exc_info=True)
 
 _EMBED_BATCHER = _EmbedBatcher()
 
