@@ -104,6 +104,49 @@ def _is_chat_allowed(chat: types.Chat) -> bool:
     return cid in allowed_ids
 
 
+async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
+    if _is_chat_allowed(message.chat):
+        return True
+
+    if not bool(getattr(settings, "COMMENT_MODERATION_ENABLED", False)):
+        return False
+
+    try:
+        chat_id = int(message.chat.id)
+    except Exception:
+        return False
+
+    target_ids = set(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+    if target_ids and chat_id in target_ids:
+        return True
+
+    source_ids = set(getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+    if not source_ids:
+        return False
+
+    candidate_source_ids: set[int] = set()
+    sender_chat = getattr(message, "sender_chat", None)
+    if sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL:
+        with contextlib.suppress(Exception):
+            candidate_source_ids.add(int(sender_chat.id))
+
+    forward_from_chat = getattr(message, "forward_from_chat", None)
+    if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
+        with contextlib.suppress(Exception):
+            candidate_source_ids.add(int(forward_from_chat.id))
+
+    if getattr(message, "is_automatic_forward", False):
+        linked_chat_id = getattr(message.chat, "linked_chat_id", None)
+        with contextlib.suppress(Exception):
+            if linked_chat_id is not None:
+                candidate_source_ids.add(int(linked_chat_id))
+
+    if candidate_source_ids & source_ids:
+        return True
+
+    return False
+
+
 async def _first_delivery(chat_id: int, msg_id: int, kind: str, ttl: int = 43_200) -> bool:
     try:
         seen = await redis_client.set(f"seen:{chat_id}:{msg_id}", 1, nx=True, ex=ttl)
@@ -494,6 +537,17 @@ async def _push_group_stm_and_recent(
 
 
 def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, ents: List[dict], is_channel: bool, user_id_val: int) -> None:
+    sender_chat = getattr(message, "sender_chat", None)
+    forward_from_chat = getattr(message, "forward_from_chat", None)
+    is_comment_context = bool(
+        not is_channel and (
+            getattr(message, "is_automatic_forward", False)
+            or (sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL)
+            or (forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL)
+            or getattr(message.chat, "linked_chat_id", None)
+        )
+    )
+
     moderation_payload = prepare_moderation_payload(
         {
             "chat_id": message.chat.id,
@@ -504,6 +558,8 @@ def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, 
             "image_b64": payload.get("image_b64"),
             "image_mime": payload.get("image_mime"),
             "source": "channel" if is_channel else "user",
+            "is_channel_post": bool(is_channel),
+            "is_comment_context": is_comment_context,
         },
         context="group.dispatch",
     )
@@ -686,11 +742,11 @@ async def on_group_message(message: Message) -> None:
         cid = message.chat.id
 
         try:
-            if not _is_chat_allowed(message.chat):
+            if not await _is_message_allowed_for_group_handlers(message):
                 logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
                 return
         except Exception:
-            logger.exception("Whitelist check failed")
+            logger.exception("Group access check failed")
             return
 
         if not await _first_delivery(cid, message.message_id, "text"):
@@ -854,11 +910,11 @@ async def on_group_voice(message: Message) -> None:
         cid = message.chat.id
 
         try:
-            if not _is_chat_allowed(message.chat):
+            if not await _is_message_allowed_for_group_handlers(message):
                 logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
                 return
         except Exception:
-            logger.exception("Whitelist check failed")
+            logger.exception("Group access check failed")
             return
 
         if not await _first_delivery(cid, message.message_id, "voice"):
@@ -1089,11 +1145,11 @@ async def on_group_photo(message: Message) -> None:
         cid = message.chat.id
 
         try:
-            if not _is_chat_allowed(message.chat):
+            if not await _is_message_allowed_for_group_handlers(message):
                 logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
                 return
         except Exception:
-            logger.exception("Whitelist check failed")
+            logger.exception("Group access check failed")
             return
 
         if not await _first_delivery(cid, message.message_id, "photo"):
@@ -1132,11 +1188,11 @@ async def on_group_document_image(message: Message) -> None:
             return
 
         try:
-            if not _is_chat_allowed(message.chat):
+            if not await _is_message_allowed_for_group_handlers(message):
                 logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
                 return
         except Exception:
-            logger.exception("Whitelist check failed")
+            logger.exception("Group access check failed")
             return
 
         if not await _first_delivery(cid, message.message_id, "doc-image"):

@@ -83,6 +83,33 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         moderation_payload = delay_mock.call_args.args[0]
         self.assertNotIn("image_b64", moderation_payload)
         self.assertNotIn("image_mime", moderation_payload)
+        self.assertIn("is_channel_post", moderation_payload)
+        self.assertIn("is_comment_context", moderation_payload)
+        self.assertFalse(moderation_payload["is_channel_post"])
+
+    def test_dispatch_passive_moderation_channel_source_kept(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, linked_chat_id=None),
+            message_id=779,
+            sender_chat=types.SimpleNamespace(id=-10011, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with patch.object(group.passive_moderate, "delay") as delay_mock:
+            group._dispatch_passive_moderation(
+                message,
+                payload={},
+                text="hello",
+                ents=[],
+                is_channel=True,
+                user_id_val=99,
+            )
+
+        moderation_payload = delay_mock.call_args.args[0]
+        self.assertEqual(moderation_payload["source"], "channel")
+        self.assertTrue(moderation_payload["is_channel_post"])
+        self.assertFalse(moderation_payload["is_comment_context"])
 
 if __name__ == "__main__":
     unittest.main()
