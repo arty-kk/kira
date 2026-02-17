@@ -269,16 +269,15 @@ class PersonaConfig(BaseModel):
     role: Optional[constr(min_length=1, max_length=1000)] = None
 
 
-def _build_persona_profile_id(persona: Optional["PersonaConfig"]) -> Optional[str]:
-    if persona is None:
+def _build_persona_profile_id(normalized_prefs: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(normalized_prefs, dict) or not normalized_prefs:
         return None
-    try:
-        data = persona.model_dump(exclude_none=True)
-    except Exception:
-        return None
-    if not data:
-        return None
-    raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
+    raw = json.dumps(
+        normalized_prefs,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -852,9 +851,9 @@ async def conversation_endpoint(
 
             if payload.persona is not None:
                 raw_prefs = payload.persona.model_dump(exclude_unset=True, exclude_none=True)
-                norm = normalize_prefs(raw_prefs)
-                if norm:
-                    norm_json = cast(literal(norm), JSONB)
+                norm_prefs = normalize_prefs(raw_prefs)
+                if norm_prefs:
+                    norm_json = cast(literal(norm_prefs), JSONB)
                     if getattr(settings, "API_PERSONA_PER_KEY", True):
                         result = await db.execute(
                             update(ApiKey)
@@ -877,7 +876,6 @@ async def conversation_endpoint(
                                 status_code=status.HTTP_401_UNAUTHORIZED,
                                 detail={"code": "invalid_user", "message": "Invalid or inactive user"},
                             )
-                    norm_prefs = norm
 
         if norm_prefs:
             try:
@@ -907,7 +905,7 @@ async def conversation_endpoint(
             request_id = f"{chat_id}-{msg_id}-{secrets.token_hex(3)}"
         else:
             request_id = f"{chat_id}-{msg_id}"
-        persona_profile_id = _build_persona_profile_id(payload.persona)
+        persona_profile_id = _build_persona_profile_id(norm_prefs)
         scoped_memory_uid = (
             _scoped_memory_uid(memory_uid, persona_profile_id)
             if persona_profile_id
