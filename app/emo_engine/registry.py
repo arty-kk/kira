@@ -139,6 +139,7 @@ async def get_persona(
         async with session_scope(read_only=True) as db:
             prefs = None
             ak = None
+            owner_id = user_id or chat_id
             try:
                 # API_PERSONA_PER_KEY: True -> user_id can be ApiKey.id, False -> strict User.id scope.
                 if getattr(settings, "API_PERSONA_PER_KEY", True):
@@ -150,9 +151,11 @@ async def get_persona(
                         prefs = ak.persona_prefs
                     owner_uid = getattr(ak, "user_id", None) if ak else None
                     target_id = owner_uid or (user_id if not ak else None) or chat_id
+                    owner_id = owner_uid or user_id or chat_id
                 else:
                     # load persona_prefs: user-scope only (User by user_id, else chat_id), no ApiKey lookup.
                     target_id = user_id or chat_id
+                    owner_id = user_id or chat_id
 
                 if prefs is None and target_id:
                     with suppress(Exception):
@@ -161,6 +164,8 @@ async def get_persona(
                         prefs = u.persona_prefs
             except Exception:
                 logger.debug("load persona_prefs failed", exc_info=True)
+
+            persona.owner_id = owner_id
 
             if prefs:
                 try:
@@ -244,7 +249,7 @@ async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
         now = _now()
         for key, (persona, ts) in list(_cache.items()):
             chat_id, uid, group_flag, profile_key = key
-            if uid == owner_id:
+            if uid == owner_id or persona.owner_id == owner_id:
                 try:
                     persona.apply_overrides(prefs)
                     _cache[key] = (persona, now)

@@ -81,6 +81,7 @@ def _normalize_temperament(t: dict | None, default_json: str) -> dict:
 @dataclass
 class Persona:
     chat_id: int
+    owner_id: int | None = field(default=None, kw_only=True)
     name: str = settings.PERSONA_NAME
     age: int = settings.PERSONA_AGE
     gender: str = settings.PERSONA_GENDER
