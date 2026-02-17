@@ -422,7 +422,7 @@ async def check_light(
     user_id: int,
     text: str,
     entities: List[dict] | None = None,
-    source: Literal["user", "bot"] = "user",
+    source: Literal["user", "bot", "channel"] = "user",
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
@@ -431,6 +431,7 @@ async def check_light(
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
 
+    # Channel/bot sources are checked with link-policy only in light mode.
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
 
@@ -452,6 +453,7 @@ async def check_light(
         if url_is_unwanted(u):
             return "link_violation"
 
+    # Keep toxicity checks user-scoped to avoid applying user-specific heuristics to channel/bot sources.
     if source == "user" and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"
 
@@ -462,7 +464,7 @@ async def check_deep(
     chat_id: int,
     user_id: int,
     text: str,
-    source: Literal["user", "bot"] = "user",
+    source: Literal["user", "bot", "channel"] = "user",
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
@@ -471,6 +473,7 @@ async def check_deep(
     if not settings.ENABLE_AI_MODERATION:
         return False
 
+    # Deep context moderation is user-only; channel/bot sources skip history-based checks.
     if source != "user":
         return False
 
