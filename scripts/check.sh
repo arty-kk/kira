@@ -18,7 +18,7 @@ export TWITTER_ACCESS_TOKEN_SECRET="${TWITTER_ACCESS_TOKEN_SECRET:-test}"
 export TWITTER_BEARER_TOKEN="${TWITTER_BEARER_TOKEN:-test}"
 
 echo "[check] pytest"
-pytest -q
+python -m pytest -q
 
 echo "[check] compileall"
 python -m compileall app
