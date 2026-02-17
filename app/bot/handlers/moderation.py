@@ -415,12 +415,34 @@ async def handle_passive_moderation(
             logger.debug("analytics(record_moderation) failed", exc_info=True)
 
     except Exception:
+        error_reason = "internal_error"
+        fallback_mid = int(getattr(message, "message_id", message_id or 0))
+        fallback_uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
+
+        try:
+            await redis_client.hset(
+                f"mod:msg:{chat_id}:{fallback_mid}",
+                mapping={
+                    "status": "error",
+                    "reason": error_reason,
+                    "ts": int(time.time()),
+                    "user_id": fallback_uid,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to persist error moderation status to Redis")
+
+        try:
+            await analytics_record_moderation(chat_id, "error", error_reason)
+        except Exception:
+            logger.debug("analytics(record_moderation) failed for error status", exc_info=True)
+
         logger.exception(
             "Error in passive moderation for chat %s, message %s",
             chat_id,
             getattr(message, "message_id", "<unknown>"),
         )
-        return "clean"
+        return "error"
 
     return status
 
