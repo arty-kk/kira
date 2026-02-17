@@ -1226,7 +1226,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
         await schedule_at(user_id, time_module.time() + 24 * 3600)
         return False
 
-    persona = await get_persona(chat_id)
+    persona = await get_persona(chat_id=chat_id, user_id=user_id)
     try:
         await asyncio.wait_for(persona._restored_evt.wait(), timeout=5.0)
     except Exception:
