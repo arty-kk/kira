@@ -20,6 +20,7 @@ _Key = Tuple[int, int, int, Hashable]
 _cache: "OrderedDict[_Key, tuple[Persona, float]]" = OrderedDict()
 _inflight: Dict[_Key, asyncio.Future[Persona]] = {}
 _lock  = asyncio.Lock()
+_is_shutting_down: bool = False
 _bg_closers: set[asyncio.Task] = set()
 
 
@@ -80,6 +81,8 @@ async def get_persona(
     fut: asyncio.Future[Persona] | None = None
 
     async with _lock:
+        if _is_shutting_down:
+            raise RuntimeError("persona registry shutdown")
         entry = _cache.get(key)
         now = _now()
         if entry is not None:
@@ -167,42 +170,48 @@ async def get_persona(
 
         async with _lock:
             now = _now()
-            current = _cache.get(key)
-            if current is not None:
-                p2, ts2 = current
-                if now - ts2 <= _TTL:
-                    _cache[key] = (p2, now)
-                    _cache.move_to_end(key, last=True)
-                    logger.debug("persona.raced key=%s reused existing", key)
-                    dispose = persona
-                    ret = p2
+            if _is_shutting_down:
+                dispose = persona
+                ret = None
+                build_error = RuntimeError("persona registry shutdown")
+            else:
+                current = _cache.get(key)
+                if current is not None:
+                    p2, ts2 = current
+                    if now - ts2 <= _TTL:
+                        _cache[key] = (p2, now)
+                        _cache.move_to_end(key, last=True)
+                        logger.debug("persona.raced key=%s reused existing", key)
+                        dispose = persona
+                        ret = p2
+                    else:
+                        _cache.pop(key, None)
+                        _cache[key] = (persona, now)
+                        _cache.move_to_end(key, last=True)
+                        created_persona_cached = True
+                        ret = persona
                 else:
-                    _cache.pop(key, None)
                     _cache[key] = (persona, now)
                     _cache.move_to_end(key, last=True)
                     created_persona_cached = True
                     ret = persona
-            else:
-                _cache[key] = (persona, now)
-                _cache.move_to_end(key, last=True)
-                created_persona_cached = True
-                ret = persona
             closers2 = _purge_locked(now)
-            try:
-                loop = asyncio.get_running_loop()
-                ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
-            except Exception:
-                logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
+            if ret is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    ret._spawn(ret._ensure_background_started, name="persona-ensure-bg")
+                except Exception:
+                    logger.debug("persona.ensure_background start failed (miss)", exc_info=True)
     except BaseException as e:
         build_error = e
     finally:
         async with _lock:
             fut_done = _inflight.pop(key, None)
             if fut_done and not fut_done.done():
-                if build_error is None:
+                if build_error is None and ret is not None:
                     fut_done.set_result(ret)
                 else:
-                    exc: BaseException = build_error
+                    exc: BaseException = build_error or RuntimeError("persona registry shutdown")
                     try:
                         fut_done.set_exception(exc)
                         fut_done.add_done_callback(lambda done: done.exception())
@@ -248,24 +257,29 @@ async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
 
 
 async def shutdown_personas() -> None:
+    personas: list[Persona] = []
+    bg_tasks: list[asyncio.Task] = []
     async with _lock:
+        global _is_shutting_down
+        _is_shutting_down = True
         items = list(_cache.values())
         _cache.clear()
-        if _inflight:
-            for fut in list(_inflight.values()):
-                if fut and not fut.done():
-                    fut.set_exception(RuntimeError("persona registry shutdown"))
-            _inflight.clear()
-    personas = [p for (p, _ts) in items]
-    if not personas:
-        return
+        inflight = list(_inflight.values())
+        _inflight.clear()
+        for fut in inflight:
+            if fut and not fut.done():
+                fut.set_exception(RuntimeError("persona registry shutdown"))
+        personas = [p for (p, _ts) in items]
+        bg_tasks = list(_bg_closers)
+        _bg_closers.clear()
     try:
         tasks = [asyncio.create_task(p.close()) for p in personas]
-        tasks += list(_bg_closers)
-        _bg_closers.clear()
+        tasks += bg_tasks
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
     finally:
+        async with _lock:
+            _is_shutting_down = False
         logger.info("persona.cache: closed %d persona(s)", len(personas))
 
 __all__ = [
