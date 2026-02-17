@@ -1549,11 +1549,11 @@ async def persona_reset(cb: CallbackQuery) -> None:
         })
         async with session_scope(stmt_timeout_ms=2000) as db:
             await db.execute(update(User).where(User.id == uid).values(persona_prefs=defaults))
-        p = await get_persona(chat_id=uid)
+        p = await get_persona(chat_id=uid, user_id=uid)
         p.apply_overrides(defaults)
     except Exception:
         logger.debug("persona_reset: write defaults failed; falling back to runtime reset", exc_info=True)
-        p = await get_persona(chat_id=uid)
+        p = await get_persona(chat_id=uid, user_id=uid)
         p.apply_overrides(None, reset=True)
 
     await _ui_close_impl(cb)
@@ -1916,7 +1916,7 @@ async def persona_finish(cb: CallbackQuery) -> None:
                 await db.execute(update(User).where(User.id == uid).values(persona_prefs=merged))
             merged_or_none = (merged or None)
 
-    p = await get_persona(chat_id=uid)
+    p = await get_persona(chat_id=uid, user_id=uid)
     if merged_or_none:
         p.apply_overrides(merged_or_none)
     else:
