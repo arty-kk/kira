@@ -759,7 +759,7 @@ async def respond_to_user(
 
     if memory_uid is None:
         memory_uid = user_id
-    if persona_profile_id is not None and memory_uid is not None:
+    if not is_api and persona_profile_id is not None and memory_uid is not None:
         memory_uid = _scoped_memory_uid(int(memory_uid), persona_profile_id)
 
     logger.info(

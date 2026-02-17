@@ -1,5 +1,6 @@
 import unittest
 import unittest.mock
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app.api import conversation
+from app.tasks import api_worker
 
 
 class _DummyResult:
@@ -30,6 +32,55 @@ class _DummyDB:
         if self._with_persona and self._execute_calls == 2:
             return _DummyResult(rowcount=1)
         return _DummyResult()
+
+
+
+
+class _WorkerPipeline:
+    def __init__(self, redis):
+        self._redis = redis
+        self._commands = []
+
+    def rpush(self, key, value):
+        self._commands.append(("rpush", key, value))
+        return self
+
+    def expire(self, key, ttl):
+        self._commands.append(("expire", key, ttl))
+        return self
+
+    async def execute(self):
+        for op, key, value in self._commands:
+            if op == "rpush":
+                self._redis.storage.setdefault(key, []).append(value)
+            elif op == "expire":
+                self._redis.expire_calls.append((key, value))
+        return [True] * len(self._commands)
+
+
+class _WorkerRedis:
+    def __init__(self):
+        self.storage = {}
+        self.expire_calls = []
+
+    async def set(self, key, value, ex=None, nx=None):
+        if nx and key in self.storage:
+            return False
+        self.storage[key] = value
+        return True
+
+    async def get(self, key):
+        return self.storage.get(key)
+
+    async def delete(self, key):
+        self.storage.pop(key, None)
+        return 1
+
+    async def lrem(self, key, count, value):
+        return 1
+
+    def pipeline(self):
+        return _WorkerPipeline(self)
 
 
 class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +134,18 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
             register_memory_uid = register_mock.await_args.args[1]
         return job, register_memory_uid
 
+
+    async def _run_worker_for_job(self, job: dict):
+        redis_queue = _WorkerRedis()
+        respond_mock = unittest.mock.AsyncMock(return_value="ok")
+        with (
+            unittest.mock.patch.object(api_worker, "respond_to_user", new=respond_mock),
+            unittest.mock.patch.object(api_worker, "_heartbeat_job", new=unittest.mock.AsyncMock(return_value=None)),
+        ):
+            await api_worker._handle_job(json.dumps(job), redis_queue)
+
+        return respond_mock.await_args.kwargs
+
     async def test_job_memory_uid_scoped_for_persona(self):
         payload = conversation.ConversationRequest(
             user_id="user-1",
@@ -104,6 +167,33 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(job["persona_profile_id"])
         self.assertEqual(job["memory_uid"], job["chat_id"])
         self.assertEqual(job["memory_uid"], register_memory_uid)
+
+
+
+    async def test_worker_uses_same_memory_uid_from_job_for_persona_profile(self):
+        payload = conversation.ConversationRequest(
+            user_id="user-1",
+            message="hi",
+            persona=conversation.PersonaConfig(name="Ava"),
+        )
+
+        job, register_memory_uid = await self._run_endpoint(payload)
+        responder_kwargs = await self._run_worker_for_job(job)
+
+        self.assertEqual(job["memory_uid"], register_memory_uid)
+        self.assertEqual(responder_kwargs["memory_uid"], job["memory_uid"])
+        self.assertEqual(responder_kwargs["user_id"], job["memory_uid"])
+
+
+    async def test_worker_uses_same_memory_uid_from_job_without_persona_profile(self):
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        job, register_memory_uid = await self._run_endpoint(payload)
+        responder_kwargs = await self._run_worker_for_job(job)
+
+        self.assertEqual(job["memory_uid"], register_memory_uid)
+        self.assertEqual(responder_kwargs["memory_uid"], job["memory_uid"])
+        self.assertEqual(responder_kwargs["persona_profile_id"], job["persona_profile_id"])
 
     async def test_job_sets_knowledge_owner_id_to_api_key_when_persona_scoped_to_user(self):
         payload = conversation.ConversationRequest(user_id="user-1", message="hi")
