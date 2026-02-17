@@ -23,24 +23,35 @@ pytest -q
 echo "[check] compileall"
 python -m compileall app
 
-if command -v ruff >/dev/null 2>&1; then
-  if [ -f "pyproject.toml" ] || [ -f "ruff.toml" ] || [ -f ".ruff.toml" ]; then
-    echo "[check] ruff"
-    ruff check .
-  else
-    echo "[check] ruff skipped (no ruff config file)"
-  fi
-else
-  echo "[check] ruff skipped (ruff is not installed)"
+has_ruff_config=false
+if [ -f "pyproject.toml" ] || [ -f "ruff.toml" ] || [ -f ".ruff.toml" ]; then
+  has_ruff_config=true
 fi
 
-if command -v pyright >/dev/null 2>&1; then
-  if [ -f "pyrightconfig.json" ]; then
-    echo "[check] pyright"
-    pyright
+if [ "$has_ruff_config" = true ]; then
+  if command -v ruff >/dev/null 2>&1; then
+    echo "[check] ruff"
+    ruff check .
+  elif [ "${CI:-}" = "true" ]; then
+    echo "[check] ERROR: ruff config found (pyproject.toml/ruff.toml/.ruff.toml), but ruff is not installed in CI"
+    exit 1
   else
-    echo "[check] pyright skipped (no pyrightconfig.json)"
+    echo "[check] ruff skipped (ruff config found, but ruff is not installed)"
   fi
 else
-  echo "[check] pyright skipped (pyright is not installed)"
+  echo "[check] ruff skipped (no ruff config file)"
+fi
+
+if [ -f "pyrightconfig.json" ]; then
+  if command -v pyright >/dev/null 2>&1; then
+    echo "[check] pyright"
+    pyright
+  elif [ "${CI:-}" = "true" ]; then
+    echo "[check] ERROR: pyrightconfig.json found, but pyright is not installed in CI"
+    exit 1
+  else
+    echo "[check] pyright skipped (pyrightconfig.json found, but pyright is not installed)"
+  fi
+else
+  echo "[check] pyright skipped (no pyrightconfig.json)"
 fi
