@@ -55,6 +55,7 @@ from app.core.db import session_scope
 from app.core.memory import cache_gender, delete_user_redis_data, inc_msg_count, is_spam
 from app.core.models import ApiKey, ApiKeyKnowledge, ApiKeyStats, User
 from app.emo_engine import get_persona
+from app.emo_engine.registry import update_cached_personas_for_owner
 from app.emo_engine.persona.constants.user_prefs import (
     ARCHETYPES, MAX_ARCH, SOCIALITY_SET, TEMP_PRESETS,
     ZODIAC, ZODIAC_SET, merge_prefs, normalize_prefs,
@@ -217,6 +218,22 @@ async def tr(uid: int, key: str, default: str = "", **kwargs: Any) -> str:
 
 def _persona_key(name: str) -> str:
     return (name or "").strip().lower()
+
+
+def _owner_default_persona_prefs() -> dict[str, Any]:
+    try:
+        base_temp = json.loads(settings.PERSONA_TEMPERAMENT)
+        if not isinstance(base_temp, dict):
+            raise TypeError()
+    except Exception:
+        base_temp = {"sanguine": 0.4, "choleric": 0.25, "phlegmatic": 0.20, "melancholic": 0.15}
+
+    return normalize_prefs({
+        "zodiac": settings.PERSONA_ZODIAC,
+        "temperament": base_temp,
+        "sociality": "ambivert",
+        "archetypes": [],
+    })
 
 
 async def _tr_zodiac(uid: int, zodiac: str) -> str:
@@ -600,19 +617,7 @@ async def cmd_start(message: Message) -> None:
         user = await get_or_create_user(db, message.from_user)
         try:
             if not getattr(user, "persona_prefs", None):
-                try:
-                    base_temp = json.loads(settings.PERSONA_TEMPERAMENT)
-                    if not isinstance(base_temp, dict):
-                        raise TypeError()
-                except Exception:
-                    base_temp = {"sanguine": 0.4, "choleric": 0.25, "phlegmatic": 0.20, "melancholic": 0.15}
-
-                defaults = normalize_prefs({
-                    "zodiac": settings.PERSONA_ZODIAC,
-                    "temperament": base_temp,
-                    "sociality": "ambivert",
-                    "archetypes": [],
-                })
+                defaults = _owner_default_persona_prefs()
 
                 await db.execute(
                     update(User)
@@ -1533,20 +1538,8 @@ async def persona_reset(cb: CallbackQuery) -> None:
     await _cb_ack(cb, text=await tr(uid, "persona.reset.ok", "Persona reset."))
 
     await _wiz_clear(uid)
+    defaults = _owner_default_persona_prefs()
     try:
-        try:
-            base_temp = json.loads(settings.PERSONA_TEMPERAMENT)
-            if not isinstance(base_temp, dict):
-                raise TypeError()
-        except Exception:
-            base_temp = {"sanguine": 0.4, "choleric": 0.25, "phlegmatic": 0.20, "melancholic": 0.15}
-
-        defaults = normalize_prefs({
-            "zodiac": settings.PERSONA_ZODIAC,
-            "temperament": base_temp,
-            "sociality": "ambivert",
-            "archetypes": [],
-        })
         async with session_scope(stmt_timeout_ms=2000) as db:
             await db.execute(update(User).where(User.id == uid).values(persona_prefs=defaults))
         p = await get_persona(chat_id=uid, user_id=uid)
@@ -1555,6 +1548,8 @@ async def persona_reset(cb: CallbackQuery) -> None:
         logger.debug("persona_reset: write defaults failed; falling back to runtime reset", exc_info=True)
         p = await get_persona(chat_id=uid, user_id=uid)
         p.apply_overrides(None, reset=True)
+
+    await update_cached_personas_for_owner(uid, defaults)
 
     await _ui_close_impl(cb)
 
@@ -1919,8 +1914,11 @@ async def persona_finish(cb: CallbackQuery) -> None:
     p = await get_persona(chat_id=uid, user_id=uid)
     if merged_or_none:
         p.apply_overrides(merged_or_none)
+        await update_cached_personas_for_owner(uid, merged_or_none)
     else:
+        defaults = _owner_default_persona_prefs()
         p.apply_overrides(None, reset=True)
+        await update_cached_personas_for_owner(uid, defaults)
 
     with suppress(Exception):
         await _wiz_clear(uid)
