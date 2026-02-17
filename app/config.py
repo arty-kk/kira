@@ -388,6 +388,7 @@ class Settings:
     # ─── Celery ──────────────────────────────────────────────────
     CELERY_BROKER_URL: str = field(default_factory=lambda: _get_env("CELERY_BROKER_URL", ""))
     CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "10", conv=int))
+    CELERY_DEFAULT_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_DEFAULT_QUEUE", "celery", conv=str))
     CELERY_MEDIA_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_MEDIA_QUEUE", "queue_media", conv=str))
     CELERY_MEDIA_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_CONCURRENCY", "2", conv=int))
     CELERY_MEDIA_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_PREFETCH", "1", conv=int))
