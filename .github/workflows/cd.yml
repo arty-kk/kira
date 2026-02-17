@@ -30,6 +30,7 @@ jobs:
             export DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             export DEPLOY_BRANCH="${{ secrets.DEPLOY_BRANCH }}"
             export DEPLOY_REPO_URL="${{ secrets.DEPLOY_REPO_URL }}"
+            export DEPLOY_COMMIT_SHA="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}"
             export DB_SCALE="${{ secrets.DB_SCALE }}"
             export REDIS_KV_SCALE="${{ secrets.REDIS_KV_SCALE }}"
             export REDIS_VEC_SCALE="${{ secrets.REDIS_VEC_SCALE }}"

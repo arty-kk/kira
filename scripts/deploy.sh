@@ -4,6 +4,7 @@ set -euo pipefail
 DEPLOY_PATH=${DEPLOY_PATH:-}
 DEPLOY_BRANCH=${DEPLOY_BRANCH:-main}
 DEPLOY_REPO_URL=${DEPLOY_REPO_URL:-}
+DEPLOY_COMMIT_SHA=${DEPLOY_COMMIT_SHA:-}
 
 DB_SCALE=${DB_SCALE:-}
 REDIS_KV_SCALE=${REDIS_KV_SCALE:-}
@@ -190,8 +191,20 @@ fi
 echo "Fetching from origin..."
 git fetch --prune origin
 
-echo "Checking out ${DEPLOY_BRANCH} from origin..."
-git checkout -B "${DEPLOY_BRANCH}" "origin/${DEPLOY_BRANCH}"
+if [[ -n "${DEPLOY_COMMIT_SHA}" ]]; then
+  echo "Deploy target: commit ${DEPLOY_COMMIT_SHA}"
+  if ! git cat-file -e "${DEPLOY_COMMIT_SHA}^{commit}"; then
+    echo "DEPLOY_COMMIT_SHA was provided but commit is not available after fetch: ${DEPLOY_COMMIT_SHA}" >&2
+    exit 1
+  fi
+
+  echo "Checking out commit ${DEPLOY_COMMIT_SHA} in detached HEAD mode..."
+  git checkout --detach "${DEPLOY_COMMIT_SHA}"
+else
+  echo "Deploy target: branch ${DEPLOY_BRANCH}"
+  echo "Checking out ${DEPLOY_BRANCH} from origin..."
+  git checkout -B "${DEPLOY_BRANCH}" "origin/${DEPLOY_BRANCH}"
+fi
 
 echo "Current branch and status:"
 git branch -v
