@@ -44,7 +44,8 @@ Base = declarative_base()
 
 @asynccontextmanager
 async def get_db() -> AsyncIterator[AsyncSession]:
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         try:
             yield session
             if session.in_transaction():
@@ -53,10 +54,17 @@ async def get_db() -> AsyncIterator[AsyncSession]:
             if session.in_transaction():
                 await session.rollback()
             raise
+        finally:
+            if session.in_transaction():
+                with suppress(Exception):
+                    await session.rollback()
+    finally:
+        await session.close()
 
 @asynccontextmanager
 async def session_scope(*, stmt_timeout_ms: int | None = None, read_only: bool = False, autocommit: bool = True):
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         try:
             if stmt_timeout_ms and stmt_timeout_ms > 0:
                 with suppress(Exception):
@@ -80,6 +88,12 @@ async def session_scope(*, stmt_timeout_ms: int | None = None, read_only: bool =
                 if session.in_transaction():
                     await session.rollback()
             raise
+        finally:
+            if session.in_transaction():
+                with suppress(Exception):
+                    await session.rollback()
+    finally:
+        await session.close()
 
 try:
     slow_ms = int(getattr(settings, "DB_LOG_SLOW_MS", 0) or 0)
