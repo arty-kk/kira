@@ -127,6 +127,39 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(check_light_mock.await_args.kwargs["source"], "channel")
         self.assertEqual(check_deep_mock.await_args.kwargs["source"], "channel")
 
+    async def test_handle_passive_moderation_returns_error_and_records_error_state_on_exception(self) -> None:
+        fake_redis = _FakeRedis()
+        analytics_mock = AsyncMock()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "check_light", AsyncMock(side_effect=Exception("boom"))),
+            patch.object(moderation, "analytics_record_moderation", analytics_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "error")
+        fake_redis.hset.assert_any_await(
+            "mod:msg:100:77",
+            mapping={
+                "status": "error",
+                "reason": "internal_error",
+                "ts": unittest.mock.ANY,
+                "user_id": 42,
+            },
+        )
+        analytics_mock.assert_any_await(100, "error", "internal_error")
+
 
 if __name__ == "__main__":
     unittest.main()
