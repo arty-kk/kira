@@ -271,16 +271,18 @@ async def handle_passive_moderation(
             )
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
-            light_status = "clean"
+            light_status = "light_timeout_risk"
         status = "clean"
         reason_text = ""
         if light_status != "clean":
             reason_map = {
                 "flood": "Frequent messages (flood/spam)",
                 "spam_links": "Too many links in one message",
+                "spam_mentions": "Too many mentions in one message",
                 "promo": "Promotional content",
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "Toxic or abusive content",
+                "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
             status = "flagged"

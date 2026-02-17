@@ -244,7 +244,8 @@ async def extract_external_mentions(
 
     redis = get_redis()
     bot = get_bot()
-    external = []
+    external: list[str] = []
+    usernames: list[str] = []
 
     for ent in entities:
         t = str(ent.get("type") or "").lower()
@@ -259,22 +260,67 @@ async def extract_external_mentions(
         uname = _norm_uname(text[off:off + ln])
         if not uname:
             continue
+        usernames.append(uname)
+
+    usernames = list(dict.fromkeys(usernames))
+    if not usernames:
+        return []
+
+    resolve_timeout = float(getattr(settings, "MOD_MENTION_RESOLVE_TIMEOUT", 1.5))
+    resolve_concurrency = int(max(1, int(getattr(settings, "MOD_MENTION_RESOLVE_CONCURRENCY", 3))))
+    ttl_pos = int(max(1, int(getattr(settings, "MOD_MENTION_RESOLVE_TTL_POS", 3600))))
+    ttl_neg = int(max(1, int(getattr(settings, "MOD_MENTION_RESOLVE_TTL_NEG", 300))))
+    semaphore = asyncio.Semaphore(resolve_concurrency)
+
+    async def _resolve_outcome(uname: str) -> str:
+        cache_key = f"mod:mention_resolve:{uname}"
         try:
             cached = await redis.hget(f"user_map:{chat_id}", uname)
         except RedisError:
             logger.warning("extract_external_mentions: Redis error for chat %s", chat_id)
             cached = None
         if cached:
-            continue
+            return "ok_user"
+
         try:
-            chat = await bot.get_chat(f"@{uname}")
-            if not chat:
-                external.append(uname)
-            elif getattr(chat, "type", None) == ChatType.CHANNEL:
-                external.append(uname)
-            elif getattr(chat, "is_bot", False):
-                external.append(uname)
+            cached_outcome = await redis.get(cache_key)
+            if cached_outcome:
+                if isinstance(cached_outcome, (bytes, bytearray)):
+                    cached_outcome = cached_outcome.decode("utf-8", "ignore")
+                cached_outcome = str(cached_outcome).strip().lower()
+                if cached_outcome in {"ok_user", "channel", "bot", "unknown_error"}:
+                    return cached_outcome
         except Exception:
+            logger.debug("extract_external_mentions: mention cache read failed", exc_info=True)
+
+        outcome = "unknown_error"
+        try:
+            async with semaphore:
+                chat = await asyncio.wait_for(bot.get_chat(f"@{uname}"), timeout=resolve_timeout)
+            if not chat:
+                outcome = "unknown_error"
+            elif getattr(chat, "type", None) == ChatType.CHANNEL:
+                outcome = "channel"
+            elif getattr(chat, "is_bot", False):
+                outcome = "bot"
+            else:
+                outcome = "ok_user"
+        except Exception:
+            outcome = "unknown_error"
+
+        try:
+            ttl = ttl_pos if outcome == "ok_user" else ttl_neg
+            await redis.set(cache_key, outcome, ex=ttl)
+        except Exception:
+            logger.debug("extract_external_mentions: mention cache write failed", exc_info=True)
+        return outcome
+
+    outcomes = await asyncio.gather(*(_resolve_outcome(uname) for uname in usernames), return_exceptions=True)
+    for uname, outcome in zip(usernames, outcomes):
+        if isinstance(outcome, Exception):
+            external.append(uname)
+            continue
+        if outcome in {"channel", "bot", "unknown_error"}:
             external.append(uname)
 
     return external
@@ -431,7 +477,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "link_violation", "promo", "toxic"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "toxic"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -444,6 +490,10 @@ async def check_light(
     logger.debug("check_light: urls=%r", urls)
     link_policy = str((policy or {}).get("link_policy", "group_default") or "group_default").strip().lower()
     links_blocked = link_policy != "relaxed"
+
+    mention_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "mention")
+    if mention_count > int(getattr(settings, "MODERATION_SPAM_MENTION_THRESHOLD", 5)):
+        return "spam_mentions"
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
