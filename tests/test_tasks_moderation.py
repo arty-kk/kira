@@ -22,6 +22,7 @@ from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 class ModerationCeleryConfigTests(unittest.TestCase):
     def test_task_routes_include_moderation_queue(self) -> None:
         routes = celery.conf.task_routes or {}
+        self.assertEqual(celery.conf.task_default_queue, settings.CELERY_DEFAULT_QUEUE)
         self.assertIn("moderation.*", routes)
         self.assertEqual(routes["moderation.*"]["queue"], settings.CELERY_MODERATION_QUEUE)
         self.assertEqual(routes["media.preprocess_group_image"]["queue"], settings.CELERY_MEDIA_QUEUE)
