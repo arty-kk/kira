@@ -189,6 +189,73 @@ class RegistryInflightFailureTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(_TrackedPersona.created), 1)
             self.assertEqual(_TrackedPersona.created[0].close_calls, 1)
 
+    async def test_shutdown_during_build_does_not_cache_and_allows_reuse(self) -> None:
+        chat_id = 556677889
+        profile_id = f"inflight-shutdown-{uuid.uuid4()}"
+        key = (chat_id, 0, 0, profile_id)
+        build_entered = asyncio.Event()
+        release_build = asyncio.Event()
+        release_bg = asyncio.Event()
+
+        async with registry._lock:
+            registry._cache.clear()
+            registry._inflight.clear()
+
+        _TrackedPersona.created.clear()
+
+        bg_task = asyncio.create_task(release_bg.wait())
+        async with registry._lock:
+            registry._bg_closers.add(bg_task)
+
+        @asynccontextmanager
+        async def controlled_session_scope(*_args, **_kwargs):
+            build_entered.set()
+            await release_build.wait()
+            yield _DummyDB()
+
+        with patch.object(registry, "session_scope", new=controlled_session_scope), patch.object(
+            registry,
+            "Persona",
+            new=_TrackedPersona,
+        ):
+            creator_task = asyncio.create_task(
+                registry.get_persona(chat_id=chat_id, profile_id=profile_id)
+            )
+
+            await asyncio.wait_for(build_entered.wait(), timeout=2)
+
+            waiter_task = asyncio.create_task(
+                registry.get_persona(chat_id=chat_id, profile_id=profile_id)
+            )
+
+            shutdown_task = asyncio.create_task(registry.shutdown_personas())
+            await asyncio.sleep(0)
+            release_build.set()
+
+            with self.assertRaises(RuntimeError) as creator_err:
+                await asyncio.wait_for(creator_task, timeout=2)
+            with self.assertRaises(RuntimeError) as waiter_err:
+                await asyncio.wait_for(waiter_task, timeout=2)
+
+            self.assertEqual(str(creator_err.exception), "persona registry shutdown")
+            self.assertEqual(str(waiter_err.exception), "persona registry shutdown")
+
+            release_bg.set()
+            await asyncio.wait_for(shutdown_task, timeout=2)
+
+            async with registry._lock:
+                self.assertFalse(registry._cache)
+                self.assertNotIn(key, registry._inflight)
+
+            self.assertEqual(len(_TrackedPersona.created), 1)
+            self.assertEqual(_TrackedPersona.created[0].close_calls, 1)
+
+            fresh = await asyncio.wait_for(
+                registry.get_persona(chat_id=chat_id, profile_id=profile_id),
+                timeout=2,
+            )
+            self.assertIsNotNone(fresh)
+
 
 if __name__ == "__main__":
     unittest.main()
