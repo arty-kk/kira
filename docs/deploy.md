@@ -13,6 +13,26 @@
 - `DEPLOY_COMMIT_SHA` (when set, deploys exactly this commit SHA)
 - `COMPOSE_SCALE_OVERRIDES` — list like `api=2,worker-tasks=3;redis_kv=1`
 
+## first deploy/bootstrap
+
+CD step `Deploy via SSH` follows this bootstrap order:
+
+1. Checks `${DEPLOY_PATH}/scripts/deploy.sh`.
+2. If the script is missing and `DEPLOY_REPO_URL` is set, performs bootstrap clone with `DEPLOY_BRANCH`.
+3. If the script is missing and `DEPLOY_REPO_URL` is empty, fails with explicit diagnostic.
+
+Minimum secrets for first deploy/bootstrap:
+
+- `DEPLOY_PATH`
+- `DEPLOY_BRANCH`
+- `DEPLOY_REPO_URL`
+
+Expected bootstrap result in the same CD step:
+
+- repository appears in `DEPLOY_PATH`,
+- `scripts/deploy.sh` is found,
+- `scripts/deploy.sh` is executed immediately.
+
 ## Deploy target priority
 
 - If `DEPLOY_COMMIT_SHA` is set, deployment is pinned to that exact commit (`git checkout --detach <sha>`).

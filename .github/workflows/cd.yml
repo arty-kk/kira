@@ -30,6 +30,10 @@ jobs:
             export DEPLOY_PATH="${{ secrets.DEPLOY_PATH }}"
             export DEPLOY_BRANCH="${{ secrets.DEPLOY_BRANCH }}"
             export DEPLOY_REPO_URL="${{ secrets.DEPLOY_REPO_URL }}"
+            if [[ -z "${DEPLOY_BRANCH}" ]]; then
+              DEPLOY_BRANCH="main"
+            fi
+            DEPLOY_SCRIPT="${DEPLOY_PATH}/scripts/deploy.sh"
             export DEPLOY_COMMIT_SHA="${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}"
             export DB_SCALE="${{ secrets.DB_SCALE }}"
             export REDIS_KV_SCALE="${{ secrets.REDIS_KV_SCALE }}"
@@ -42,4 +46,24 @@ jobs:
             export WORKER_QUEUE_SCALE="${{ secrets.WORKER_QUEUE_SCALE }}"
             export WORKER_API_SCALE="${{ secrets.WORKER_API_SCALE }}"
             export COMPOSE_SCALE_OVERRIDES="${{ secrets.COMPOSE_SCALE_OVERRIDES }}"
-            bash "${{ secrets.DEPLOY_PATH }}/scripts/deploy.sh"
+            if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
+              if [[ -n "${DEPLOY_REPO_URL}" ]]; then
+                if [[ -e "${DEPLOY_PATH}" ]] && [[ -n "$(ls -A "${DEPLOY_PATH}" 2>/dev/null)" ]]; then
+                  echo "Bootstrap failed: '${DEPLOY_PATH}' is not empty. Refusing to clone '${DEPLOY_REPO_URL}' to avoid overwriting existing data. Clean the directory or set a different DEPLOY_PATH." >&2
+                  exit 1
+                fi
+
+                mkdir -p "${DEPLOY_PATH}"
+                git clone --branch "${DEPLOY_BRANCH}" --single-branch "${DEPLOY_REPO_URL}" "${DEPLOY_PATH}"
+
+                if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
+                  echo "Bootstrap failed: '${DEPLOY_SCRIPT}' was not found after cloning '${DEPLOY_REPO_URL}' (branch '${DEPLOY_BRANCH}')." >&2
+                  exit 1
+                fi
+              else
+                echo "Deploy failed: '${DEPLOY_SCRIPT}' not found and bootstrap is impossible without DEPLOY_REPO_URL." >&2
+                exit 1
+              fi
+            fi
+
+            bash "${DEPLOY_SCRIPT}"
