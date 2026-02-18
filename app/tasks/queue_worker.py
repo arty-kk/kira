@@ -36,6 +36,7 @@ from app.services.addons.voice_generator import (
 from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
+from app.core.queue_recovery import requeue_processing_on_start
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
 
 
@@ -105,6 +106,7 @@ TTS_REPLY_TO_VOICE_IN_GROUPS = bool(getattr(
     settings, "TTS_REPLY_TO_VOICE_IN_GROUPS", os.environ.get("TTS_REPLY_TO_VOICE_IN_GROUPS", "0") not in ("0","false","False")))
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
+REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
 
 TG_GLOBAL_RPS = int(getattr(settings, "TG_GLOBAL_RPS", 27))
 TG_GLOBAL_BURST = int(getattr(settings, "TG_GLOBAL_BURST", 45))
@@ -147,21 +149,6 @@ redis.call('PEXPIRE', key, ttl)
 return allowed
 """
 _CHAT_BUCKET_LUA = _TG_BUCKET_LUA
-
-_REQUEUE_ON_START_LUA = """
-local processing_key = KEYS[1]
-local queue_key = KEYS[2]
-
-local pending = redis.call('LRANGE', processing_key, 0, -1)
-local moved = #pending
-
-if moved > 0 then
-  redis.call('RPUSH', queue_key, unpack(pending))
-  redis.call('LTRIM', processing_key, moved, -1)
-end
-
-return moved
-"""
 
 _RECLAIM_PROCESSING_ITEM_LUA = """
 local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
@@ -1838,11 +1825,15 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
     queue_key      = settings.QUEUE_KEY
     processing_key = queue_key + ":processing"
 
-    requeue_lock_key = f"{processing_key}:requeue_lock"
     try:
-        if await REDIS_QUEUE.set(requeue_lock_key, os.getpid(), nx=True, ex=60):
-            moved = await REDIS_QUEUE.eval(_REQUEUE_ON_START_LUA, 2, processing_key, queue_key)
-            logger.info("Requeue on start done by pid=%s moved=%s", os.getpid(), moved)
+        recovery = await requeue_processing_on_start(
+            REDIS_QUEUE,
+            queue_key=queue_key,
+            processing_key=processing_key,
+            lock_ttl=REQUEUE_LOCK_TTL_SEC,
+        )
+        if recovery.lock_acquired:
+            logger.info("Requeue on start done by pid=%s moved=%s", os.getpid(), recovery.moved_count)
         else:
             logger.info("Skip requeue on start (another worker holds the lock)")
     except Exception as e:

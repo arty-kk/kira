@@ -27,6 +27,7 @@ def _load_queue_worker():
     fake_user_service = types.ModuleType("app.services.user.user_service")
     fake_core = types.ModuleType("app.core")
     fake_memory = types.ModuleType("app.core.memory")
+    fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
 
     fake_aiogram = types.ModuleType("aiogram")
     fake_aiogram_enums = types.ModuleType("aiogram.enums")
@@ -88,6 +89,15 @@ def _load_queue_worker():
     fake_memory.close_redis_pools = _noop_async
     fake_memory.SafeRedis = object
     fake_memory.push_message = _noop_async
+    fake_queue_recovery.QueueRecoveryResult = lambda moved_count, lock_acquired: types.SimpleNamespace(
+        moved_count=moved_count,
+        lock_acquired=lock_acquired,
+    )
+
+    async def _fake_requeue_processing_on_start(*_args, **_kwargs):
+        return types.SimpleNamespace(moved_count=0, lock_acquired=True)
+
+    fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
 
     module_overrides = {
         "app": fake_app,
@@ -110,6 +120,7 @@ def _load_queue_worker():
         "app.services.user.user_service": fake_user_service,
         "app.core": fake_core,
         "app.core.memory": fake_memory,
+        "app.core.queue_recovery": fake_queue_recovery,
         "aiogram": fake_aiogram,
         "aiogram.enums": fake_aiogram_enums,
         "aiogram.types": fake_aiogram_types,
@@ -129,12 +140,6 @@ queue_worker = _load_queue_worker()
 
 
 class _BootRedis:
-    async def set(self, *_args, **_kwargs):
-        return True
-
-    async def eval(self, *_args, **_kwargs):
-        return 0
-
     async def brpoplpush(self, *_args, **_kwargs):
         raise Exception("generic read failure")
 
@@ -181,6 +186,11 @@ class QueueWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(queue_worker, "_jitter", lambda *_args, **_kwargs: 0),
             patch.object(queue_worker, "_sweeper_loop", _fake_sweeper),
             patch.object(queue_worker, "_try_start_task_or_requeue", try_start),
+            patch.object(
+                queue_worker,
+                "requeue_processing_on_start",
+                AsyncMock(return_value=types.SimpleNamespace(moved_count=0, lock_acquired=True)),
+            ),
         ):
             await queue_worker.queue_worker(stop_evt)
 
@@ -209,6 +219,11 @@ class QueueWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
             patch.object(queue_worker, "_sweeper_loop", _fake_sweeper),
             patch.object(queue_worker, "_try_start_task_or_requeue", AsyncMock(side_effect=ValueError("boom"))),
             patch.object(queue_worker.asyncio, "sleep", AsyncMock(side_effect=_sleep_and_stop)),
+            patch.object(
+                queue_worker,
+                "requeue_processing_on_start",
+                AsyncMock(return_value=types.SimpleNamespace(moved_count=0, lock_acquired=True)),
+            ),
         ):
             await queue_worker.queue_worker(stop_evt)
 
@@ -219,28 +234,6 @@ class QueueWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
         stop_evt = queue_worker.asyncio.Event()
 
         class _AtomicRequeueRedis(_BootRedis):
-            def __init__(self):
-                self.lists = {
-                    "q:in": ["queued"],
-                    "q:in:processing": ["p1", "p2"],
-                }
-                self.last_eval_moved = None
-
-            async def eval(self, _script, _numkeys, processing_key, queue_key):
-                pending = list(self.lists.get(processing_key, []))
-                moved = len(pending)
-
-                if pending:
-                    self.lists.setdefault(queue_key, []).extend(pending)
-
-                # Конкурентная запись во время startup requeue: новый inflight элемент.
-                self.lists.setdefault(processing_key, []).append("new-inflight")
-
-                # Атомарная операция должна удалять только прочитанные элементы.
-                self.lists[processing_key] = self.lists.get(processing_key, [])[moved:]
-                self.last_eval_moved = moved
-                return moved
-
             async def brpoplpush(self, *_args, **_kwargs):
                 stop_evt.set()
                 return None
@@ -251,12 +244,18 @@ class QueueWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
         async def _fake_sweeper(stop_evt_arg, *_args, **_kwargs):
             await stop_evt_arg.wait()
 
-        with patch.object(queue_worker, "_sweeper_loop", _fake_sweeper):
+        requeue_mock = AsyncMock(return_value=types.SimpleNamespace(moved_count=2, lock_acquired=True))
+        with (
+            patch.object(queue_worker, "_sweeper_loop", _fake_sweeper),
+            patch.object(queue_worker, "requeue_processing_on_start", requeue_mock),
+        ):
             await queue_worker.queue_worker(stop_evt)
-
-        self.assertEqual(redis.last_eval_moved, 2)
-        self.assertEqual(redis.lists["q:in"], ["queued", "p1", "p2"])
-        self.assertEqual(redis.lists["q:in:processing"], ["new-inflight"])
+        requeue_mock.assert_awaited_once_with(
+            redis,
+            queue_key="q:in",
+            processing_key="q:in:processing",
+            lock_ttl=queue_worker.REQUEUE_LOCK_TTL_SEC,
+        )
 
 
 if __name__ == "__main__":
