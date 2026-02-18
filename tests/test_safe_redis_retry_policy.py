@@ -32,6 +32,41 @@ class _ReadonlyRetryClient:
         return "ok"
 
 
+class _WhitelistRetryClient:
+    def __init__(self):
+        self.calls = {"delete": 0, "unlink": 0, "zrem": 0, "hdel": 0, "srem": 0}
+
+    async def delete(self, _key):
+        self.calls["delete"] += 1
+        if self.calls["delete"] == 1:
+            raise asyncio.TimeoutError("temporary timeout")
+        return 1
+
+    async def unlink(self, _key):
+        self.calls["unlink"] += 1
+        if self.calls["unlink"] == 1:
+            raise asyncio.TimeoutError("temporary timeout")
+        return 1
+
+    async def zrem(self, _key, _member):
+        self.calls["zrem"] += 1
+        if self.calls["zrem"] == 1:
+            raise asyncio.TimeoutError("temporary timeout")
+        return 1
+
+    async def hdel(self, _key, _field):
+        self.calls["hdel"] += 1
+        if self.calls["hdel"] == 1:
+            raise asyncio.TimeoutError("temporary timeout")
+        return 1
+
+    async def srem(self, _key, _member):
+        self.calls["srem"] += 1
+        if self.calls["srem"] == 1:
+            raise asyncio.TimeoutError("temporary timeout")
+        return 1
+
+
 class _UnknownCommandClient:
     def __init__(self):
         self.calls = 0
@@ -65,7 +100,7 @@ class _PipelineClient:
 
 
 class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_non_idempotent_commands_are_not_retried_after_timeout(self):
+    async def test_direct_safe_redis_non_idempotent_commands_are_not_retried_after_timeout(self):
         client = _ApplyThenTimeoutClient()
         redis = SafeRedis(client, attempts=3)
 
@@ -82,7 +117,7 @@ class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.applied["rpush"], 1)
         self.assertTrue(any("retry skipped due to non-idempotent semantics" in msg for msg in logs.output))
 
-    async def test_readonly_command_keeps_retry(self):
+    async def test_direct_safe_redis_readonly_command_keeps_retry(self):
         client = _ReadonlyRetryClient()
         redis = SafeRedis(client, attempts=3)
 
@@ -91,8 +126,25 @@ class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ok")
         self.assertEqual(client.get_calls, 2)
 
+    async def test_direct_safe_redis_retry_is_enabled_for_whitelisted_commands(self):
+        client = _WhitelistRetryClient()
+        redis = SafeRedis(client, attempts=3)
 
-    async def test_unknown_command_uses_conservative_single_attempt(self):
+        command_cases = [
+            ("delete", ("k",)),
+            ("unlink", ("k",)),
+            ("zrem", ("z", "m")),
+            ("hdel", ("h", "f")),
+            ("srem", ("s", "m")),
+        ]
+        for command_name, args in command_cases:
+            with self.subTest(command=command_name):
+                result = await getattr(redis, command_name)(*args)
+                self.assertEqual(result, 1)
+                self.assertEqual(client.calls[command_name], 2)
+
+
+    async def test_direct_safe_redis_unknown_command_uses_conservative_single_attempt(self):
         client = _UnknownCommandClient()
         redis = SafeRedis(client, attempts=3)
 
@@ -101,7 +153,8 @@ class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.calls, 1)
 
-    async def test_pipeline_execute_has_single_attempt(self):
+    async def test_pipeline_execute_has_single_attempt_for_pipeline_only(self):
+        # Retry policy above is validated for direct SafeRedis calls; pipeline has its own single execute call.
         client = _PipelineClient()
         redis = SafeRedis(client, attempts=3)
 
