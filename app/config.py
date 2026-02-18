@@ -283,14 +283,14 @@ class Settings:
     PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 105: 500, 220: 1000, 575: 2500})
     GIFT_TIERS: List[Dict[str, Any]] = field(
         default_factory=lambda: [
-            {"code": "flower",  "title": "Rose",     "emoji": "🌷", "price_stars": 25,    "requests": 5},
-            {"code": "coffee",  "title": "Coffee",   "emoji": "☕️",  "price_stars": 50,   "requests": 10},
-            {"code": "cake",    "title": "Dessert",  "emoji": "🍰", "price_stars": 100,   "requests": 20},
-            {"code": "music",   "title": "Song",     "emoji": "🎵", "price_stars": 200,   "requests": 40},
-            {"code": "perfume", "title": "Perfume",  "emoji": "🌸", "price_stars": 500,  "requests": 100},
-            {"code": "bag",     "title": "Handbag",  "emoji": "👜", "price_stars": 1000,  "requests": 200},
-            {"code": "trip",    "title": "Travel",   "emoji": "✈️",  "price_stars": 2500,  "requests": 500},
-            {"code": "ring",    "title": "Ring",     "emoji": "💍", "price_stars": 5000, "requests": 1000},
+            {"code": "matcha",        "title": "Matcha Latte",        "emoji": "🍵", "price_stars": 30,   "requests": 6},
+            {"code": "plushie",       "title": "Kawaii Plushie",      "emoji": "🧸", "price_stars": 60,   "requests": 12},
+            {"code": "keyboard_skin", "title": "Keyboard Skin",       "emoji": "⌨️",  "price_stars": 120,  "requests": 24},
+            {"code": "cat_headset",   "title": "Cat-Ear Headset",     "emoji": "🎧", "price_stars": 240,  "requests": 48},
+            {"code": "game_pass",     "title": "Game Pass",           "emoji": "🎮", "price_stars": 480,  "requests": 96},
+            {"code": "energy_drink",  "title": "Energy Drink Crate",  "emoji": "🥤", "price_stars": 960,  "requests": 192},
+            {"code": "rgb_setup",     "title": "RGB Setup",           "emoji": "🌈", "price_stars": 1920, "requests": 384},
+            {"code": "stream_throne", "title": "Streamer Throne",     "emoji": "🪑", "price_stars": 3840, "requests": 768},
         ]
     )
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
