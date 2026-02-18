@@ -25,6 +25,7 @@ from app.services.addons.passive_moderation import (
     check_deep,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
+from app.bot.handlers.moderation_context import resolve_message_moderation_context
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +246,7 @@ async def handle_passive_moderation(
     if is_comment_context is not None:
         moderation_context = "comment" if bool(is_comment_context) else "group"
     elif message is not None:
-        moderation_context = _resolve_message_context(message, from_linked=False)
+        moderation_context = resolve_message_moderation_context(message, from_linked=False)
     else:
         moderation_context = "group"
     light_policy = resolve_moderation_policy(moderation_context, settings)
@@ -549,23 +550,6 @@ async def moderation_on_edited(message: types.Message) -> None:
         await _delete_message_safe(message.chat.id, message.message_id)
 
 
-def _resolve_message_context(message: types.Message, *, from_linked: bool) -> str:
-    if from_linked:
-        return "comment"
-
-    sender_chat = getattr(message, "sender_chat", None)
-    forward_from_chat = getattr(message, "forward_from_chat", None)
-    if getattr(message, "is_automatic_forward", False):
-        return "comment"
-    if sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL:
-        return "comment"
-    if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
-        return "comment"
-    if getattr(message.chat, "linked_chat_id", None):
-        return "comment"
-    return "group"
-
-
 def resolve_moderation_policy(context: str, cfg: Any) -> dict[str, Any]:
     policy = {
         "delete_external_channel_msgs": bool(getattr(cfg, "MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS", True)),
@@ -599,7 +583,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     except Exception:
         from_linked = False
 
-    context = _resolve_message_context(message, from_linked=bool(from_linked))
+    context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
     policy = resolve_moderation_policy(context, settings)
 
     def _ctx_reason(reason: str) -> str:
