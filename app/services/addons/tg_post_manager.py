@@ -105,6 +105,7 @@ DEFAULT_EVAL_ENABLED = True
 DEFAULT_POLISH_ENABLED = True
 
 DEFAULT_RUBRICS_PER_RUN = 2
+MEMORY_PUSH_RETRY_ATTEMPTS = 2
 
 DEFAULT_HUMOR_RATE = 0.35
 DEFAULT_EVENING_HUMOR_BOOST = 0.15
@@ -1859,6 +1860,111 @@ async def _send_telegram_with_retry(
             await asyncio.sleep(1.5 * attempt)
             attempt += 1
 
+
+def _is_push_retryable_error(exc: BaseException) -> bool:
+    return isinstance(exc, (asyncio.CancelledError, asyncio.TimeoutError, TimeoutError))
+
+
+async def _push_message_with_retry(
+    persona_chat_id: int,
+    role: str,
+    content: str,
+    *,
+    step_name: str,
+    attempts: int = MEMORY_PUSH_RETRY_ATTEMPTS,
+) -> None:
+    total_attempts = max(1, int(attempts or 1))
+    last_exc: BaseException | None = None
+    for attempt in range(1, total_attempts + 1):
+        try:
+            await push_message(persona_chat_id, role, content, user_id=persona_chat_id)
+            return
+        except asyncio.CancelledError as exc:
+            last_exc = exc
+            if attempt >= total_attempts:
+                break
+            logger.warning(
+                "tg_post_manager memory persist retrying push step=%s attempt=%d/%d err=%s",
+                step_name,
+                attempt,
+                total_attempts,
+                exc.__class__.__name__,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if not _is_push_retryable_error(exc) or attempt >= total_attempts:
+                break
+            logger.warning(
+                "tg_post_manager memory persist retrying push step=%s attempt=%d/%d err=%s",
+                step_name,
+                attempt,
+                total_attempts,
+                exc.__class__.__name__,
+            )
+    if last_exc is not None and _is_push_retryable_error(last_exc):
+        logger.error(
+            "tg_post_manager memory persist retries exhausted step=%s attempts=%d err=%s",
+            step_name,
+            total_attempts,
+            last_exc.__class__.__name__,
+        )
+    if last_exc is not None:
+        raise last_exc
+
+
+async def _persist_post_to_memory(
+    persona: Any,
+    persona_chat_id: int,
+    post_text: str,
+    meta_obj: dict[str, Any],
+) -> bool:
+    step_names = [
+        "persona.process_interaction",
+        "push_message assistant",
+        "push_message system-meta",
+    ]
+    results = await asyncio.gather(
+        persona.process_interaction(persona_chat_id, post_text),
+        _push_message_with_retry(
+            persona_chat_id,
+            "assistant",
+            post_text,
+            step_name="push_message assistant",
+        ),
+        _push_message_with_retry(
+            persona_chat_id,
+            "system",
+            META_MARKER_PREFIX + json.dumps(meta_obj, ensure_ascii=False),
+            step_name="push_message system-meta",
+        ),
+        return_exceptions=True,
+    )
+
+    step_ok: list[bool] = []
+    for idx, result in enumerate(results):
+        step_name = step_names[idx]
+        if isinstance(result, BaseException):
+            step_ok.append(False)
+            logger.error(
+                "tg_post_manager memory persist step failed step=%s err=%s",
+                step_name,
+                result.__class__.__name__,
+                exc_info=(type(result), result, result.__traceback__),
+            )
+        else:
+            step_ok.append(True)
+            logger.info("tg_post_manager memory persist step ok step=%s", step_name)
+
+    memory_persist_ok = all(step_ok)
+    logger.info(
+        "tg_post_manager memory persist outcome: memory_persist_ok=%s persona=%s assistant=%s system_meta=%s",
+        memory_persist_ok,
+        step_ok[0],
+        step_ok[1],
+        step_ok[2],
+    )
+    return memory_persist_ok
+
 def _build_image_prompt(story: NewsItem | None, post_text: str, mood: str) -> str:
 
     base = (
@@ -2862,11 +2968,14 @@ async def generate_and_post_tg() -> None:
                     "opener_prefix": opener_pref,
                     "has_image": bool(image_bytes),
                 }
-                await asyncio.gather(
-                    persona.process_interaction(persona_chat_id, post_text),
-                    push_message(persona_chat_id, "assistant", post_text, user_id=persona_chat_id),
-                    push_message(persona_chat_id, "system", META_MARKER_PREFIX + json.dumps(meta_obj, ensure_ascii=False), user_id=persona_chat_id),
+                memory_persist_ok = await _persist_post_to_memory(
+                    persona,
+                    persona_chat_id,
+                    post_text,
+                    meta_obj,
                 )
+                if not memory_persist_ok:
+                    logger.warning("tg_post_manager memory persist incomplete")
             except Exception:
                 logger.exception("tg_post_manager saving to memory failed")
             return
