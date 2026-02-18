@@ -25,8 +25,10 @@ TEXT_ANALYZER_SYSTEM_PROMPT_TEMPLATE = (
 )
 
 TEXT_ANALYZER_USER_PROMPT_WITH_CTX_TEMPLATE = (
-    "Conversation (oldest→newest):\n"
-    "{prompt_base}"
+    "User last message:\n"
+    "{text}\n\n"
+    "Conversation context (oldest→newest):\n"
+    "{ctx_dialog}"
 )
 
 TEXT_ANALYZER_USER_PROMPT_NO_CTX_TEMPLATE = (
