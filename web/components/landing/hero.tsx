@@ -20,9 +20,10 @@ const DynamicHeroScene = dynamic(
 
 const copy = {
   ru: {
-    eyebrow: 'Платформа ИИ-персоны для сообществ и digital-продуктов',
-    title: 'Synchatica превращает Telegram и API-каналы в управляемую AI-выручку',
-    text: 'Welcome, re-engagement, battle-механики, монетизация через Stars, модерация и очереди — в одном продакшн-контуре без ручной перегрузки команды.',
+    eyebrow: 'AI-персоны для Telegram и социальных каналов',
+    title: 'Чат-персоны с эмоциональным интеллектом для Telegram и API-каналов',
+    text: 'Создаём живых собеседников, бренд-аватаров и комьюнити-менеджеров с памятью, адаптивной эмоциональностью и контекстным вовлечением 24/7.',
+    quote: 'Не просто боты: персоны, которые чувствуют контекст и ведут к целевому действию.',
     ctaMain: 'Запросить демо',
     ctaAlt: 'Как это работает',
     m1: 'Монетизация',
@@ -31,9 +32,10 @@ const copy = {
     pillars: ['Adaptive Emotionality', 'AI Reasoning', 'Multilevel Memory', 'Hybrid RAG']
   },
   en: {
-    eyebrow: 'AI persona platform for communities and digital products',
-    title: 'Synchatica turns Telegram and API channels into managed AI revenue',
-    text: 'Welcome, re-engagement, battle mechanics, Telegram Stars monetization, moderation, and queue operations — all in one production-ready control layer.',
+    eyebrow: 'AI personas for Telegram and social channels',
+    title: 'Emotionally intelligent chat personas for Telegram and API channels',
+    text: 'We build living conversational personas, brand avatars, and community managers with memory, adaptive emotionality, and contextual engagement 24/7.',
+    quote: 'Not just bots: personas that read context and move users to target actions.',
     ctaMain: 'Request demo',
     ctaAlt: 'See how it works',
     m1: 'Monetization',
@@ -64,8 +66,9 @@ export function Hero({ lang }: { lang: 'ru' | 'en' }) {
           className="relative z-10 space-y-5"
         >
           <p className="text-xs uppercase tracking-[0.2em] text-primary">{t.eyebrow}</p>
-          <h1 className="max-w-[13ch] text-4xl font-semibold leading-[1.03] tracking-tight md:text-[3.35rem]">{t.title}</h1>
+          <h1 className="max-w-[14ch] text-4xl font-semibold leading-[1.03] tracking-tight md:text-[3.2rem]">{t.title}</h1>
           <p className="max-w-xl text-base leading-relaxed text-muted md:text-lg">{t.text}</p>
+          <p className="max-w-xl rounded-xl border border-primary/25 bg-primary/10 px-4 py-2 text-sm text-slate-200">{t.quote}</p>
           <div className="flex flex-wrap gap-3">
             <Button onClick={() => trackEvent('cta_request_demo')}>{t.ctaMain}</Button>
             <Button variant="ghost" onClick={handleSeeHow}>{t.ctaAlt}</Button>

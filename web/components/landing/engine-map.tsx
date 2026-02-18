@@ -5,10 +5,10 @@ import { Section } from '@/components/ui/section';
 
 const content = {
   ru: {
-    eyebrow: 'Продуктовый движок',
-    title: 'Интерактивная карта: от входящего трафика до безопасной доставки ценности',
+    eyebrow: 'Ematory Engine',
+    title: 'Поведенческая оркестрация: от входящего сигнала до уместного действия',
     label: 'Узел',
-    explain: 'Что происходит внутри',
+    explain: 'Как Ematory собирает контекст',
     nodes: [
       { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Входящие события', copy: 'Входящие события из Telegram и внешних API собираются в единый ingest-контур с идемпотентной обработкой.' },
       { id: 'brain', title: 'Ядро персоны', hint: 'Память + контекст', copy: 'Контекст, память и стиль ответа формируют релевантную реакцию для личных и групповых сценариев.' },
@@ -16,10 +16,10 @@ const content = {
     ]
   },
   en: {
-    eyebrow: 'Product Engine',
-    title: 'Interactive map: from incoming traffic to safe value delivery',
+    eyebrow: 'Ematory Engine',
+    title: 'Behavioral orchestration: from incoming signal to context-aware action',
     label: 'Node',
-    explain: 'What happens inside',
+    explain: 'How Ematory composes context',
     nodes: [
       { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Incoming events', copy: 'Incoming Telegram and external API events are merged into one ingest contour with idempotent processing.' },
       { id: 'brain', title: 'Persona Brain', hint: 'Memory + context', copy: 'Context, memory, and response style rules generate relevant outputs for private and group flows.' },

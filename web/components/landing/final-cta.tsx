@@ -8,14 +8,14 @@ const content = {
   ru: {
     eyebrow: 'Финальный шаг',
     title: 'Готовы посмотреть Synchatica на вашем кейсе?',
-    text: 'Оставьте рабочий email — подготовим персональный демо-сценарий внедрения persona-engine без изменения backend-контрактов.',
+    text: 'Оставьте рабочий email — покажем демо с ролью персоны, памятью, эмоциональной адаптацией и модерацией под ваш кейс.',
     placeholder: 'Рабочий email',
     cta: 'Запросить демо'
   },
   en: {
     eyebrow: 'Final CTA',
     title: 'Ready to see Synchatica on your use case?',
-    text: 'Leave your work email and we will prepare a personalized demo implementation scenario with zero backend contract changes.',
+    text: 'Leave your work email and we will prepare a focused demo with persona role, memory, emotional adaptation, and moderation for your use case.',
     placeholder: 'Work email',
     cta: 'Request demo'
   }

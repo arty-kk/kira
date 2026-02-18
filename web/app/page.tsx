@@ -24,6 +24,7 @@ const copy = {
     terms: 'Terms',
     footerLead: 'Synchatica — чат-персоны с AI и Ematory для диалогов, вовлечения и модерации 24/7.',
     capabilityLine: 'Adaptive Emotionality · Artificial Intelligence · Multilevel Memory · Hybrid RAG',
+    contacts: 'support@synchatica.com · @synchatica',
     copyright: '© 2025 Synchatica. All rights reserved.'
   },
   en: {
@@ -36,6 +37,7 @@ const copy = {
     terms: 'Terms',
     footerLead: 'Synchatica builds AI + Ematory chat personas for dialogue, engagement, and moderation 24/7.',
     capabilityLine: 'Adaptive Emotionality · Artificial Intelligence · Multilevel Memory · Hybrid RAG',
+    contacts: 'support@synchatica.com · @synchatica',
     copyright: '© 2025 Synchatica. All rights reserved.'
   }
 } as const;
@@ -92,7 +94,8 @@ export default function HomePage() {
           <div>
             <p className="text-sm text-slate-200">{t.footerLead}</p>
             <p className="mt-2 text-[11px] uppercase tracking-[0.16em] text-primary/85">{t.capabilityLine}</p>
-            <p className="mt-4 text-xs">{t.copyright}</p>
+            <p className="mt-3 text-xs text-slate-300/90">{t.contacts}</p>
+            <p className="mt-3 text-xs">{t.copyright}</p>
           </div>
           <nav className="flex items-center gap-4 text-xs uppercase tracking-[0.12em]">
             <Link href="/privacy">{t.privacy}</Link>
