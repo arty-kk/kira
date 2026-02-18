@@ -30,9 +30,9 @@ class _FakeDB:
 
         if "INSERT INTO refund_outbox" in sql:
             params = stmt.compile().params
-            key = (str(params["request_id"]), str(params["reason"]))
+            key = str(params["request_id"])
             self._last_lookup_key = key
-            existing = next((row for row in self._outbox_rows if (row.request_id, row.reason) == key), None)
+            existing = next((row for row in self._outbox_rows if row.request_id == key), None)
             if existing is not None:
                 return _DummyResult(scalar_value=None)
 
@@ -40,8 +40,8 @@ class _FakeDB:
                 id=len(self._outbox_rows) + 1,
                 owner_id=params["owner_id"],
                 billing_tier=params["billing_tier"],
-                request_id=key[0],
-                reason=key[1],
+                request_id=key,
+                reason=str(params["reason"]),
                 status=params["status"],
                 attempts=params["attempts"],
                 last_error=params["last_error"],
@@ -51,7 +51,7 @@ class _FakeDB:
 
         if "SELECT refund_outbox.id" in sql:
             key = self._last_lookup_key
-            existing = next((row for row in self._outbox_rows if (row.request_id, row.reason) == key), None)
+            existing = next((row for row in self._outbox_rows if row.request_id == key), None)
             return _DummyResult(scalar_value=(existing.id if existing else None))
 
         return _DummyResult()

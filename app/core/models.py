@@ -132,7 +132,7 @@ class RefundOutbox(Base):
         CheckConstraint("lease_attempts >= 0", name="ck_refund_outbox_lease_attempts_nonneg"),
         CheckConstraint("request_id <> ''", name="ck_refund_outbox_request_id_nonempty"),
         CheckConstraint("reason <> ''", name="ck_refund_outbox_reason_nonempty"),
-        UniqueConstraint("request_id", "reason", name="uq_refund_outbox_request_reason"),
+        UniqueConstraint("request_id", name="uq_refund_outbox_request_id"),
     )
 
 class ApiKey(Base):
