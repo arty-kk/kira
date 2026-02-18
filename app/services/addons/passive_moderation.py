@@ -464,8 +464,6 @@ async def moderate_with_openai(
 
     return False
 
-async def is_promo_via_ai(text: str, urls: List[str]) -> bool:
-    return False
 
 async def check_light(
     chat_id: int,
@@ -510,6 +508,7 @@ async def check_light(
         if links_blocked and url_is_unwanted(u, policy=policy):
             return "link_violation"
 
+    # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
     # Keep toxicity checks user-scoped to avoid applying user-specific heuristics to channel/bot sources.
     if source == "user" and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"
