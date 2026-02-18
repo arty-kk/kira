@@ -29,6 +29,7 @@ def _load_queue_worker():
     fake_user_service = types.ModuleType("app.services.user.user_service")
     fake_core = types.ModuleType("app.core")
     fake_memory = types.ModuleType("app.core.memory")
+    fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
 
     fake_aiogram = types.ModuleType("aiogram")
     fake_aiogram_enums = types.ModuleType("aiogram.enums")
@@ -84,6 +85,11 @@ def _load_queue_worker():
     fake_memory.SafeRedis = object
     fake_memory.push_message = _noop_async
 
+    async def _fake_requeue_processing_on_start(*_args, **_kwargs):
+        return types.SimpleNamespace(moved_count=0, lock_acquired=True)
+
+    fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
+
     module_overrides = {
         "app": fake_app,
         "app.config": fake_config,
@@ -105,6 +111,7 @@ def _load_queue_worker():
         "app.services.user.user_service": fake_user_service,
         "app.core": fake_core,
         "app.core.memory": fake_memory,
+        "app.core.queue_recovery": fake_queue_recovery,
         "aiogram": fake_aiogram,
         "aiogram.enums": fake_aiogram_enums,
         "aiogram.types": fake_aiogram_types,

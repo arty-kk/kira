@@ -15,6 +15,7 @@ def _load_api_worker():
     fake_core = types.ModuleType("app.core")
     fake_media_limits = types.ModuleType("app.core.media_limits")
     fake_memory = types.ModuleType("app.core.memory")
+    fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
 
@@ -37,6 +38,11 @@ def _load_api_worker():
     fake_memory.close_redis_pools = lambda: None
     fake_responder.respond_to_user = lambda **kwargs: None
 
+    async def _fake_requeue_processing_on_start(*_args, **_kwargs):
+        return types.SimpleNamespace(moved_count=0, lock_acquired=True)
+
+    fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
+
     patch_modules = {
         "app": fake_app,
         "app.config": fake_config,
@@ -45,6 +51,7 @@ def _load_api_worker():
         "app.core": fake_core,
         "app.core.media_limits": fake_media_limits,
         "app.core.memory": fake_memory,
+        "app.core.queue_recovery": fake_queue_recovery,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
     }
@@ -119,55 +126,7 @@ class _FakeRedisQueueWithRequeueLock:
             api_worker.PROCESSING_KEY: ["job:1", "job:2"],
             api_worker.API_QUEUE_KEY: [],
         }
-        self.lock_values = {}
         self.set_calls = []
-        self.eval_calls = 0
-        self.lrange_calls = 0
-        self.rpush_calls = 0
-        self.ltrim_calls = 0
-        self.delete_calls = 0
-
-    async def set(self, key, value, nx=False, ex=None):
-        self.set_calls.append({"key": key, "value": value, "nx": nx, "ex": ex})
-        if nx and key in self.lock_values:
-            return False
-        self.lock_values[key] = value
-        return True
-
-    async def lrange(self, key, start, end):
-        self.lrange_calls += 1
-        values = list(self.data.get(key, []))
-        if end == -1:
-            return values[start:]
-        return values[start : end + 1]
-
-    async def rpush(self, key, *values):
-        self.rpush_calls += 1
-        self.data.setdefault(key, []).extend(values)
-
-    async def ltrim(self, key, start, end):
-        self.ltrim_calls += 1
-        values = list(self.data.get(key, []))
-        if end == -1:
-            self.data[key] = values[start:]
-        else:
-            self.data[key] = values[start : end + 1]
-
-    async def delete(self, key):
-        self.delete_calls += 1
-        self.data.pop(key, None)
-
-    async def eval(self, script, numkeys, processing_key, queue_key):
-        self.eval_calls += 1
-        self.rpush_calls += 1
-        self.ltrim_calls += 1
-
-        pending = list(self.data.get(processing_key, []))
-        moved = len(pending)
-        if moved:
-            self.data.setdefault(queue_key, []).extend(pending)
-            self.data[processing_key] = self.data[processing_key][moved:]
-        return moved
 
 
 class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
@@ -175,25 +134,28 @@ class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
         fake_redis = _FakeRedisQueueWithRequeueLock()
         stop_evt = asyncio.Event()
         stop_evt.set()
-        requeue_lock_key = f"{api_worker.PROCESSING_KEY}:requeue_lock"
 
         with unittest.mock.patch.object(api_worker, "get_redis_queue", return_value=fake_redis), unittest.mock.patch.object(
             api_worker, "_sweeper_loop", unittest.mock.AsyncMock()
         ), unittest.mock.patch.object(api_worker, "_queue_depth_loop", unittest.mock.AsyncMock()), unittest.mock.patch.object(
             api_worker.logger, "info"
-        ) as info_log:
+        ) as info_log, unittest.mock.patch.object(
+            api_worker,
+            "requeue_processing_on_start",
+            new=unittest.mock.AsyncMock(
+                side_effect=[
+                    types.SimpleNamespace(moved_count=2, lock_acquired=True),
+                    types.SimpleNamespace(moved_count=0, lock_acquired=False),
+                ]
+            ),
+        ) as requeue_mock:
             await asyncio.gather(
                 api_worker._worker_loop(stop_evt),
                 api_worker._worker_loop(stop_evt),
             )
 
-        self.assertEqual(fake_redis.rpush_calls, 1)
-        self.assertEqual(fake_redis.eval_calls, 1)
-        self.assertEqual(fake_redis.lrange_calls, 0)
-        self.assertEqual(fake_redis.ltrim_calls, 1)
-        self.assertEqual(fake_redis.delete_calls, 0)
-        self.assertEqual(fake_redis.data[api_worker.API_QUEUE_KEY], ["job:1", "job:2"])
-        self.assertEqual(fake_redis.data[api_worker.PROCESSING_KEY], [])
+        self.assertEqual(requeue_mock.await_count, 2)
+
         self.assertTrue(
             any(
                 call.args and "requeue-on-start skipped; lock held by another worker" in call.args[0]
@@ -208,12 +170,6 @@ class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
                 for call in info_log.call_args_list
             )
         )
-
-        self.assertEqual(len(fake_redis.set_calls), 2)
-        for call in fake_redis.set_calls:
-            self.assertEqual(call["key"], requeue_lock_key)
-            self.assertTrue(call["nx"])
-            self.assertEqual(call["ex"], api_worker.REQUEUE_LOCK_TTL_SEC)
 
 
 class _FailThenRecoverRedisQueue:

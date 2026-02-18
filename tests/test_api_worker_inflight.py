@@ -15,6 +15,7 @@ def _load_api_worker():
     fake_core = types.ModuleType("app.core")
     fake_media_limits = types.ModuleType("app.core.media_limits")
     fake_memory = types.ModuleType("app.core.memory")
+    fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
 
@@ -37,6 +38,11 @@ def _load_api_worker():
     fake_memory.close_redis_pools = lambda: None
     fake_responder.respond_to_user = lambda **kwargs: None
 
+    async def _fake_requeue_processing_on_start(*_args, **_kwargs):
+        return types.SimpleNamespace(moved_count=0, lock_acquired=True)
+
+    fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
+
     patch_modules = {
         "app": fake_app,
         "app.config": fake_config,
@@ -45,6 +51,7 @@ def _load_api_worker():
         "app.core": fake_core,
         "app.core.media_limits": fake_media_limits,
         "app.core.memory": fake_memory,
+        "app.core.queue_recovery": fake_queue_recovery,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
     }
