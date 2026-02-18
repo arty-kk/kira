@@ -36,7 +36,15 @@ class SelfNeuronNetwork:
         self._neurons: List[SelfNeuron] = []
         self._lock = asyncio.Lock()
         self._ready = False
+        self._last_ready_attempt_ts = 0.0
         self._last_persist_ts = 0.0
+        try:
+            self._ready_retry_backoff_sec = float(
+                getattr(settings, "SELFNET_READY_RETRY_BACKOFF_SEC", 5.0)
+            )
+        except Exception:
+            self._ready_retry_backoff_sec = 5.0
+        self._ready_retry_backoff_sec = max(0.0, self._ready_retry_backoff_sec)
 
         try:
             self._max_neurons = int(getattr(settings, "SELFNET_MAX_NEURONS", 100))
@@ -72,27 +80,45 @@ class SelfNeuronNetwork:
     async def ready(self) -> None:
         if self._ready:
             return
+
+        now = time.time()
+        if (
+            self._last_ready_attempt_ts > 0.0
+            and (now - self._last_ready_attempt_ts) < self._ready_retry_backoff_sec
+        ):
+            return
+        self._last_ready_attempt_ts = now
+
         try:
             self._redis = get_redis_vector()
         except Exception:
             self._redis = None
-        try:
-            await self._load()
-        except Exception:
-            logger.debug("SelfNeuronNetwork.ready: _load failed", exc_info=True)
-        finally:
-            self._ready = True
+            logger.debug("SelfNeuronNetwork.ready: get_redis_vector failed", exc_info=True)
+            return
 
-    async def _load(self) -> None:
         if not self._redis:
             return
+
+        try:
+            loaded = await self._load()
+        except Exception:
+            logger.debug("SelfNeuronNetwork.ready: _load failed", exc_info=True)
+            self._ready = False
+            return
+
+        self._ready = bool(loaded)
+
+    async def _load(self) -> bool:
+        if not self._redis:
+            return False
         try:
             raw = await self._redis.get(self._key_main())
         except Exception:
             logger.debug("SelfNeuronNetwork._load redis error", exc_info=True)
-            return
+            return False
         if not raw:
-            return
+            self._neurons = []
+            return True
         try:
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8", "ignore")
@@ -100,7 +126,7 @@ class SelfNeuronNetwork:
             items = payload.get("neurons") or []
         except Exception:
             logger.debug("SelfNeuronNetwork._load decode error", exc_info=True)
-            return
+            return False
 
         neurons: List[SelfNeuron] = []
         now = time.time()
@@ -141,6 +167,7 @@ class SelfNeuronNetwork:
             except Exception:
                 continue
         self._neurons = neurons
+        return True
 
     async def _persist(self, force: bool = False) -> None:
         if not self._redis:
