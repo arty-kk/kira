@@ -60,6 +60,62 @@ def _parse_bool(value: str) -> bool:
     raise ValueError(f"Unsupported boolean value: {value!r}")
 
 
+def _parse_int_csv_env(name: str) -> tuple[List[int], List[str]]:
+    raw = (_get_env(name, "", conv=str) or "")
+    values: List[int] = []
+    invalid_tokens: List[str] = []
+
+    for token in str(raw).split(","):
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        try:
+            values.append(int(cleaned))
+        except Exception:
+            invalid_tokens.append(cleaned)
+
+    if invalid_tokens:
+        logger.warning("Invalid integer tokens in %s: %s", name, ", ".join(repr(x) for x in invalid_tokens))
+
+    return values, invalid_tokens
+
+
+
+
+def _normalize_comment_link_policy(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    allowed = {"group_default", "relaxed"}
+    if normalized in allowed:
+        return normalized
+    logger.warning(
+        "Invalid COMMENT_MODERATION_LINK_POLICY=%r; fallback to 'group_default'",
+        value,
+    )
+    return "group_default"
+
+def validate_settings_config(cfg: "Settings") -> None:
+    cfg.COMMENT_MODERATION_LINK_POLICY = _normalize_comment_link_policy(cfg.COMMENT_MODERATION_LINK_POLICY)
+
+    if cfg.COMMENT_MODERATION_ENABLED and not cfg.COMMENT_TARGET_CHAT_IDS and not cfg.COMMENT_SOURCE_CHANNEL_IDS:
+        logger.warning(
+            "COMMENT_MODERATION_ENABLED=true but both COMMENT_TARGET_CHAT_IDS and COMMENT_SOURCE_CHANNEL_IDS are empty; comment/discussion path is effectively disabled"
+        )
+
+    if cfg._COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS or cfg._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS:
+        logger.warning(
+            "Comment moderation config contains invalid CSV tokens: COMMENT_TARGET_CHAT_IDS=%s COMMENT_SOURCE_CHANNEL_IDS=%s",
+            cfg._COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS,
+            cfg._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS,
+        )
+
+    overlap = set(cfg.COMMENT_TARGET_CHAT_IDS) & set(cfg.COMMENT_SOURCE_CHANNEL_IDS)
+    if overlap:
+        logger.warning(
+            "Comment moderation anomaly: IDs %s appear in both COMMENT_TARGET_CHAT_IDS and COMMENT_SOURCE_CHANNEL_IDS; verify target chats vs source channels to avoid unexpected filtering",
+            sorted(overlap),
+        )
+
+
 def _default_api_idempotency_inflight_ttl_sec() -> int:
     call_timeout = int(_get_env("API_CALL_TIMEOUT_SEC", "135", conv=int) or 135)
     return max(30, call_timeout + 20)
@@ -145,6 +201,13 @@ class Settings:
         self.WEBHOOK_CERT = os.path.join(self.CERTS_DIR, "cert.pem")
         self.WEBHOOK_KEY  = os.path.join(self.CERTS_DIR, "key.pem")
         os.makedirs(self.CERTS_DIR, exist_ok=True)
+        self.COMMENT_TARGET_CHAT_IDS, self._COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS = _parse_int_csv_env(
+            "COMMENT_TARGET_CHAT_IDS"
+        )
+        self.COMMENT_SOURCE_CHANNEL_IDS, self._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS = _parse_int_csv_env(
+            "COMMENT_SOURCE_CHANNEL_IDS"
+        )
+        validate_settings_config(self)
 
     # ─── Public HTTP API ─────────────────────────────────────
     API_HOST: str = field(default_factory=lambda: _get_env("API_HOST", "0.0.0.0"))
@@ -192,6 +255,19 @@ class Settings:
             if x.strip()
         ]
     )
+    COMMENT_MODERATION_ENABLED: bool = field(
+        default_factory=lambda: _get_env("COMMENT_MODERATION_ENABLED", "false", conv=_parse_bool)
+    )
+    COMMENT_MODERATION_DELETE_EXTERNAL_REPLIES: bool = field(
+        default_factory=lambda: _get_env("COMMENT_MODERATION_DELETE_EXTERNAL_REPLIES", "false", conv=_parse_bool)
+    )
+    COMMENT_MODERATION_LINK_POLICY: str = field(
+        default_factory=lambda: _get_env("COMMENT_MODERATION_LINK_POLICY", "group_default", conv=str)
+    )
+    COMMENT_TARGET_CHAT_IDS: List[int] = field(default_factory=list)
+    COMMENT_SOURCE_CHANNEL_IDS: List[int] = field(default_factory=list)
+    _COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
+    _COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
     GROUP_DAILY_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_DAILY_LIMIT", "300", conv=int))
     GROUP_AUTOREPLY_ON_TOPIC: bool = field(default_factory=lambda: _get_env("GROUP_AUTOREPLY_ON_TOPIC", "false", conv=_parse_bool))
     LIMIT_EXHAUSTED_PHRASES: List[str] = field(
@@ -251,6 +327,11 @@ class Settings:
     MODERATION_DELETE_TELEGRAM_LINKS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_TELEGRAM_LINKS", "true", conv=_parse_bool))
     MODERATION_TELEGRAM_DOMAINS: List[str] = field(default_factory=lambda: [x.strip().lower() for x in _get_env("MODERATION_TELEGRAM_DOMAINS", "t.me,telegram.me,telegram.dog").split(",") if x.strip()])
     MODERATION_SPAM_LINK_THRESHOLD: int = field(default_factory=lambda: _get_env("MODERATION_SPAM_LINK_THRESHOLD", "3", conv=int))
+    MODERATION_SPAM_MENTION_THRESHOLD: int = field(default_factory=lambda: _get_env("MODERATION_SPAM_MENTION_THRESHOLD", "5", conv=int))
+    MOD_MENTION_RESOLVE_TIMEOUT: float = field(default_factory=lambda: _get_env("MOD_MENTION_RESOLVE_TIMEOUT", "1.5", conv=float))
+    MOD_MENTION_RESOLVE_CONCURRENCY: int = field(default_factory=lambda: _get_env("MOD_MENTION_RESOLVE_CONCURRENCY", "3", conv=int))
+    MOD_MENTION_RESOLVE_TTL_POS: int = field(default_factory=lambda: _get_env("MOD_MENTION_RESOLVE_TTL_POS", "3600", conv=int))
+    MOD_MENTION_RESOLVE_TTL_NEG: int = field(default_factory=lambda: _get_env("MOD_MENTION_RESOLVE_TTL_NEG", "300", conv=int))
     MOD_PERIOD_SECONDS: int = field(default_factory=lambda: _get_env("MOD_PERIOD_SECONDS", "5", conv=int))
     MOD_MAX_MESSAGES: int = field(default_factory=lambda: _get_env("MOD_MAX_MESSAGES", "5", conv=int))
     MOD_ALERT_THROTTLE_SECONDS: int = field(default_factory=lambda: _get_env("MOD_ALERT_THROTTLE_SECONDS", "60", conv=int))
@@ -312,6 +393,7 @@ class Settings:
     # ─── Celery ──────────────────────────────────────────────────
     CELERY_BROKER_URL: str = field(default_factory=lambda: _get_env("CELERY_BROKER_URL", ""))
     CELERY_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_CONCURRENCY", "10", conv=int))
+    CELERY_DEFAULT_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_DEFAULT_QUEUE", "celery", conv=str))
     CELERY_MEDIA_QUEUE: str = field(default_factory=lambda: _get_env("CELERY_MEDIA_QUEUE", "queue_media", conv=str))
     CELERY_MEDIA_CONCURRENCY: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_CONCURRENCY", "2", conv=int))
     CELERY_MEDIA_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MEDIA_PREFETCH", "1", conv=int))

@@ -27,6 +27,8 @@ _METRICS_ERROR_COUNT = "metrics:celery:moderation:error_count"
 _METRICS_LATENCY_COUNT = "metrics:celery:moderation:latency_count"
 _METRICS_LATENCY_TOTAL_MS = "metrics:celery:moderation:latency_total_ms"
 
+_REQUIRED_PAYLOAD_FIELDS = ("chat_id", "user_id", "message_id")
+
 
 def prepare_moderation_payload(payload: dict[str, Any], *, context: str) -> dict[str, Any]:
     safe_payload: dict[str, Any] = dict(payload)
@@ -96,6 +98,31 @@ def _run_metrics(coro: Any, *, label: str) -> None:
         logger.debug("moderation metrics dispatch failed: %s", label, exc_info=True)
 
 
+def _safe_payload_context(payload: dict[str, Any]) -> dict[str, Any]:
+    return {field: payload.get(field) for field in _REQUIRED_PAYLOAD_FIELDS if field in payload}
+
+
+def _parse_required_int(payload: dict[str, Any], field: str) -> int:
+    if field not in payload:
+        raise ValueError(f"missing field '{field}'")
+
+    raw_value = payload[field]
+    if isinstance(raw_value, bool):
+        raise ValueError(f"field '{field}' must be int-convertible, got bool")
+
+    try:
+        parsed = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(f"field '{field}' must be int-convertible") from None
+
+    if field in {"chat_id", "user_id"} and parsed == 0:
+        raise ValueError(f"field '{field}' must be != 0")
+    if field == "message_id" and parsed <= 0:
+        raise ValueError("field 'message_id' must be > 0")
+
+    return parsed
+
+
 @shared_task(
     name="moderation.passive_moderate",
     bind=True,
@@ -114,18 +141,38 @@ def passive_moderate(self, payload: dict) -> str:
     started = time.monotonic()
     retries = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
 
+    if not isinstance(payload, dict):
+        logger.warning(
+            "passive_moderate invalid payload: payload must be dict; context=%s",
+            {"payload_type": type(payload).__name__},
+        )
+        return "invalid_payload"
+
+    try:
+        chat_id = _parse_required_int(payload, "chat_id")
+        user_id = _parse_required_int(payload, "user_id")
+        message_id = _parse_required_int(payload, "message_id")
+    except ValueError as exc:
+        logger.warning(
+            "passive_moderate invalid payload: %s; context=%s",
+            exc,
+            _safe_payload_context(payload),
+        )
+        return "invalid_payload"
+
     async def _do() -> str:
         return await asyncio.wait_for(
             handle_passive_moderation(
-                chat_id=payload["chat_id"],
+                chat_id=chat_id,
                 message=None,
                 text=payload.get("text", ""),
                 entities=payload.get("entities") or [],
                 image_b64=payload.get("image_b64"),
                 image_mime=payload.get("image_mime"),
                 source=payload.get("source", "user"),
-                user_id=payload["user_id"],
-                message_id=payload["message_id"],
+                user_id=user_id,
+                message_id=message_id,
+                is_comment_context=payload.get("is_comment_context"),
             ),
             timeout=MODERATION_TIMEOUT,
         )

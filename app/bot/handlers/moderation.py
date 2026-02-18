@@ -5,7 +5,8 @@ import logging
 import asyncio
 import time
 import html
-from typing import List
+import secrets
+from typing import Any, List
 
 from aiogram import types, F
 from aiogram.enums import ChatType
@@ -25,6 +26,7 @@ from app.services.addons.passive_moderation import (
     check_deep,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
+from app.bot.handlers.moderation_context import resolve_message_moderation_context
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,7 @@ async def handle_passive_moderation(
     source: str = "user",
     user_id: int | None = None,
     message_id: int | None = None,
+    is_comment_context: bool | None = None,
 ) -> str:
 
     try:
@@ -213,11 +216,25 @@ async def handle_passive_moderation(
     if not ( (message and getattr(message, "from_user", None)) or user_id ):
         return "clean"
 
+    if message is not None and getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE:
+        return "clean"
+    if message is None and user_id is not None and int(chat_id) == int(user_id):
+        return "clean"
+
+    normalized_source = (source or "user").strip().lower()
+    allowed_sources = {"user", "bot", "channel"}
+    if normalized_source not in allowed_sources:
+        logger.warning("Unknown passive moderation source=%r; fallback to 'user'", source)
+        normalized_source = "user"
+
     _uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
     _mid = int(getattr(message, "message_id", message_id or 0))
     light_throttle = f"mod_alert:light:{chat_id}:{_uid}"
     deep_throttle  = f"mod_alert:deep:{chat_id}:{_uid}"
-    
+
+    if not (text and text.strip()) and not image_b64:
+        return "clean"
+
     try:
         async with redis_client.pipeline(transaction=True) as pipe:
             throttle_sec = getattr(settings, "MOD_ALERT_THROTTLE_SECONDS", 60)
@@ -227,8 +244,13 @@ async def handle_passive_moderation(
         logger.exception("Failed to set light-throttle key; allowing alert by default")
         allow_alert = True
 
-    if not (text and text.strip()) and not image_b64:
-        return "clean"
+    if is_comment_context is not None:
+        moderation_context = "comment" if bool(is_comment_context) else "group"
+    elif message is not None:
+        moderation_context = resolve_message_moderation_context(message, from_linked=False)
+    else:
+        moderation_context = "group"
+    light_policy = resolve_moderation_policy(moderation_context, settings)
 
     try:
         targets = get_targets()
@@ -244,7 +266,8 @@ async def handle_passive_moderation(
                     _uid,
                     text,
                     all_entities,
-                    source=("bot" if source == "bot" else "user"),
+                    source=normalized_source,
+                    policy=light_policy,
                     image_b64=image_b64,
                     image_mime=image_mime,
                 ),
@@ -252,16 +275,18 @@ async def handle_passive_moderation(
             )
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
-            light_status = "clean"
+            light_status = "light_timeout_risk"
         status = "clean"
         reason_text = ""
         if light_status != "clean":
             reason_map = {
                 "flood": "Frequent messages (flood/spam)",
                 "spam_links": "Too many links in one message",
+                "spam_mentions": "Too many mentions in one message",
                 "promo": "Promotional content",
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "Toxic or abusive content",
+                "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
             status = "flagged"
@@ -300,7 +325,7 @@ async def handle_passive_moderation(
         except Exception:
             new_user = False
 
-        risk = (
+        base_risk = (
             (image_b64 is not None) or
             bool(urls_for_risk) or
             contains_telegram_obfuscated(text or "") or
@@ -310,6 +335,10 @@ async def handle_passive_moderation(
             (light_status == "toxic")
         )
 
+        risk = base_risk
+        if moderation_context == "comment":
+            risk = bool(base_risk and light_status != "clean")
+
         blocked = False
         if risk:
             try:
@@ -318,7 +347,7 @@ async def handle_passive_moderation(
                         chat_id,
                         _uid,
                         text,
-                        source=("bot" if source == "bot" else "user"),
+                        source=normalized_source,
                         image_b64=image_b64,
                         image_mime=image_mime,
                     ),
@@ -407,12 +436,34 @@ async def handle_passive_moderation(
             logger.debug("analytics(record_moderation) failed", exc_info=True)
 
     except Exception:
+        error_reason = "internal_error"
+        fallback_mid = int(getattr(message, "message_id", message_id or 0))
+        fallback_uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
+
+        try:
+            await redis_client.hset(
+                f"mod:msg:{chat_id}:{fallback_mid}",
+                mapping={
+                    "status": "error",
+                    "reason": error_reason,
+                    "ts": int(time.time()),
+                    "user_id": fallback_uid,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to persist error moderation status to Redis")
+
+        try:
+            await analytics_record_moderation(chat_id, "error", error_reason)
+        except Exception:
+            logger.debug("analytics(record_moderation) failed for error status", exc_info=True)
+
         logger.exception(
             "Error in passive moderation for chat %s, message %s",
             chat_id,
             getattr(message, "message_id", "<unknown>"),
         )
-        return "clean"
+        return "error"
 
     return status
 
@@ -471,6 +522,26 @@ async def _flag(chat_id: int, msg_id: int, *, action: str, reason: str, user_id:
     except Exception:
         logger.debug("store combot flag failed", exc_info=True)
 
+
+async def _flag_inline_without_message(chat_id: int, *, action: str, reason: str, user_id: int | None = None) -> None:
+    ts = _now()
+    unique_suffix = secrets.token_hex(4)
+    key = f"mod:combot:inline:{chat_id}:{ts}:{unique_suffix}"
+    ttl = int(max(1, int(getattr(settings, "NEW_USER_TTL_SECONDS", 86400))))
+    try:
+        await redis_client.hset(
+            key,
+            mapping={
+                "action": action,
+                "reason": reason,
+                "user_id": int(user_id) if user_id is not None else 0,
+                "ts": ts,
+            },
+        )
+        await redis_client.expire(key, ttl)
+    except Exception:
+        logger.debug("store inline combot flag without message failed", exc_info=True)
+
 @dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]), F.new_chat_members)
 async def moderation_on_join(message: types.Message) -> None:
     chat_id = message.chat.id
@@ -499,6 +570,26 @@ async def moderation_on_edited(message: types.Message) -> None:
     if settings.MODERATION_EDITED_DELETE:
         await _delete_message_safe(message.chat.id, message.message_id)
 
+
+def resolve_moderation_policy(context: str, cfg: Any) -> dict[str, Any]:
+    policy = {
+        "delete_external_channel_msgs": bool(getattr(cfg, "MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS", True)),
+        "delete_channel_forwards": bool(getattr(cfg, "MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS", True)),
+        "delete_external_replies": bool(getattr(cfg, "MODERATION_EXTERNAL_REPLIES_DELETE", True)),
+        "link_policy": "group_default",
+    }
+    if context != "comment":
+        return policy
+
+    comment_link_policy = str(getattr(cfg, "COMMENT_MODERATION_LINK_POLICY", "group_default") or "group_default").strip().lower()
+    policy["link_policy"] = comment_link_policy
+    policy["delete_external_replies"] = bool(getattr(cfg, "COMMENT_MODERATION_DELETE_EXTERNAL_REPLIES", False))
+    if comment_link_policy == "relaxed":
+        policy["delete_external_channel_msgs"] = False
+        policy["delete_channel_forwards"] = False
+    return policy
+
+
 async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool:
     
     try:
@@ -510,10 +601,28 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     try:
         from_linked = await is_from_linked_channel(message)
-        if from_linked:
-            return False
     except Exception:
         from_linked = False
+
+    context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
+    policy = resolve_moderation_policy(context, settings)
+
+    def _ctx_reason(reason: str) -> str:
+        return f"{reason}|context={context}"
+
+    async def _delete_and_handle(reason: str) -> bool:
+        ok = await _delete_message_safe(chat_id, message.message_id)
+        if not ok:
+            logger.warning("Moderation: failed to delete (%s) chat=%s msg=%s", reason, chat_id, message.message_id)
+        return True
+
+    logger.debug(
+        "apply_moderation_filters: context=%s link_policy=%s chat=%s msg=%s",
+        context,
+        policy.get("link_policy"),
+        chat_id,
+        getattr(message, "message_id", None),
+    )
 
     u = getattr(message, "from_user", None)
     is_admin = False
@@ -537,18 +646,18 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     if (
         is_external_channel_msg
-        and settings.MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS
+        and policy["delete_external_channel_msgs"]
         and not from_linked
         and not is_admin
     ):
         try:
             uid = int(getattr(getattr(message, "from_user", None), "id", 0) or 0)
-            await _flag(chat_id, message.message_id, action="delete", reason="external_channel", user_id=uid)
-            return await _delete_message_safe(chat_id, message.message_id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("external_channel"), user_id=uid)
+            return await _delete_and_handle("external_channel")
         except Exception:
             pass
 
-    delete_forwards_on = bool(getattr(settings, "MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS", True))
+    delete_forwards_on = bool(policy["delete_channel_forwards"])
     if delete_forwards_on and is_forward and not from_linked and not is_admin:
         src_is_bot = bool(getattr(message, "forward_from", None) and getattr(message.forward_from, "is_bot", False))
         fchat = getattr(message, "forward_from_chat", None)
@@ -560,10 +669,10 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         if src_is_bot or src_is_chat or src_hidden:
             try:
                 uid = int(getattr(getattr(message, "from_user", None), "id", 0) or 0)
-                await _flag(chat_id, message.message_id, action="delete", reason="forward_disallowed", user_id=uid)
+                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("forward_disallowed"), user_id=uid)
             except Exception:
                 pass
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("forward_disallowed")
 
     try:
         delete_buttons_on = bool(getattr(settings, "MODERATION_DELETE_BUTTON_MESSAGES", True))
@@ -593,77 +702,77 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
         try:
             uid = int(getattr(getattr(message, "from_user", None), "id", 0) or 0)
-            await _flag(chat_id, message.message_id, action="delete", reason="button", user_id=uid)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("button"), user_id=uid)
         except Exception:
             pass
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("button")
 
     if not u or is_admin:
         return False
 
     if getattr(message, "sticker", None):
         if not settings.MODERATION_ALLOW_STICKERS:
-            await _flag(chat_id, message.message_id, action="delete", reason="sticker", user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("sticker"), user_id=u.id)
+            return await _delete_and_handle("sticker")
         return False
 
     if getattr(message, "game", None):
         if not settings.MODERATION_ALLOW_GAMES:
-            await _flag(chat_id, message.message_id, action="delete", reason="game", user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("game"), user_id=u.id)
+            return await _delete_and_handle("game")
         return False
 
     if getattr(message, "dice", None):
         if not settings.MODERATION_ALLOW_DICE:
-            await _flag(chat_id, message.message_id, action="delete", reason="dice", user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("dice"), user_id=u.id)
+            return await _delete_and_handle("dice")
         return False
 
     if getattr(message, "via_bot", None) and settings.MODERATION_INLINE_BOT_MSGS_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="via_bot", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("via_bot"), user_id=u.id)
+        return await _delete_and_handle("via_bot")
 
     if getattr(message, "story", None) and settings.MODERATION_STORIES_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="story", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("story"), user_id=u.id)
+        return await _delete_and_handle("story")
 
     if getattr(message, "voice", None) and settings.MODERATION_VOICE_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="voice", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("voice"), user_id=u.id)
+        return await _delete_and_handle("voice")
 
     if getattr(message, "video_note", None) and settings.MODERATION_VIDEO_NOTE_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="video_note", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("video_note"), user_id=u.id)
+        return await _delete_and_handle("video_note")
 
     if getattr(message, "audio", None) and settings.MODERATION_AUDIO_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="audio", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("audio"), user_id=u.id)
+        return await _delete_and_handle("audio")
 
     if getattr(message, "photo", None) and settings.MODERATION_IMAGES_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="image", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("image"), user_id=u.id)
+        return await _delete_and_handle("image")
 
     if getattr(message, "video", None) and settings.MODERATION_VIDEOS_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="video", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("video"), user_id=u.id)
+        return await _delete_and_handle("video")
 
     if getattr(message, "animation", None) and settings.MODERATION_GIFS_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="gif", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("gif"), user_id=u.id)
+        return await _delete_and_handle("gif")
 
     if getattr(message, "document", None) and settings.MODERATION_FILES_DELETE_ALL:
         mime = getattr(getattr(message, "document", None), "mime_type", "") or ""
         if (not mime.startswith("image/")) or settings.MODERATION_IMAGES_DELETE:
-            await _flag(chat_id, message.message_id, action="delete", reason="file", user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("file"), user_id=u.id)
+            return await _delete_and_handle("file")
 
     if is_forward and settings.MODERATION_NEW_DELETE_FORWARDS_24H and await _is_new_user(chat_id, u.id):
-        await _flag(chat_id, message.message_id, action="delete", reason="forward_new_user", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("forward_new_user"), user_id=u.id)
+        return await _delete_and_handle("forward_new_user")
 
-    if getattr(message, "external_reply", None) and settings.MODERATION_EXTERNAL_REPLIES_DELETE:
-        await _flag(chat_id, message.message_id, action="delete", reason="external_reply", user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+    if getattr(message, "external_reply", None) and policy["delete_external_replies"]:
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("external_reply"), user_id=u.id)
+        return await _delete_and_handle("external_reply")
 
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
@@ -672,15 +781,15 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         for e in ents:
             t = e.type.value if hasattr(e.type, "value") else e.type
             if t in ("mention", "text_mention"):
-                await _flag(chat_id, message.message_id, action="delete", reason="mention", user_id=u.id)
-                return await _delete_message_safe(chat_id, message.message_id)
+                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("mention"), user_id=u.id)
+                return await _delete_and_handle("mention")
 
     if not settings.MODERATION_ALLOW_CUSTOM_EMOJI:
         for e in ents:
             t = e.type.value if hasattr(e.type, "value") else e.type
             if t == "custom_emoji":
-                await _flag(chat_id, message.message_id, action="delete", reason="custom_emoji", user_id=u.id)
-                return await _delete_message_safe(chat_id, message.message_id)
+                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("custom_emoji"), user_id=u.id)
+                return await _delete_and_handle("custom_emoji")
 
     if settings.MODERATION_COMMANDS_DELETE_ALL:
         for e in ents:
@@ -713,9 +822,9 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                 if cmd_name not in whitelist:
                     await _flag(
                         chat_id, message.message_id,
-                        action="delete", reason=f"command:{cmd_name}", user_id=u.id
+                        action="delete", reason=_ctx_reason(f"command:{cmd_name}"), user_id=u.id
                     )
-                    return await _delete_message_safe(chat_id, message.message_id)
+                    return await _delete_and_handle(f"command:{cmd_name}")
 
     ents_payload = []
     for e in ents:
@@ -734,7 +843,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             n = await _inc_join_msg_counter(chat_id, u.id)
             if n == 1:
                 banned = await _ban_user_safe(chat_id, u.id, revoke=settings.MODERATION_BAN_REVOKE_MESSAGES)
-                await _flag(chat_id, message.message_id, action=("ban" if banned else "delete"), reason="first_link_after_join", user_id=u.id)
+                await _flag(chat_id, message.message_id, action=("ban" if banned else "delete"), reason=_ctx_reason("first_link_after_join"), user_id=u.id)
                 if not banned:
                     ok = await _delete_message_safe(chat_id, message.message_id)
                     if not ok:
@@ -744,14 +853,14 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         if getattr(settings, "MODERATION_DELETE_TELEGRAM_LINKS", True) and (
             any(is_telegram_link(u) for u in urls) or contains_telegram_obfuscated(raw)
         ):
-            await _flag(chat_id, message.message_id, action="delete", reason="telegram_link", user_id=u.id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("telegram_link"), user_id=u.id)
             ok = await _delete_message_safe(chat_id, message.message_id)
             if not ok:
                 logger.warning("Moderation: failed to delete (telegram_link) chat=%s msg=%s", chat_id, message.message_id)
             return True
 
         if settings.MODERATION_LINKS_DELETE_ALL or (settings.MODERATION_NEW_DELETE_LINKS_24H and await _is_new_user(chat_id, u.id)):
-            await _flag(chat_id, message.message_id, action="delete", reason="link", user_id=u.id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("link"), user_id=u.id)
             ok = await _delete_message_safe(chat_id, message.message_id)
             if not ok:
                 logger.warning("Moderation: failed to delete (telegram_link) chat=%s msg=%s", chat_id, message.message_id)
@@ -759,13 +868,13 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     else:
         if settings.MODERATION_LINKS_DELETE_ALL and contains_any_link_obfuscated(raw):
-            await _flag(chat_id, message.message_id, action="delete", reason="link_obfuscated", user_id=u.id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("link_obfuscated"), user_id=u.id)
             ok = await _delete_message_safe(chat_id, message.message_id)
             if not ok:
                 logger.warning("Moderation: failed to delete (link_obfuscated) chat=%s msg=%s", chat_id, message.message_id)
             return True
         if getattr(settings, "MODERATION_DELETE_TELEGRAM_LINKS", True) and contains_telegram_obfuscated(raw):
-            await _flag(chat_id, message.message_id, action="delete", reason="telegram_link", user_id=u.id)
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("telegram_link"), user_id=u.id)
             ok = await _delete_message_safe(chat_id, message.message_id)
             if not ok:
                 logger.warning("Moderation: failed to delete (telegram_link) chat=%s msg=%s", chat_id, message.message_id)
@@ -799,7 +908,12 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
 
         chat_id = int(chat_id_str)
         offender_id = int(offender_id_str)
-        trigger_msg_id = int(rest[0]) if rest else None
+        trigger_msg_id = None
+        if rest:
+            try:
+                trigger_msg_id = int(rest[0])
+            except Exception:
+                trigger_msg_id = None
 
         admin_id = cb.from_user.id if cb.from_user else 0
         if not await _is_admin(chat_id, int(admin_id)):
@@ -809,7 +923,10 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
         banned = await _ban_user_safe(chat_id, offender_id, revoke=getattr(settings, "MODERATION_BAN_REVOKE_MESSAGES", True))
         if banned:
             try:
-                await _flag(chat_id, trigger_msg_id or 0, action="ban", reason="inline_button", user_id=offender_id)
+                if isinstance(trigger_msg_id, int) and trigger_msg_id > 0:
+                    await _flag(chat_id, trigger_msg_id, action="ban", reason="inline_button", user_id=offender_id)
+                else:
+                    await _flag_inline_without_message(chat_id, action="ban", reason="inline_button", user_id=offender_id)
             except Exception:
                 logger.debug("inline ban: flag failed", exc_info=True)
 

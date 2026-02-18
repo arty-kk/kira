@@ -206,6 +206,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
                 "image_b64": store_payload["jpeg_b64"],
                 "image_mime": "image/jpeg",
                 "source": "channel" if bool(payload.get("is_channel_post")) else "user",
+                "is_comment_context": payload.get("is_comment_context"),
             },
             context="media.preprocess_group_image",
         )

@@ -65,3 +65,91 @@ The script exits with a non-zero code if:
 - any legacy scale variable is set (`DIALOG_WORKER_SCALE`, `RAG_WORKER_SCALE`, `AUDIT_WORKER_SCALE`, `MAINTENANCE_WORKER_SCALE`, `POSTGRES_SCALE`, `REDIS_SCALE`).
 
 Use `DEPLOY_VALIDATE_ONLY=1` to validate inputs and generated `--scale` arguments without running `git` or `docker` commands.
+
+## Celery worker tuning
+
+`worker-tasks`, `worker-media`, and `worker-moderation` read queue/concurrency/prefetch values from `.env`.
+This allows changing worker tuning without rebuilding images: update `.env` and run deploy.
+
+### What can be tuned via `.env`
+
+- Queue routing:
+  - `CELERY_DEFAULT_QUEUE` → base queue for `worker-tasks`.
+  - `CELERY_MEDIA_QUEUE` → queue for `worker-media`.
+  - `CELERY_MODERATION_QUEUE` → queue for `worker-moderation`.
+- In-container worker behavior:
+  - `CELERY_TASKS_CONCURRENCY`, `CELERY_TASKS_PREFETCH` (+ optional `CELERY_TASKS_POOL`, `CELERY_TASKS_LOGLEVEL`).
+  - `CELERY_MEDIA_CONCURRENCY`, `CELERY_MEDIA_PREFETCH`.
+  - `CELERY_MODERATION_CONCURRENCY`, `CELERY_MODERATION_PREFETCH`.
+
+`CELERY_BROKER_URL` already has a compose default via `redis_kv` for current services, but it can still be overridden through `.env`.
+
+### How this combines with scale variables
+
+- `WORKER_*_SCALE` and `COMPOSE_SCALE_OVERRIDES` control the **number of containers** (`docker compose --scale ...`).
+- `*_CONCURRENCY`/`*_PREFETCH` control **how each container consumes tasks internally**.
+
+Effective throughput depends on both dimensions: container count × per-container tuning.
+
+### Operational recipe
+
+#### Profile 1: low-latency / fairness
+
+Use when minimizing head-of-line blocking and preserving fairer task distribution is a priority.
+
+```env
+CELERY_TASKS_CONCURRENCY=6
+CELERY_TASKS_PREFETCH=1
+CELERY_MEDIA_CONCURRENCY=2
+CELERY_MEDIA_PREFETCH=1
+CELERY_MODERATION_CONCURRENCY=2
+CELERY_MODERATION_PREFETCH=1
+```
+
+```bash
+WORKER_TASKS_SCALE=2 \
+WORKER_MEDIA_SCALE=1 \
+WORKER_MODERATION_SCALE=1 \
+bash scripts/deploy.sh
+```
+
+#### Profile 2: high-throughput CPU-light
+
+Use for lightweight tasks (I/O-bound or short CPU-light jobs) where throughput is the main goal.
+
+```env
+CELERY_TASKS_CONCURRENCY=20
+CELERY_TASKS_PREFETCH=2
+CELERY_MEDIA_CONCURRENCY=6
+CELERY_MEDIA_PREFETCH=2
+CELERY_MODERATION_CONCURRENCY=4
+CELERY_MODERATION_PREFETCH=2
+```
+
+```bash
+COMPOSE_SCALE_OVERRIDES="worker-tasks=3,worker-media=2,worker-moderation=2" \
+bash scripts/deploy.sh
+```
+
+Prefetch trade-off: higher `prefetch` can improve throughput, but may reduce fairness and increase latency for individual tasks. Start from `1`, then increase gradually if needed.
+
+### Minimal copy-paste example (queues + deploy)
+
+```env
+CELERY_DEFAULT_QUEUE=celery
+CELERY_MEDIA_QUEUE=queue_media
+CELERY_MODERATION_QUEUE=queue_moderation
+CELERY_TASKS_CONCURRENCY=10
+CELERY_TASKS_PREFETCH=1
+CELERY_MEDIA_CONCURRENCY=2
+CELERY_MEDIA_PREFETCH=1
+CELERY_MODERATION_CONCURRENCY=2
+CELERY_MODERATION_PREFETCH=1
+```
+
+```bash
+WORKER_TASKS_SCALE=2 \
+WORKER_MEDIA_SCALE=1 \
+WORKER_MODERATION_SCALE=1 \
+bash scripts/deploy.sh
+```
