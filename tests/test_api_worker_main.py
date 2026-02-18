@@ -120,8 +120,12 @@ class _FakeRedisQueueWithRequeueLock:
             api_worker.API_QUEUE_KEY: [],
         }
         self.lock_values = {}
-        self.rpush_calls = 0
         self.set_calls = []
+        self.eval_calls = 0
+        self.lrange_calls = 0
+        self.rpush_calls = 0
+        self.ltrim_calls = 0
+        self.delete_calls = 0
 
     async def set(self, key, value, nx=False, ex=None):
         self.set_calls.append({"key": key, "value": value, "nx": nx, "ex": ex})
@@ -131,6 +135,7 @@ class _FakeRedisQueueWithRequeueLock:
         return True
 
     async def lrange(self, key, start, end):
+        self.lrange_calls += 1
         values = list(self.data.get(key, []))
         if end == -1:
             return values[start:]
@@ -140,8 +145,29 @@ class _FakeRedisQueueWithRequeueLock:
         self.rpush_calls += 1
         self.data.setdefault(key, []).extend(values)
 
+    async def ltrim(self, key, start, end):
+        self.ltrim_calls += 1
+        values = list(self.data.get(key, []))
+        if end == -1:
+            self.data[key] = values[start:]
+        else:
+            self.data[key] = values[start : end + 1]
+
     async def delete(self, key):
+        self.delete_calls += 1
         self.data.pop(key, None)
+
+    async def eval(self, script, numkeys, processing_key, queue_key):
+        self.eval_calls += 1
+        self.rpush_calls += 1
+        self.ltrim_calls += 1
+
+        pending = list(self.data.get(processing_key, []))
+        moved = len(pending)
+        if moved:
+            self.data.setdefault(queue_key, []).extend(pending)
+            self.data[processing_key] = self.data[processing_key][moved:]
+        return moved
 
 
 class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
@@ -162,10 +188,23 @@ class ApiWorkerStartupRequeueLockTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(fake_redis.rpush_calls, 1)
+        self.assertEqual(fake_redis.eval_calls, 1)
+        self.assertEqual(fake_redis.lrange_calls, 0)
+        self.assertEqual(fake_redis.ltrim_calls, 1)
+        self.assertEqual(fake_redis.delete_calls, 0)
         self.assertEqual(fake_redis.data[api_worker.API_QUEUE_KEY], ["job:1", "job:2"])
+        self.assertEqual(fake_redis.data[api_worker.PROCESSING_KEY], [])
         self.assertTrue(
             any(
                 call.args and "requeue-on-start skipped; lock held by another worker" in call.args[0]
+                for call in info_log.call_args_list
+            )
+        )
+        self.assertTrue(
+            any(
+                call.args
+                and call.args[0] == "api_worker: requeued %d pending from %s"
+                and call.args[1:] == (2, api_worker.PROCESSING_KEY)
                 for call in info_log.call_args_list
             )
         )

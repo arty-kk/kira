@@ -376,6 +376,22 @@ return 1
 """
 
 
+_REQUEUE_ON_START_LUA = """
+local processing_key = KEYS[1]
+local queue_key = KEYS[2]
+
+local pending = redis.call('LRANGE', processing_key, 0, -1)
+local moved = #pending
+
+if moved > 0 then
+  redis.call('RPUSH', queue_key, unpack(pending))
+  redis.call('LTRIM', processing_key, moved, -1)
+end
+
+return moved
+"""
+
+
 def _is_watch_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "WatchError"
 
@@ -452,6 +468,46 @@ async def _claim_stale_inflight(
                 await pipe.reset()
 
     return False
+
+
+async def _requeue_on_start(redis_queue) -> int:
+    try:
+        moved = await redis_queue.eval(
+            _REQUEUE_ON_START_LUA,
+            2,
+            PROCESSING_KEY,
+            API_QUEUE_KEY,
+        )
+        return int(moved or 0)
+    except Exception as exc:
+        if not _is_eval_unavailable(exc):
+            logger.warning("api_worker: requeue eval failed: %s", exc)
+            return 0
+
+    for _ in range(3):
+        pipe = redis_queue.pipeline()
+        try:
+            await pipe.watch(PROCESSING_KEY)
+            pending = await pipe.lrange(PROCESSING_KEY, 0, -1)
+            moved = len(pending)
+            if moved <= 0:
+                return 0
+
+            pipe.multi()
+            pipe.rpush(API_QUEUE_KEY, *pending)
+            pipe.ltrim(PROCESSING_KEY, moved, -1)
+            await pipe.execute()
+            return moved
+        except Exception as exc:
+            if _is_watch_error(exc):
+                continue
+            logger.warning("api_worker: requeue watch/multi failed: %s", exc)
+            return 0
+        finally:
+            with suppress(Exception):
+                await pipe.reset()
+
+    return 0
 
 
 async def _handle_job(raw: str, redis_queue) -> None:
@@ -1025,13 +1081,11 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
             ex=REQUEUE_LOCK_TTL_SEC,
         )
         if requeue_lock_acquired:
-            pending = await redis_queue.lrange(PROCESSING_KEY, 0, -1)
-            if pending:
-                await redis_queue.rpush(API_QUEUE_KEY, *pending)
-                await redis_queue.delete(PROCESSING_KEY)
+            moved = await _requeue_on_start(redis_queue)
+            if moved > 0:
                 logger.info(
                     "api_worker: requeued %d pending from %s",
-                    len(pending), PROCESSING_KEY,
+                    moved, PROCESSING_KEY,
                 )
         else:
             logger.info(
