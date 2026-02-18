@@ -190,7 +190,7 @@ def upgrade():
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["owner_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("request_id", "reason", name="uq_refund_outbox_request_reason"),
+        sa.UniqueConstraint("request_id", name="uq_refund_outbox_request_id"),
     )
     op.create_index("ix_refund_outbox_owner_id", "refund_outbox", ["owner_id"], unique=False)
     op.create_index("ix_refund_outbox_request_id", "refund_outbox", ["request_id"], unique=False)

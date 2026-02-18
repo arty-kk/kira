@@ -1195,7 +1195,7 @@ async def _store_refund_outbox_task(
                     last_error=last_error,
                 )
                 .on_conflict_do_nothing(
-                    index_elements=[RefundOutbox.request_id, RefundOutbox.reason],
+                    index_elements=[RefundOutbox.request_id],
                 )
                 .returning(RefundOutbox.id)
             )
@@ -1207,7 +1207,6 @@ async def _store_refund_outbox_task(
                 select(RefundOutbox.id)
                 .where(
                     RefundOutbox.request_id == request_id,
-                    RefundOutbox.reason == reason,
                 )
                 .limit(1)
             )).scalar_one_or_none()
