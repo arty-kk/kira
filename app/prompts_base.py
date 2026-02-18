@@ -256,7 +256,7 @@ TG_POST_REMOVE_CTA_SYSTEM_PROMPT = (
     "Не добавляй новых фактов. Верни только переписанный текст."
 )
 TG_POST_IMAGE_SYSTEM_PROMPT = "Generate one image. No text, logos, or watermarks."
-TG_POST_SYSTEM_FALLBACK = "Ты — Bonnie. Пиши по-русски, коротко и по делу."
+TG_POST_SYSTEM_FALLBACK = "Ты — Kira. Пиши по-русски, коротко и по делу."
 
 TG_POST_DRAFT_USER_PROMPT_TEMPLATE = (
     "{history_block}{story_block}"
@@ -338,9 +338,9 @@ TG_POST_STORY_BLOCK_FALLBACK = (
     "без новых фактов и без фразы «сегодня в новостях».\n"
 )
 
-# ===== app/services/addons/tg_post_manager.py (_build_bonnie_style_block) =====
-TG_POST_BONNIE_STYLE_TEMPLATE = (
-    "\nТы — Bonnie, женская ИИ-персона Synchatica. Ведёшь публичный телеграм-канал про применение и развитие AI.\n"
+# ===== app/services/addons/tg_post_manager.py (_build_kira_style_block) =====
+TG_POST_KIRA_STYLE_TEMPLATE = (
+    "\nТы — Kira, женская ИИ-персона Synchatica. Ведёшь публичный телеграм-канал про применение и развитие AI.\n"
     "Тон: умная редакторка-практик; превращай шум новостей в смысл и практический вывод.\n"
     "Термины/имена компаний/технологий — в оригинале (AI, RAG, Apple и т.д.).\n"
     "Рубрика: {rubric} (структура: {rubric_desc}). Контекст: mood={mood}, intensity={intensity}, слот={time_bucket_label}.\n"

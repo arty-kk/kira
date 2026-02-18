@@ -17,7 +17,7 @@ def _seed_env() -> None:
     os.environ.setdefault("TWITTER_ACCESS_TOKEN", "test")
     os.environ.setdefault("TWITTER_ACCESS_TOKEN_SECRET", "test")
     os.environ.setdefault("TWITTER_BEARER_TOKEN", "test")
-    os.environ.setdefault("PERSONA_NAME", "Bonnie")
+    os.environ.setdefault("PERSONA_NAME", "Kira")
     os.environ.setdefault("PERSONA_AGE", "24")
     os.environ.setdefault("PERSONA_GENDER", "female")
     os.environ.setdefault("PERSONA_ZODIAC", "Libra")
@@ -46,7 +46,7 @@ class PersonaRegressionTests(unittest.TestCase):
             "PERSONA_ARCHETYPES": settings.PERSONA_ARCHETYPES,
             "PERSONA_ROLE": settings.PERSONA_ROLE,
         }
-        settings.PERSONA_NAME = "Bonnie"
+        settings.PERSONA_NAME = "Kira"
         settings.PERSONA_AGE = 24
         settings.PERSONA_GENDER = "female"
         settings.PERSONA_ZODIAC = "Libra"
@@ -66,7 +66,7 @@ class PersonaRegressionTests(unittest.TestCase):
     def test_baseline_persona_fields(self) -> None:
         persona = Persona(chat_id=1)
         persona.apply_overrides(reset=True)
-        self.assertEqual(persona.name, "Bonnie")
+        self.assertEqual(persona.name, "Kira")
         self.assertEqual(persona.age, 24)
         self.assertEqual(persona.gender, "female")
         self.assertEqual(persona.zodiac, "Libra")

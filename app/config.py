@@ -154,7 +154,7 @@ class Settings:
     TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN"))
     TELEGRAM_BOT_USERNAME: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_USERNAME"))
     TELEGRAM_BOT_ID: int = field(default_factory=lambda: _get_env("TELEGRAM_BOT_ID", conv=int))
-    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Bonnie ⚓️"))
+    BOT_NAME: str = field(default_factory=lambda: _get_env("BOT_NAME", "Kira"))
     DEFAULT_LANG: str = field(default_factory=lambda: _get_env("DEFAULT_LANG", "en"))
     DEFAULT_TZ: str = field(default_factory=lambda: _get_env("DEFAULT_TZ", "UTC", conv=str))
     DIALOGS_DIR: str = field(default_factory=lambda: _get_env("DIALOGS_DIR", "dialogs", conv=str))
@@ -540,7 +540,7 @@ class Settings:
     LTM_SUMMARY_MAX_OUTPUT_TOKENS: int = field(default_factory=lambda: _get_env("LTM_SUMMARY_MAX_OUTPUT_TOKENS", "4096", conv=int))
 
     # ─── Persona ─────────────────────────────────
-    PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Bonnie"))
+    PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Kira"))
     PERSONA_AGE: int = field(default_factory=lambda: _get_env("PERSONA_AGE", "29", conv=int))
     PERSONA_GENDER: str = field(default_factory=lambda: _get_env("PERSONA_GENDER", "female"))
     PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC", "Scorpio"))

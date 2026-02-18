@@ -31,7 +31,7 @@ from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message, get_redis
 from app.config import settings
 from app.prompts_base import (
-    TG_POST_BONNIE_STYLE_TEMPLATE,
+    TG_POST_KIRA_STYLE_TEMPLATE,
     TG_POST_EXTRACT_SYSTEM_SUFFIX,
     TG_POST_JUDGE_SYSTEM_PROMPT,
     TG_POST_JUDGE_USER_TEMPLATE,
@@ -1536,7 +1536,7 @@ def _compute_humor_target(time_bucket: str, mood: str, story: NewsItem | None, m
     return max(0.0, min(maxv, x))
 
 
-def _build_bonnie_style_block(
+def _build_kira_style_block(
     rubric: str,
     time_bucket_label: str,
     mood: str,
@@ -1588,7 +1588,7 @@ def _build_bonnie_style_block(
     else:
         humor_line = "- тон спокойный, без попытки «шутить ради шутки»;\n"
 
-    return TG_POST_BONNIE_STYLE_TEMPLATE.format(
+    return TG_POST_KIRA_STYLE_TEMPLATE.format(
         rubric=rubric,
         rubric_desc=rubric_desc,
         mood=mood,
@@ -2604,7 +2604,7 @@ async def generate_and_post_tg() -> None:
                     p_humor *= 0.85
                 humor_on = random.random() < max(0.0, min(humor_max, p_humor))
 
-                style_block = _build_bonnie_style_block(
+                style_block = _build_kira_style_block(
                     rubric=rubric,
                     time_bucket_label=time_bucket_label,
                     mood=mood,
