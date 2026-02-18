@@ -950,6 +950,8 @@ async def on_group_voice(message: Message) -> None:
             return
 
         is_channel = _is_channel_post(message)
+        if message.from_user and message.from_user.is_bot and not is_channel:
+            return
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
         mentioned = _is_mention(message)
 
@@ -1065,6 +1067,8 @@ async def _handle_group_image_message_common(
         return
 
     is_channel = _is_channel_post(message)
+    if message.from_user and message.from_user.is_bot and not is_channel:
+        return
 
     # channel post check
     if is_channel:
