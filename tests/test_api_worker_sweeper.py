@@ -70,12 +70,15 @@ api_worker = _load_api_worker()
 
 
 class _FakeRedisSweeper:
-    def __init__(self, processing_items, job_values):
+    def __init__(self, processing_items, job_values, *, fail_non_atomic_push=False, eval_unavailable=False):
         self.data = {
             api_worker.PROCESSING_KEY: list(processing_items),
             api_worker.API_QUEUE_KEY: [],
         }
         self.job_values = dict(job_values)
+        self.fail_non_atomic_push = fail_non_atomic_push
+        self.eval_calls = []
+        self.eval_unavailable = eval_unavailable
 
     async def llen(self, key):
         return len(self.data.get(key, []))
@@ -105,8 +108,70 @@ class _FakeRedisSweeper:
         return 0
 
     async def lpush(self, key, value):
+        if self.fail_non_atomic_push:
+            raise RuntimeError("simulated crash after lrem before push")
         self.data.setdefault(key, []).insert(0, value)
         return len(self.data[key])
+
+    async def eval(self, script, numkeys, *args):
+        self.eval_calls.append((script, numkeys, args))
+        if self.eval_unavailable:
+            raise RuntimeError("unknown command 'eval'")
+        if numkeys != 2:
+            raise AssertionError("Unsupported eval numkeys")
+        processing_key, queue_key, raw, push_side = args
+        removed = await self.lrem(processing_key, 1, raw)
+        if removed <= 0:
+            return 0
+        if push_side == "left":
+            self.data.setdefault(queue_key, []).insert(0, raw)
+        elif push_side == "right":
+            self.data.setdefault(queue_key, []).append(raw)
+        else:
+            raise AssertionError(f"Unsupported push_side={push_side}")
+        return 1
+
+    def pipeline(self):
+        return _FakePipeline(self)
+
+
+class _FakePipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.ops = []
+
+    async def watch(self, _key):
+        return None
+
+    async def lrange(self, key, start, end):
+        return await self.redis.lrange(key, start, end)
+
+    def multi(self):
+        self.ops = []
+
+    def lrem(self, key, count, value):
+        self.ops.append(("lrem", key, count, value))
+
+    def lpush(self, key, value):
+        self.ops.append(("lpush", key, value))
+
+    def rpush(self, key, value):
+        self.ops.append(("rpush", key, value))
+
+    async def execute(self):
+        out = []
+        for op in self.ops:
+            if op[0] == "lrem":
+                out.append(await self.redis.lrem(op[1], op[2], op[3]))
+            elif op[0] == "lpush":
+                out.append(await self.redis.lpush(op[1], op[2]))
+            elif op[0] == "rpush":
+                self.redis.data.setdefault(op[1], []).append(op[2])
+                out.append(len(self.redis.data[op[1]]))
+        return out
+
+    async def reset(self):
+        return None
 
 
 class ApiWorkerSweeperBatchTests(unittest.IsolatedAsyncioTestCase):
@@ -171,6 +236,54 @@ class ApiWorkerSweeperBatchTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertNotIn(stale_raw, fake_redis.data[api_worker.PROCESSING_KEY])
         self.assertEqual(fake_redis.data[api_worker.API_QUEUE_KEY], [stale_raw])
+
+
+    async def test_stale_job_reclaimed_when_eval_unavailable_via_watch_multi(self):
+        stale_raw = '{"request_id":"stale-fallback"}'
+        fake_redis = _FakeRedisSweeper(
+            processing_items=[stale_raw],
+            job_values={api_worker.JOB_KEY_PREFIX + "stale-fallback": "inflight:0"},
+            eval_unavailable=True,
+        )
+        stop_evt = asyncio.Event()
+
+        async def _sleep(_seconds):
+            stop_evt.set()
+
+        with unittest.mock.patch.object(api_worker, "API_PROCESSING_SWEEP_BATCH", 1), unittest.mock.patch.object(
+            api_worker, "INFLIGHT_STALE_AFTER_SEC", 10
+        ), unittest.mock.patch.object(api_worker.time, "time", return_value=1000), unittest.mock.patch.object(
+            api_worker.asyncio, "sleep", new=_sleep
+        ):
+            await api_worker._sweeper_loop(stop_evt, fake_redis)
+
+        self.assertEqual(fake_redis.data[api_worker.PROCESSING_KEY], [])
+        self.assertEqual(fake_redis.data[api_worker.API_QUEUE_KEY], [stale_raw])
+
+    async def test_stale_job_not_lost_when_reclaim_push_would_crash_non_atomic(self):
+        stale_raw = '{"request_id":"stale-crash"}'
+        fake_redis = _FakeRedisSweeper(
+            processing_items=[stale_raw],
+            job_values={api_worker.JOB_KEY_PREFIX + "stale-crash": "inflight:0"},
+            fail_non_atomic_push=True,
+        )
+        stop_evt = asyncio.Event()
+
+        async def _sleep(_seconds):
+            stop_evt.set()
+
+        with unittest.mock.patch.object(api_worker, "API_PROCESSING_SWEEP_BATCH", 1), unittest.mock.patch.object(
+            api_worker, "INFLIGHT_STALE_AFTER_SEC", 10
+        ), unittest.mock.patch.object(api_worker.time, "time", return_value=1000), unittest.mock.patch.object(
+            api_worker.asyncio, "sleep", new=_sleep
+        ):
+            await api_worker._sweeper_loop(stop_evt, fake_redis)
+
+        in_processing = stale_raw in fake_redis.data[api_worker.PROCESSING_KEY]
+        in_queue = stale_raw in fake_redis.data[api_worker.API_QUEUE_KEY]
+        self.assertTrue(in_processing or in_queue)
+        self.assertFalse(in_processing and in_queue)
+        self.assertGreaterEqual(len(fake_redis.eval_calls), 1)
 
 
 if __name__ == "__main__":
