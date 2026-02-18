@@ -229,7 +229,10 @@ async def handle_passive_moderation(
     _mid = int(getattr(message, "message_id", message_id or 0))
     light_throttle = f"mod_alert:light:{chat_id}:{_uid}"
     deep_throttle  = f"mod_alert:deep:{chat_id}:{_uid}"
-    
+
+    if not (text and text.strip()) and not image_b64:
+        return "clean"
+
     try:
         async with redis_client.pipeline(transaction=True) as pipe:
             throttle_sec = getattr(settings, "MOD_ALERT_THROTTLE_SECONDS", 60)
@@ -238,9 +241,6 @@ async def handle_passive_moderation(
     except Exception:
         logger.exception("Failed to set light-throttle key; allowing alert by default")
         allow_alert = True
-
-    if not (text and text.strip()) and not image_b64:
-        return "clean"
 
     if is_comment_context is not None:
         moderation_context = "comment" if bool(is_comment_context) else "group"
