@@ -46,7 +46,7 @@ const content: Record<
       },
       {
         id: 'group-battle',
-        title: 'Групповая битва',
+        title: 'Игровой групповой сценарий',
         summary:
           'Групповой сценарий превращает разовый интерес в повторяемую социальную механику и удержание.',
         timeline: [
@@ -71,9 +71,9 @@ const content: Record<
       },
       {
         id: 'safe-fallback',
-        title: 'Модерация и безопасный ответ',
+        title: 'Модерация без потери диалога',
         summary:
-          'Сложные или рискованные сигналы направляются в безопасный ответ с сохранением качества опыта и контролем нагрузки.',
+          'Рискованные сигналы обрабатываются безопасно: диалог сохраняется, а нагрузка не уходит в ручную эскалацию.',
         timeline: [
           { label: 'Шаг 1', text: 'Выявление риск-сигнала' },
           { label: 'Шаг 2', text: 'Проверка правилами безопасности' },
@@ -112,7 +112,7 @@ const content: Record<
       },
       {
         id: 'group-battle',
-        title: 'Group battle',
+        title: 'Group engagement mode',
         summary: 'Group mode turns one-time interest into a repeatable social dynamic with high engagement.',
         timeline: [
           { label: 'Step 1', text: 'Launch group event' },
@@ -135,8 +135,8 @@ const content: Record<
       },
       {
         id: 'safe-fallback',
-        title: 'Moderation-safe response',
-        summary: 'Complex or risky signals are routed to safe moderated responses without UX degradation or ops escalation.',
+        title: 'Moderation-safe continuation',
+        summary: 'Risky signals are handled safely: the dialog is preserved while avoiding manual escalation overload.',
         timeline: [
           { label: 'Step 1', text: 'Detect risk signal' },
           { label: 'Step 2', text: 'Apply safety policy checks' },

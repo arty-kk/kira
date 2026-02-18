@@ -22,25 +22,25 @@ const pairs: Record<'ru' | 'en', ShiftPair[]> = {
   ru: [
     {
       label: 'Вовлечение',
-      signal: 'Welcome + re-engagement + battle-loop',
+      signal: 'Адаптивный welcome + реактивация + сценарии удержания',
       before: 'Разовые рассылки без контекста',
-      after: 'Персональные циклы и следующее лучшее действие по поведению',
+      after: 'Персональные циклы общения и следующее действие по сигналам поведения',
       impact: 'Ret +19% / WAU depth',
       beforeNotes: ['Нет сегментации по намерению', 'Однотипный контент для всех'],
       afterNotes: ['Сценарий выбирается по сигналам', 'Персональные триггеры возврата']
     },
     {
       label: 'Операции',
-      signal: 'Модерация + очереди + безопасный fallback',
+      signal: 'Модерация + очереди + безопасный ответ без эскалации',
       before: 'Ручная модерация и реакции по факту',
-      after: 'Автоматизированный ops-контур с предсказуемой нагрузкой и SLA',
+      after: 'Автоматизированный операционный контур с предсказуемой нагрузкой и стабильным SLA',
       impact: 'Ops load -34%',
       beforeNotes: ['Ручной разбор инцидентов', 'Пики нагрузки без приоритизации'],
       afterNotes: ['Очереди и правила приоритета', 'Контролируемый safe-fallback']
     },
     {
       label: 'Монетизация',
-      signal: 'Stars + пакетные сценарии + контроль ошибок',
+      signal: 'Stars + сценарии офферов + контроль ошибок',
       before: 'Платежные триггеры без сегментации',
       after: 'Динамические офферы по стадии пользователя с управляемой конверсией',
       impact: 'Stars ARPPU +27%',
@@ -51,25 +51,25 @@ const pairs: Record<'ru' | 'en', ShiftPair[]> = {
   en: [
     {
       label: 'Engagement',
-      signal: 'Welcome + re-engagement + battle loop',
+      signal: 'Adaptive welcome + re-engagement + retention loops',
       before: 'One-off broadcasts without context',
-      after: 'Personal loops and next-best action by behavior',
+      after: 'Personal communication loops and next-best action by behavior signals',
       impact: 'Ret +19% / WAU depth',
       beforeNotes: ['No intent-based segmentation', 'Same feed for every user'],
       afterNotes: ['Scenario selected by user signals', 'Personal return triggers']
     },
     {
       label: 'Operations',
-      signal: 'Moderation + queues + safe fallback',
+      signal: 'Moderation + queues + safe response without escalation',
       before: 'Manual moderation and reactive handling',
-      after: 'Automated ops contour with predictable load and SLA',
+      after: 'Automated operations contour with predictable load and stable SLA',
       impact: 'Ops load -34%',
       beforeNotes: ['Manual incident triage', 'Load spikes without prioritization'],
       afterNotes: ['Queue routing with priorities', 'Controlled safe-fallback behavior']
     },
     {
       label: 'Monetization',
-      signal: 'Stars + package flows + error control',
+      signal: 'Stars + offer scenarios + error control',
       before: 'Payment prompts without segmentation',
       after: 'Dynamic offers by lifecycle stage with managed conversion',
       impact: 'Stars ARPPU +27%',
@@ -111,7 +111,7 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
     <Section
       id="shift"
       eyebrow={lang === 'ru' ? 'Проблема → Сдвиг' : 'Problem → Shift'}
-      title={lang === 'ru' ? 'От реактивного бота к управляемому росту продукта' : 'From reactive bot flows to managed product growth'}
+      title={lang === 'ru' ? 'От хаотичных ответов к управляемому росту через сценарии и контекст' : 'From chaotic bot replies to managed growth through scenarios and context'}
     >
       <div ref={containerRef} className="grid gap-4 md:grid-cols-3">
         {data.map((pair, idx) => (
@@ -176,7 +176,12 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
           className="mt-5 grid gap-4 md:grid-cols-2"
         >
           <article className="surface-card rounded-xl border-slate-600/40 p-5">
-            <p className="text-xs uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Было' : 'Before'}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-muted">{lang === 'ru' ? 'Было' : 'Before'}</p>
+              <span className="rounded-md border border-slate-600/60 bg-slate-900/45 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-slate-300">
+                {lang === 'ru' ? 'Реактивно' : 'Reactive'}
+              </span>
+            </div>
             <p className="mt-2 text-xl font-medium leading-snug">{data[active].before}</p>
             <ul className="mt-3 space-y-2">
               {data[active].beforeNotes.map((note) => (
@@ -188,7 +193,12 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
             </ul>
           </article>
           <article className="surface-card rounded-xl border-primary/55 p-5">
-            <p className="text-xs uppercase tracking-[0.16em] text-primary">{lang === 'ru' ? 'Стало' : 'After'}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-primary">{lang === 'ru' ? 'Стало' : 'After'}</p>
+              <span className="rounded-md border border-primary/45 bg-primary/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary">
+                {lang === 'ru' ? 'Управляемо' : 'Managed'}
+              </span>
+            </div>
             <p className="mt-2 text-xl font-medium leading-snug">{data[active].after}</p>
             <ul className="mt-3 space-y-2">
               {data[active].afterNotes.map((note) => (

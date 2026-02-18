@@ -10,9 +10,9 @@ const content = {
     label: 'Узел',
     explain: 'Как Ematory собирает контекст',
     nodes: [
-      { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Входящие события', copy: 'Входящие события из Telegram и внешних API собираются в единый ingest-контур с идемпотентной обработкой.' },
-      { id: 'brain', title: 'Ядро персоны', hint: 'Память + контекст', copy: 'Контекст, память и стиль ответа формируют релевантную реакцию для личных и групповых сценариев.' },
-      { id: 'ops', title: 'Операционный слой', hint: 'Модерация + выплаты', copy: 'Модерация, платежи, контент и воркеры очередей стабилизируют продакшн-нагрузку и качество сервиса.' }
+      { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Входящие события', copy: 'Сигналы из Telegram и внешних API собираются в единый поток, где дубли и шум отсекаются на входе.' },
+      { id: 'brain', title: 'Ядро персоны', hint: 'Память + контекст', copy: 'Память, контекст и тон бренда формируют уместный ответ в личных и групповых диалогах.' },
+      { id: 'ops', title: 'Операционный слой', hint: 'Модерация + выплаты', copy: 'Модерация, платежи и маршрутизация очередей удерживают стабильность сервиса даже в пиковые часы.' }
     ]
   },
   en: {
@@ -21,9 +21,9 @@ const content = {
     label: 'Node',
     explain: 'How Ematory composes context',
     nodes: [
-      { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Incoming events', copy: 'Incoming Telegram and external API events are merged into one ingest contour with idempotent processing.' },
-      { id: 'brain', title: 'Persona Brain', hint: 'Memory + context', copy: 'Context, memory, and response style rules generate relevant outputs for private and group flows.' },
-      { id: 'ops', title: 'Operations Layer', hint: 'Moderation + payments', copy: 'Moderation, payments, content workflows, and queue workers keep production load and quality under control.' }
+      { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Incoming events', copy: 'Signals from Telegram and external APIs are merged into one stream where duplicates and noise are filtered at ingress.' },
+      { id: 'brain', title: 'Persona Brain', hint: 'Memory + context', copy: 'Memory, context, and brand tone generate context-aware replies for private and group conversations.' },
+      { id: 'ops', title: 'Operations Layer', hint: 'Moderation + payments', copy: 'Moderation, payments, and queue routing keep service quality stable even under traffic peaks.' }
     ]
   }
 } as const;
