@@ -163,6 +163,84 @@ end
 return moved
 """
 
+_RECLAIM_PROCESSING_ITEM_LUA = """
+local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
+if removed > 0 then
+  if ARGV[2] == 'left' then
+    redis.call('LPUSH', KEYS[2], ARGV[1])
+  else
+    redis.call('RPUSH', KEYS[2], ARGV[1])
+  end
+  return 1
+end
+return 0
+"""
+
+
+def _is_eval_unavailable(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        isinstance(exc, (AttributeError, NotImplementedError))
+        or "unknown command" in message
+        or " eval " in f" {message} "
+        or "noscript" in message
+    )
+
+
+async def _reclaim_processing_item_atomically(
+    redis: Redis,
+    processing_key: str,
+    queue_key: str,
+    raw: str,
+    *,
+    push_side: str,
+) -> int:
+    if push_side not in {"left", "right"}:
+        raise ValueError(f"Unsupported push_side={push_side!r}")
+
+    try:
+        reclaimed = await redis.eval(
+            _RECLAIM_PROCESSING_ITEM_LUA,
+            2,
+            processing_key,
+            queue_key,
+            raw,
+            push_side,
+        )
+        return 1 if int(reclaimed or 0) == 1 else 0
+    except Exception as exc:
+        if not _is_eval_unavailable(exc):
+            logger.warning("Failed atomic reclaim eval for %s: %s", processing_key, exc)
+            return 0
+
+    for _ in range(3):
+        pipe = redis.pipeline()
+        try:
+            await pipe.watch(processing_key)
+            current_items = await pipe.lrange(processing_key, 0, -1)
+            if raw not in current_items:
+                return 0
+
+            pipe.multi()
+            pipe.lrem(processing_key, 1, raw)
+            if push_side == "left":
+                pipe.lpush(queue_key, raw)
+            else:
+                pipe.rpush(queue_key, raw)
+            result = await pipe.execute()
+            removed = int(result[0] or 0) if result else 0
+            return 1 if removed > 0 else 0
+        except Exception as exc:
+            if exc.__class__.__name__ == "WatchError":
+                continue
+            logger.warning("Failed atomic reclaim watch/multi for %s: %s", processing_key, exc)
+            return 0
+        finally:
+            with suppress(Exception):
+                await pipe.reset()
+
+    return 0
+
 def _mk_ctx_payload(role: str, text: str, *, speaker_id: int | None = None) -> str:
     r = (role or "").strip().lower()
     if r not in ("user", "assistant", "system"):
@@ -1615,10 +1693,17 @@ async def _sweep_processing(
                 if not ok:
                     continue
                 try:
-                    removed = await redis.lrem(processing_key, 1, raw)
-                    if removed:
-                        await redis.rpush(queue_key, raw)
-                        logger.info("Reclaimed stuck job %s → %s", dedupe_id, queue_key)
+                    reclaim_code = await _reclaim_processing_item_atomically(
+                        redis,
+                        processing_key,
+                        queue_key,
+                        raw,
+                        push_side="right",
+                    )
+                    if reclaim_code == 1:
+                        logger.info("Reclaim status for %s: reclaimed", dedupe_id)
+                    else:
+                        logger.info("Reclaim status for %s: not reclaimed", dedupe_id)
                 except Exception as e:
                     logger.warning("Failed to reclaim %s: %s", dedupe_id, e)
             elif isinstance(val, str) and val.startswith("done"):

@@ -376,6 +376,20 @@ return 1
 """
 
 
+
+
+_RECLAIM_PROCESSING_ITEM_LUA = """
+local removed = redis.call('LREM', KEYS[1], 1, ARGV[1])
+if removed > 0 then
+  if ARGV[2] == 'left' then
+    redis.call('LPUSH', KEYS[2], ARGV[1])
+  else
+    redis.call('RPUSH', KEYS[2], ARGV[1])
+  end
+  return 1
+end
+return 0
+"""
 _REQUEUE_ON_START_LUA = """
 local processing_key = KEYS[1]
 local queue_key = KEYS[2]
@@ -404,6 +418,61 @@ def _is_eval_unavailable(exc: Exception) -> bool:
         or " eval " in f" {message} "
         or "noscript" in message
     )
+
+
+async def _reclaim_processing_item_atomically(
+    redis,
+    processing_key: str,
+    queue_key: str,
+    raw: str,
+    *,
+    push_side: str,
+) -> int:
+    if push_side not in {"left", "right"}:
+        raise ValueError(f"Unsupported push_side={push_side!r}")
+
+    try:
+        reclaimed = await redis.eval(
+            _RECLAIM_PROCESSING_ITEM_LUA,
+            2,
+            processing_key,
+            queue_key,
+            raw,
+            push_side,
+        )
+        return 1 if int(reclaimed or 0) == 1 else 0
+    except Exception as exc:
+        if not _is_eval_unavailable(exc):
+            logger.warning("api_worker: reclaim eval failed %s: %s", processing_key, exc)
+            return 0
+
+    for _ in range(3):
+        pipe = redis.pipeline()
+        try:
+            await pipe.watch(processing_key)
+            current_items = await pipe.lrange(processing_key, 0, -1)
+            if raw not in current_items:
+                return 0
+
+            pipe.multi()
+            pipe.lrem(processing_key, 1, raw)
+            if push_side == "left":
+                pipe.lpush(queue_key, raw)
+            else:
+                pipe.rpush(queue_key, raw)
+            result = await pipe.execute()
+            removed = int(result[0] or 0) if result else 0
+            return 1 if removed > 0 else 0
+        except Exception as exc:
+            if _is_watch_error(exc):
+                continue
+            logger.warning("api_worker: reclaim watch/multi failed %s: %s", processing_key, exc)
+            return 0
+        finally:
+            with suppress(Exception):
+                await pipe.reset()
+
+    return 0
 
 
 async def _claim_stale_inflight(
@@ -1014,11 +1083,18 @@ async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
                     val = val.decode("utf-8", "ignore")
 
                 if not val:
-                    # Маркера нет — считаем застрявшей задачей, возвращаем в очередь
-                    with suppress(Exception):
-                        await redis_queue.lrem(PROCESSING_KEY, 1, raw)
-                    with suppress(Exception):
-                        await redis_queue.lpush(API_QUEUE_KEY, raw)
+                    reclaim_code = await _reclaim_processing_item_atomically(
+                        redis_queue,
+                        PROCESSING_KEY,
+                        API_QUEUE_KEY,
+                        raw,
+                        # BRPOPLPUSH забирает с правого края queue, поэтому reclaim кладём влево.
+                        push_side="left",
+                    )
+                    if reclaim_code == 1:
+                        logger.info("api_worker: reclaim status request_id=%s reclaimed", request_id)
+                    else:
+                        logger.info("api_worker: reclaim status request_id=%s not reclaimed", request_id)
                 elif isinstance(val, str) and val.startswith("done"):
                     with suppress(Exception):
                         await redis_queue.lrem(PROCESSING_KEY, 1, raw)
@@ -1034,10 +1110,18 @@ async def _sweeper_loop(stop_evt: asyncio.Event, redis_queue) -> None:
 
                     now = int(time.time())
                     if now - inflight_ts > INFLIGHT_STALE_AFTER_SEC:
-                        with suppress(Exception):
-                            await redis_queue.lrem(PROCESSING_KEY, 1, raw)
-                        with suppress(Exception):
-                            await redis_queue.lpush(API_QUEUE_KEY, raw)
+                        reclaim_code = await _reclaim_processing_item_atomically(
+                            redis_queue,
+                            PROCESSING_KEY,
+                            API_QUEUE_KEY,
+                            raw,
+                            # BRPOPLPUSH забирает с правого края queue, поэтому reclaim кладём влево.
+                            push_side="left",
+                        )
+                        if reclaim_code == 1:
+                            logger.info("api_worker: reclaim status request_id=%s reclaimed", request_id)
+                        else:
+                            logger.info("api_worker: reclaim status request_id=%s not reclaimed", request_id)
 
             await asyncio.sleep(5)
         except asyncio.CancelledError:

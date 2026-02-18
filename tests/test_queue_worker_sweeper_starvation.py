@@ -124,7 +124,7 @@ queue_worker = _load_queue_worker()
 
 
 class _FakeRedis:
-    def __init__(self, processing_key, queue_key, processing_items, job_values):
+    def __init__(self, processing_key, queue_key, processing_items, job_values, *, fail_non_atomic_push=False, eval_unavailable=False):
         self.processing_key = processing_key
         self.queue_key = queue_key
         self.lists = {
@@ -133,6 +133,9 @@ class _FakeRedis:
         }
         self.kv = dict(job_values)
         self.set_calls = []
+        self.fail_non_atomic_push = fail_non_atomic_push
+        self.eval_calls = []
+        self.eval_unavailable = eval_unavailable
 
     async def llen(self, key):
         return len(self.lists.get(key, []))
@@ -171,12 +174,75 @@ class _FakeRedis:
         return 0
 
     async def rpush(self, key, *values):
+        if self.fail_non_atomic_push:
+            raise RuntimeError("simulated crash after lrem before push")
         self.lists.setdefault(key, []).extend(values)
         return len(self.lists[key])
+
+    async def eval(self, script, numkeys, *args):
+        self.eval_calls.append((script, numkeys, args))
+        if self.eval_unavailable:
+            raise RuntimeError("unknown command 'eval'")
+        if numkeys != 2:
+            raise AssertionError("Unsupported eval numkeys")
+        processing_key, queue_key, raw, push_side = args
+        removed = await self.lrem(processing_key, 1, raw)
+        if removed <= 0:
+            return 0
+        if push_side == "right":
+            self.lists.setdefault(queue_key, []).append(raw)
+        elif push_side == "left":
+            self.lists.setdefault(queue_key, []).insert(0, raw)
+        else:
+            raise AssertionError(f"Unsupported push_side={push_side}")
+        return 1
+
+    def pipeline(self):
+        return _FakePipeline(self)
 
     async def scan_iter(self, match=None, count=None):
         if False:
             yield None
+
+
+class _FakePipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.ops = []
+
+    async def watch(self, _key):
+        return None
+
+    async def lrange(self, key, start, end):
+        return await self.redis.lrange(key, start, end)
+
+    def multi(self):
+        self.ops = []
+
+    def lrem(self, key, count, value):
+        self.ops.append(("lrem", key, count, value))
+
+    def lpush(self, key, value):
+        self.ops.append(("lpush", key, value))
+
+    def rpush(self, key, value):
+        self.ops.append(("rpush", key, value))
+
+    async def execute(self):
+        out = []
+        for op in self.ops:
+            if op[0] == "lrem":
+                out.append(await self.redis.lrem(op[1], op[2], op[3]))
+            elif op[0] == "lpush":
+                self.redis.lists.setdefault(op[1], []).insert(0, op[2])
+                out.append(len(self.redis.lists[op[1]]))
+            elif op[0] == "rpush":
+                self.redis.lists.setdefault(op[1], []).append(op[2])
+                out.append(len(self.redis.lists[op[1]]))
+        return out
+
+    async def reset(self):
+        return None
 
 
 class QueueWorkerSweeperStarvationTests(unittest.IsolatedAsyncioTestCase):
@@ -230,6 +296,66 @@ class QueueWorkerSweeperStarvationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(reclaim_calls[0][1].startswith("inflight:reclaim:"))
         self.assertEqual(reclaim_calls[0][2], queue_worker.JOB_RECLAIM_TTL)
         self.assertTrue(reclaim_calls[0][3])
+
+
+    async def test_sweep_reclaim_uses_watch_multi_when_eval_unavailable(self):
+        queue_key = "q:in"
+        processing_key = f"{queue_key}:processing"
+        stale = json.dumps({"chat_id": 21, "msg_id": 22})
+
+        fake_redis = _FakeRedis(
+            processing_key=processing_key,
+            queue_key=queue_key,
+            processing_items=[stale],
+            job_values={},
+            eval_unavailable=True,
+        )
+
+        with patch.object(queue_worker.time, "time", return_value=1000), patch.object(
+            queue_worker.os, "getpid", return_value=123
+        ):
+            await queue_worker._sweep_processing(
+                fake_redis,
+                queue_key,
+                processing_key,
+                window_index=0,
+                batch=10,
+                list_len=1,
+            )
+
+        self.assertEqual(fake_redis.lists[processing_key], [])
+        self.assertEqual(fake_redis.lists[queue_key], [stale])
+
+    async def test_sweep_reclaim_does_not_lose_item_when_non_atomic_push_would_crash(self):
+        queue_key = "q:in"
+        processing_key = f"{queue_key}:processing"
+        stale = json.dumps({"chat_id": 11, "msg_id": 12})
+
+        fake_redis = _FakeRedis(
+            processing_key=processing_key,
+            queue_key=queue_key,
+            processing_items=[stale],
+            job_values={},
+            fail_non_atomic_push=True,
+        )
+
+        with patch.object(queue_worker.time, "time", return_value=1000), patch.object(
+            queue_worker.os, "getpid", return_value=123
+        ):
+            await queue_worker._sweep_processing(
+                fake_redis,
+                queue_key,
+                processing_key,
+                window_index=0,
+                batch=10,
+                list_len=1,
+            )
+
+        in_processing = stale in fake_redis.lists[processing_key]
+        in_queue = stale in fake_redis.lists[queue_key]
+        self.assertTrue(in_processing or in_queue)
+        self.assertFalse(in_processing and in_queue)
+        self.assertGreaterEqual(len(fake_redis.eval_calls), 1)
 
 
 if __name__ == "__main__":
