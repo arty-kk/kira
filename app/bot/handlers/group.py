@@ -317,6 +317,26 @@ def _mentions_other_user(message: types.Message) -> bool:
     return False
 
 
+def _resolve_autoreply_trigger(
+    *,
+    is_channel: bool,
+    mentioned: bool,
+    mentions_other: bool,
+    has_content_signal: bool,
+    is_battle_cmd_to_us: bool,
+    autoreply_on_topic: bool,
+) -> str | None:
+    if is_channel:
+        return "channel_post"
+    if mentions_other:
+        return None
+    if mentioned or is_battle_cmd_to_us:
+        return "mention"
+    if autoreply_on_topic and has_content_signal:
+        return "check_on_topic"
+    return None
+
+
 def _is_channel_post(message: Message) -> bool:
     return bool(
         (message.sender_chat and message.sender_chat.type == ChatType.CHANNEL)
@@ -803,22 +823,22 @@ async def on_group_message(message: Message) -> None:
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
 
-        trigger: str | None = None
-        if is_channel:
-            trigger = "channel_post"
-        elif mentioned or is_battle_cmd_to_us:
-            trigger = "mention"
-        else:
-            if mentions_other:
-                return
-            if AUTOREPLY_ON_TOPIC and raw_text and not mentioned and not mentions_other and not is_battle_cmd_to_us:
-                trigger = "check_on_topic"
-                logger.info(
-                    "group check_on_topic: chat=%s user=%s msg_id=%s",
-                    cid,
-                    (message.from_user.id if message.from_user else None),
-                    message.message_id,
-                )
+        trigger = _resolve_autoreply_trigger(
+            is_channel=is_channel,
+            mentioned=mentioned,
+            mentions_other=mentions_other,
+            has_content_signal=bool(raw_text),
+            is_battle_cmd_to_us=is_battle_cmd_to_us,
+            autoreply_on_topic=AUTOREPLY_ON_TOPIC,
+        )
+
+        if trigger == "check_on_topic":
+            logger.info(
+                "group check_on_topic: chat=%s user=%s msg_id=%s",
+                cid,
+                (message.from_user.id if message.from_user else None),
+                message.message_id,
+            )
 
         if not trigger:
             return
@@ -953,8 +973,9 @@ async def on_group_voice(message: Message) -> None:
         if message.from_user and message.from_user.is_bot and not is_channel:
             return
         mentioned = _is_mention(message)
+        mentions_other = _mentions_other_user(message)
+        AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
-        trigger: str | None = None
         if is_channel:
             try:
                 if not await is_from_linked_channel(message):
@@ -962,9 +983,15 @@ async def on_group_voice(message: Message) -> None:
             except Exception:
                 logger.exception("linked-channel check failed (voice)")
                 return
-            trigger = "channel_post"
-        elif mentioned:
-            trigger = "mention"
+
+        trigger = _resolve_autoreply_trigger(
+            is_channel=is_channel,
+            mentioned=mentioned,
+            mentions_other=mentions_other,
+            has_content_signal=False,
+            is_battle_cmd_to_us=False,
+            autoreply_on_topic=AUTOREPLY_ON_TOPIC,
+        )
 
         # Voice in groups requires explicit addressing signal.
         # In the current model this is `_is_mention`, which already includes
@@ -1087,16 +1114,14 @@ async def _handle_group_image_message_common(
     mentions_other = _mentions_other_user(message)
     AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
-    trigger: str | None = None
-    if is_channel:
-        trigger = "channel_post"
-    elif mentioned:
-        trigger = "mention"
-    else:
-        if mentions_other:
-            return
-        if AUTOREPLY_ON_TOPIC and caption:
-            trigger = "check_on_topic"
+    trigger = _resolve_autoreply_trigger(
+        is_channel=is_channel,
+        mentioned=mentioned,
+        mentions_other=mentions_other,
+        has_content_signal=bool(caption),
+        is_battle_cmd_to_us=False,
+        autoreply_on_topic=AUTOREPLY_ON_TOPIC,
+    )
 
     if not trigger:
         return
