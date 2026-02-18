@@ -196,6 +196,63 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         check_light_mock.assert_awaited_once()
         check_deep_mock.assert_awaited_once()
 
+
+    async def test_handle_passive_moderation_skips_private_chat_by_chat_id_user_id(self) -> None:
+        fake_redis = _FakeRedis()
+        check_light_mock = AsyncMock(return_value="flood")
+        check_deep_mock = AsyncMock(return_value=True)
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "check_light", check_light_mock),
+            patch.object(moderation, "check_deep", check_deep_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=42,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+
+
+    async def test_handle_passive_moderation_skips_private_chat_by_message_type(self) -> None:
+        fake_redis = _FakeRedis()
+        check_light_mock = AsyncMock(return_value="flood")
+        check_deep_mock = AsyncMock(return_value=True)
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=42, type=moderation.ChatType.PRIVATE),
+            from_user=types.SimpleNamespace(id=42),
+            message_id=77,
+        )
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "check_light", check_light_mock),
+            patch.object(moderation, "check_deep", check_deep_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=42,
+                message=message,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+
     async def test_handle_passive_moderation_returns_error_and_records_error_state_on_exception(self) -> None:
         fake_redis = _FakeRedis()
         analytics_mock = AsyncMock()

@@ -214,6 +214,11 @@ async def handle_passive_moderation(
     if not ( (message and getattr(message, "from_user", None)) or user_id ):
         return "clean"
 
+    if message is not None and getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE:
+        return "clean"
+    if message is None and user_id is not None and int(chat_id) == int(user_id):
+        return "clean"
+
     normalized_source = (source or "user").strip().lower()
     allowed_sources = {"user", "bot", "channel"}
     if normalized_source not in allowed_sources:
