@@ -78,6 +78,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
                 ents=[],
                 is_channel=False,
                 user_id_val=42,
+                is_comment_context=False,
             )
 
         moderation_payload = delay_mock.call_args.args[0]
@@ -104,12 +105,13 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
                 ents=[],
                 is_channel=True,
                 user_id_val=99,
+                is_comment_context=True,
             )
 
         moderation_payload = delay_mock.call_args.args[0]
         self.assertEqual(moderation_payload["source"], "channel")
         self.assertNotIn("is_channel_post", moderation_payload)
-        self.assertFalse(moderation_payload["is_comment_context"])
+        self.assertTrue(moderation_payload["is_comment_context"])
 
 class GroupCommentContextTests(unittest.TestCase):
     def test_is_comment_context_detects_linked_chat_message(self) -> None:
@@ -120,7 +122,7 @@ class GroupCommentContextTests(unittest.TestCase):
             is_automatic_forward=False,
         )
 
-        self.assertTrue(group._is_comment_context(message, is_channel=False))
+        self.assertTrue(group.resolve_message_moderation_context(message) == "comment")
 
     def test_is_comment_context_false_for_regular_group_message(self) -> None:
         message = types.SimpleNamespace(
@@ -130,7 +132,7 @@ class GroupCommentContextTests(unittest.TestCase):
             is_automatic_forward=False,
         )
 
-        self.assertFalse(group._is_comment_context(message, is_channel=False))
+        self.assertFalse(group.resolve_message_moderation_context(message) == "comment")
 
 
 

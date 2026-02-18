@@ -13,6 +13,7 @@ os.environ.setdefault("REDIS_URL_VECTOR", "redis://localhost:6379/2")
 from aiogram.enums import ChatType
 
 from app.bot.handlers import group, moderation
+from app.bot.handlers.moderation_context import resolve_message_moderation_context
 
 
 class DiscussionCommentIntegrationTests(unittest.IsolatedAsyncioTestCase):
@@ -110,6 +111,32 @@ class DiscussionCommentIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(handled)
         flag_mock.assert_not_awaited()
         delete_mock.assert_not_awaited()
+
+    def test_sync_and_async_receive_same_comment_context(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            message_id=654,
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        sync_context = resolve_message_moderation_context(message, from_linked=True)
+
+        with patch.object(group.passive_moderate, "delay") as delay_mock:
+            group._dispatch_passive_moderation(
+                message,
+                payload={},
+                text="discussion comment",
+                ents=[],
+                is_channel=False,
+                user_id_val=42,
+                is_comment_context=(sync_context == "comment"),
+            )
+
+        moderation_payload = delay_mock.call_args.args[0]
+        self.assertEqual(sync_context, "comment")
+        self.assertEqual(moderation_payload["is_comment_context"], sync_context == "comment")
 
 
 if __name__ == "__main__":

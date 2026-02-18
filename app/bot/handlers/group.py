@@ -24,6 +24,7 @@ from app.bot.components.dispatcher import dp
 import app.bot.components.constants as consts
 from app.bot.components.constants import redis_client
 from app.bot.handlers.moderation import apply_moderation_filters, is_from_linked_channel
+from app.bot.handlers.moderation_context import resolve_message_moderation_context
 from app.bot.i18n import t
 from app.bot.utils.debouncer import buffer_message_for_response
 from app.bot.utils.telegram_safe import delete_message_safe, send_message_safe
@@ -536,21 +537,23 @@ async def _push_group_stm_and_recent(
         logger.debug("append_group_recent failed", exc_info=True)
 
 
-def _is_comment_context(message: Message, *, is_channel: bool) -> bool:
-    sender_chat = getattr(message, "sender_chat", None)
-    forward_from_chat = getattr(message, "forward_from_chat", None)
-    return bool(
-        not is_channel and (
-            getattr(message, "is_automatic_forward", False)
-            or (sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL)
-            or (forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL)
-            or getattr(message.chat, "linked_chat_id", None)
-        )
-    )
+async def _resolve_group_comment_context(message: Message) -> bool:
+    from_linked = False
+    with contextlib.suppress(Exception):
+        from_linked = await is_from_linked_channel(message)
+    return resolve_message_moderation_context(message, from_linked=from_linked) == "comment"
 
 
-def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, ents: List[dict], is_channel: bool, user_id_val: int) -> None:
-    is_comment_context = _is_comment_context(message, is_channel=is_channel)
+def _dispatch_passive_moderation(
+    message: Message,
+    payload: dict,
+    *,
+    text: str,
+    ents: List[dict],
+    is_channel: bool,
+    user_id_val: int,
+    is_comment_context: bool,
+) -> None:
 
     moderation_payload = prepare_moderation_payload(
         {
@@ -852,7 +855,7 @@ async def on_group_message(message: Message) -> None:
         )
 
         channel = _channel_obj(message)
-        is_comment_context = _is_comment_context(message, is_channel=is_channel)
+        is_comment_context = await _resolve_group_comment_context(message)
 
         payload = {
             "chat_id": cid,
@@ -901,6 +904,7 @@ async def on_group_message(message: Message) -> None:
             ents=ents,
             is_channel=is_channel,
             user_id_val=user_id_val,
+            is_comment_context=is_comment_context,
         )
 
     except RedisError as e:
@@ -985,6 +989,7 @@ async def on_group_voice(message: Message) -> None:
                 await _store_quote_context(cid, reply_to_id, quoted, role="assistant", speaker_id=bot_sid)
 
         ents = _extract_entities(message)
+        is_comment_context = await _resolve_group_comment_context(message)
 
         payload = {
             "chat_id": cid,
@@ -1025,6 +1030,7 @@ async def on_group_voice(message: Message) -> None:
             ents=ents,
             is_channel=is_channel,
             user_id_val=user_id_val,
+            is_comment_context=is_comment_context,
         )
 
     except RedisError as e:
@@ -1107,7 +1113,7 @@ async def _handle_group_image_message_common(
 
     channel = _channel_obj(message)
 
-    is_comment_context = _is_comment_context(message, is_channel=is_channel)
+    is_comment_context = await _resolve_group_comment_context(message)
 
     preprocess_payload = {
         "chat_id": cid,
