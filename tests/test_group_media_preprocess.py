@@ -166,6 +166,7 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_is_channel_post", return_value=False),
             patch.object(group, "is_from_linked_channel", linked_check),
             patch.object(group, "buffer_message_for_response", buffer_mock),
+            patch.object(group, "record_activity", AsyncMock()),
         ):
             await group.on_group_voice(message)
 
@@ -218,6 +219,41 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
         payload = buffer_mock.call_args.args[0]
         self.assertEqual(payload["trigger"], "channel_post")
         self.assertTrue(payload["is_channel_post"])
+
+    async def test_on_group_voice_skips_non_channel_without_mention_even_with_on_topic(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=882,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            voice=types.SimpleNamespace(file_id="voice-file-id"),
+            reply_to_message=None,
+            entities=[],
+            caption_entities=[],
+            text=None,
+            caption=None,
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        buffer_mock = Mock()
+        linked_check = AsyncMock(return_value=True)
+        with (
+            patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_update_presence", AsyncMock()),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_is_mention", return_value=False),
+            patch.object(group, "is_from_linked_channel", linked_check),
+            patch.object(group, "buffer_message_for_response", buffer_mock),
+            patch.object(group, "record_activity", AsyncMock()),
+        ):
+            await group.on_group_voice(message)
+
+        buffer_mock.assert_not_called()
+        linked_check.assert_not_called()
 
 
 

@@ -952,7 +952,6 @@ async def on_group_voice(message: Message) -> None:
         is_channel = _is_channel_post(message)
         if message.from_user and message.from_user.is_bot and not is_channel:
             return
-        AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
         mentioned = _is_mention(message)
 
         trigger: str | None = None
@@ -966,9 +965,10 @@ async def on_group_voice(message: Message) -> None:
             trigger = "channel_post"
         elif mentioned:
             trigger = "mention"
-        else:
-            if AUTOREPLY_ON_TOPIC:
-                trigger = "check_on_topic"
+
+        # Voice in groups requires explicit addressing signal.
+        # In the current model this is `_is_mention`, which already includes
+        # replies to bot messages.
 
         if not trigger:
             return
