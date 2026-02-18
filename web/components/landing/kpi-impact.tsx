@@ -16,7 +16,7 @@ const content: Record<'ru' | 'en', { eyebrow: string; title: string; metrics: Me
     eyebrow: 'KPI влияние',
     title: 'Метрики эффекта: выручка, удержание, операционная эффективность и надежность',
     metrics: [
-      { name: 'Монетизация', value: '+27%', progress: 82, note: 'Рост платящих сегментов и ARPPU', trend: 'up' },
+      { name: 'P2P вовлечение', value: '+31%', progress: 84, note: 'Рост вовлеченных диалогов в бренд-каналах', trend: 'up' },
       { name: 'Удержание', value: '+19%', progress: 74, note: 'Возврат и глубина диалога', trend: 'up' },
       { name: 'Ops-нагрузка', value: '-34%', progress: 66, note: 'Снижение ручных операций', trend: 'down' },
       { name: 'Надежность', value: '99.95%', progress: 96, note: 'Стабильность API и очередей', trend: 'stable' }
@@ -26,7 +26,7 @@ const content: Record<'ru' | 'en', { eyebrow: string; title: string; metrics: Me
     eyebrow: 'KPI Impact',
     title: 'Impact metrics: revenue, retention, ops efficiency, and reliability',
     metrics: [
-      { name: 'Monetization', value: '+27%', progress: 82, note: 'Paid segment and ARPPU growth', trend: 'up' },
+      { name: 'P2P engagement', value: '+31%', progress: 84, note: 'Growth of engaged dialogues in brand channels', trend: 'up' },
       { name: 'Retention', value: '+19%', progress: 74, note: 'Return rate and dialogue depth', trend: 'up' },
       { name: 'Ops load', value: '-34%', progress: 66, note: 'Reduction of manual operations', trend: 'down' },
       { name: 'Reliability', value: '99.95%', progress: 96, note: 'API and queue stability', trend: 'stable' }
@@ -53,7 +53,7 @@ export function KpiImpact({ lang }: { lang: 'ru' | 'en' }) {
             whileInView={reducedMotion ? {} : { y: [10, 0], opacity: [0.82, 1] }}
             transition={{ duration: 0.35, delay: idx * 0.06 }}
             viewport={{ once: true, amount: 0.2 }}
-            className="surface-card relative flex min-h-[190px] flex-col overflow-hidden rounded-xl p-5"
+            className={`surface-card relative flex min-h-[190px] flex-col overflow-hidden rounded-xl p-5 ${idx === 1 ? 'border-sky-400/35' : idx === 2 ? 'border-violet-400/35' : ''}`}
           >
             <div className="pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
 

@@ -39,11 +39,11 @@ const pairs: Record<'ru' | 'en', ShiftPair[]> = {
       afterNotes: ['Очереди и правила приоритета', 'Контролируемый безопасный ответ']
     },
     {
-      label: 'Монетизация',
-      signal: 'Монетизация Stars + сценарии офферов + контроль ошибок',
-      before: 'Платежные триггеры без сегментации',
-      after: 'Динамические офферы по стадии пользователя с управляемой конверсией',
-      impact: 'Stars ARPPU +27%',
+      label: 'Осведомление',
+      signal: 'P2P-коммуникации + полезные касания + контроль качества диалога',
+      before: 'Шаблонные объявления без персонального контекста',
+      after: 'Контекстные касания, которые повышают доверие и удерживают внимание',
+      impact: 'Reach depth +26%',
       beforeNotes: ['Оффер не учитывает стадию', 'Слабая связка с удержанием'],
       afterNotes: ['Оффер привязан к поведенческому этапу', 'Контур конверсии с проверкой ошибок']
     }
@@ -68,11 +68,11 @@ const pairs: Record<'ru' | 'en', ShiftPair[]> = {
       afterNotes: ['Queue routing with priorities', 'Controlled safe-fallback behavior']
     },
     {
-      label: 'Monetization',
-      signal: 'Stars + offer scenarios + error control',
-      before: 'Payment prompts without segmentation',
-      after: 'Dynamic offers by lifecycle stage with managed conversion',
-      impact: 'Stars ARPPU +27%',
+      label: 'Awareness',
+      signal: 'P2P communication + useful touches + dialogue quality control',
+      before: 'Template announcements with no personal context',
+      after: 'Context-aware touches that build trust and keep attention',
+      impact: 'Reach depth +26%',
       beforeNotes: ['Offer ignores lifecycle stage', 'Weak retention-to-revenue linkage'],
       afterNotes: ['Offers tied to behavior stage', 'Conversion contour with error control']
     }
@@ -111,7 +111,7 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
     <Section
       id="shift"
       eyebrow={lang === 'ru' ? 'Проблема → Сдвиг' : 'Problem → Shift'}
-      title={lang === 'ru' ? 'От хаотичных ответов к управляемому росту через сценарии и контекст' : 'From chaotic bot replies to managed growth through scenarios and context'}
+      title={lang === 'ru' ? 'От хаотичных ответов к управляемому диалогу' : 'From chaotic replies to a managed dialogue loop'}
     >
       <div ref={containerRef} className="grid gap-4 md:grid-cols-3">
         {data.map((pair, idx) => (
@@ -122,7 +122,13 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
             onMouseEnter={() => setActive(idx)}
             onFocus={() => setActive(idx)}
             className={`surface-card group relative flex min-h-[120px] flex-col overflow-hidden rounded-xl p-5 text-left transition-all ${
-              active === idx ? 'border-primary shadow-glow' : 'opacity-90 hover:opacity-100'
+              active === idx
+                ? idx === 0
+                  ? 'border-primary shadow-glow'
+                  : idx === 1
+                    ? 'border-sky-400/70 shadow-[0_0_32px_rgba(56,189,248,0.2)]'
+                    : 'border-violet-400/70 shadow-[0_0_32px_rgba(167,139,250,0.2)]'
+                : 'opacity-90 hover:opacity-100'
             }`}
           >
             <div className="flex items-start justify-between gap-2">

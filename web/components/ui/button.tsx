@@ -24,7 +24,8 @@ export function Button({ children, variant = 'primary', className = '', type = '
       type={type}
       onClick={onClick}
       whileHover={{ y: -2 }}
-      transition={{ duration: 0.2 }}
+      whileTap={{ scale: 0.97, y: 1 }}
+      transition={{ duration: 0.16 }}
       className={`${base} ${variantClass} ${className}`}
     >
       {children}

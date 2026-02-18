@@ -116,3 +116,17 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
+
+
+button,
+[role="button"],
+a.inline-flex {
+  transition: transform 0.14s ease, filter 0.14s ease;
+}
+
+button:active,
+[role="button"]:active,
+a.inline-flex:active {
+  transform: translateY(1px) scale(0.985);
+  filter: brightness(1.06);
+}

@@ -22,11 +22,11 @@ const copy = {
   ru: {
     eyebrow: 'AI-персоны для Telegram и социальных каналов',
     title: 'Чат-персоны с эмоциональным интеллектом для Telegram и API-каналов',
-    text: 'Создаём живых собеседников, бренд-аватаров и комьюнити-менеджеров с памятью, адаптивной эмоциональностью и контекстным вовлечением 24/7.',
-    quote: 'Не просто боты: персоны, которые чувствуют контекст и ведут к целевому действию.',
+    text: 'AI-персона держит p2p-диалог в каналах бренда: вовлекает, информирует и снимает ручную нагрузку команды 24/7.',
+    quote: 'Не бот-скрипт, а живая persona-механика для роста комьюнити.',
     ctaMain: 'Запросить демо',
     ctaAlt: 'Как это работает',
-    m1: 'Монетизация',
+    m1: 'P2P-вовлечение',
     m2: 'Удержание',
     m3: 'Ops-нагрузка',
     pillars: ['Adaptive Emotionality', 'AI Reasoning', 'Multilevel Memory', 'Hybrid RAG']
@@ -34,11 +34,11 @@ const copy = {
   en: {
     eyebrow: 'AI personas for Telegram and social channels',
     title: 'Emotionally intelligent chat personas for Telegram and API channels',
-    text: 'We build living conversational personas, brand avatars, and community managers with memory, adaptive emotionality, and contextual engagement 24/7.',
-    quote: 'Not just bots: personas that read context and move users to target actions.',
+    text: 'The AI persona keeps p2p dialogue active in brand channels: engages, informs, and removes manual team load 24/7.',
+    quote: 'Not bot scripts — a living persona layer for community growth.',
     ctaMain: 'Request demo',
     ctaAlt: 'See how it works',
-    m1: 'Monetization',
+    m1: 'P2P engagement',
     m2: 'Retention',
     m3: 'Ops load',
     pillars: ['Adaptive Emotionality', 'AI Reasoning', 'Multilevel Memory', 'Hybrid RAG']
@@ -55,10 +55,10 @@ export function Hero({ lang }: { lang: 'ru' | 'en' }) {
   };
 
   return (
-    <section className="relative overflow-hidden section-divider">
+    <section className="relative overflow-hidden">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_16%,_rgba(68,232,197,0.24),_transparent_46%)]" />
 
-      <div className="mx-auto grid min-h-[46vh] w-full max-w-6xl gap-7 px-6 pb-4 pt-2 md:grid-cols-2 md:items-center md:pb-7 md:pt-3">
+      <div className="mx-auto grid min-h-[46vh] w-full max-w-6xl gap-7 px-6 pb-4 pt-24 md:grid-cols-2 md:items-center md:pb-7 md:pt-28">
         <motion.div
           initial={reducedMotion ? false : { opacity: 0, y: 14 }}
           animate={reducedMotion ? {} : { opacity: 1, y: 0 }}
@@ -79,7 +79,7 @@ export function Hero({ lang }: { lang: 'ru' | 'en' }) {
             ))}
           </div>
           <div className="grid max-w-lg grid-cols-3 gap-3 text-xs text-muted">
-            <div className="surface-card rounded-lg p-3"><p className="text-primary">{t.m1}</p><p className="mt-1">+27%</p></div>
+            <div className="surface-card rounded-lg p-3"><p className="text-primary">{t.m1}</p><p className="mt-1">+31%</p></div>
             <div className="surface-card rounded-lg p-3"><p className="text-primary">{t.m2}</p><p className="mt-1">+19%</p></div>
             <div className="surface-card rounded-lg p-3"><p className="text-primary">{t.m3}</p><p className="mt-1">-34%</p></div>
           </div>

@@ -6,9 +6,9 @@ import { Section } from '@/components/ui/section';
 const content = {
   ru: {
     eyebrow: 'Ematory Engine',
-    title: 'Поведенческая оркестрация: от входящего сигнала до уместного действия',
+    title: 'От входящего сигнала к устойчивому диалогу в канале',
     label: 'Узел',
-    explain: 'Как Ematory собирает контекст',
+    explain: 'Как строится контур диалога',
     nodes: [
       { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Входящие события', copy: 'Сигналы из Telegram и внешних API собираются в единый поток, где дубли и шум отсекаются на входе.' },
       { id: 'brain', title: 'Ядро персоны', hint: 'Память + контекст', copy: 'Память, контекст и тон бренда формируют уместный ответ в личных и групповых диалогах.' },
@@ -17,9 +17,9 @@ const content = {
   },
   en: {
     eyebrow: 'Ematory Engine',
-    title: 'Behavioral orchestration: from incoming signal to context-aware action',
+    title: 'From incoming signal to reliable channel dialogue',
     label: 'Node',
-    explain: 'How Ematory composes context',
+    explain: 'How the dialogue loop is composed',
     nodes: [
       { id: 'tg-api', title: 'Telegram / API ingress', hint: 'Incoming events', copy: 'Signals from Telegram and external APIs are merged into one stream where duplicates and noise are filtered at ingress.' },
       { id: 'brain', title: 'Persona Brain', hint: 'Memory + context', copy: 'Memory, context, and brand tone generate context-aware replies for private and group conversations.' },

@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { AmbientBackground } from '@/components/landing/ambient-background';
+import { BehavioralBoosts } from '@/components/landing/behavioral-boosts';
 import { CapabilityProof } from '@/components/landing/capability-proof';
+import { ComparisonTable } from '@/components/landing/comparison-table';
 import { EngineMap } from '@/components/landing/engine-map';
 import { FinalCta } from '@/components/landing/final-cta';
 import { Hero } from '@/components/landing/hero';
@@ -18,6 +20,7 @@ const copy = {
     product: 'Продукт',
     scenarios: 'Сценарии',
     metrics: 'Метрики',
+    compare: 'Сравнение',
     contact: 'Контакты',
     requestDemo: 'Запросить демо',
     privacy: 'Политика',
@@ -31,6 +34,7 @@ const copy = {
     product: 'Product',
     scenarios: 'Scenarios',
     metrics: 'Metrics',
+    compare: 'Comparison',
     contact: 'Contact',
     requestDemo: 'Request demo',
     privacy: 'Privacy',
@@ -47,17 +51,18 @@ export default function HomePage() {
   const t = copy[lang];
 
   return (
-    <main>
+    <main className="relative">
       <AmbientBackground />
       <ScrollAnalytics />
 
-      <header className="mx-auto mt-3 flex w-full max-w-6xl items-center justify-between gap-3 rounded-2xl border border-slate-700/60 bg-slate-950/55 px-4 py-3 backdrop-blur md:px-6">
+      <header className="fixed left-1/2 top-3 z-40 flex w-[min(96vw,72rem)] -translate-x-1/2 items-center justify-between gap-3 rounded-2xl border border-slate-700/60 bg-slate-950/55 px-4 py-3 backdrop-blur md:px-6">
         <Link href="/" className="text-sm font-semibold tracking-[0.16em] text-primary">SYNCHATICA</Link>
 
         <nav className="hidden items-center gap-1 text-sm text-muted md:flex">
           <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#shift">{t.product}</a>
           <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#capability">{t.scenarios}</a>
           <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#kpi">{t.metrics}</a>
+          <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#comparison">{t.compare}</a>
           <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#final-cta">{t.contact}</a>
         </nav>
 
@@ -85,8 +90,10 @@ export default function HomePage() {
       <Hero lang={lang} />
       <ProblemShift lang={lang} />
       <EngineMap lang={lang} />
+      <BehavioralBoosts lang={lang} />
       <CapabilityProof lang={lang} />
       <KpiImpact lang={lang} />
+      <ComparisonTable lang={lang} />
       <FinalCta lang={lang} />
 
       <footer className="mx-auto mt-8 w-full max-w-6xl section-divider px-6 py-8 text-sm text-muted">
