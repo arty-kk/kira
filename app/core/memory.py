@@ -91,6 +91,7 @@ WARN_MS = int(getattr(settings, "REDIS_SLOW_WARN_MS", 100))
 
 READONLY_OR_IDEMPOTENT_COMMANDS = {
     "get", "mget", "hget", "hgetall", "lrange", "llen", "ttl", "exists", "zrange", "smembers", "scan", "scan_iter",
+    "delete", "unlink", "zrem", "hdel", "srem",
 }
 
 NON_IDEMPOTENT_COMMANDS = {
