@@ -1912,10 +1912,17 @@ async def _async_main() -> None:
             done, pending = await asyncio.wait(PROCESSING_TASKS, timeout=15)
             if pending:
                 logger.info("Cancelling %d stuck job(s)...", len(pending))
-                for t in list(pending):
+                pending_tasks = list(pending)
+                for t in pending_tasks:
                     t.cancel()
-                with suppress(asyncio.CancelledError):
-                    await asyncio.gather(*pending)
+                results = await asyncio.gather(*pending_tasks, return_exceptions=True)
+                for task, result in zip(pending_tasks, results):
+                    if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                        logger.warning(
+                            "Task failed during shutdown drain: task=%s",
+                            repr(task),
+                            exc_info=(type(result), result, result.__traceback__),
+                        )
     except Exception as e:
         logger.warning("Error while draining tasks on shutdown: %s", e)
 
