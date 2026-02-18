@@ -165,8 +165,7 @@ class TextAnalyzer:
         cleaned_ctx_dialog = ""
         if ctx_dialog:
             # remove timestamps like [12:34] / [12:34:56]
-            cleaned_ctx_dialog = await asyncio.to_thread(
-                re.sub,
+            cleaned_ctx_dialog = re.sub(
                 r"\[\d{2}:\d{2}(?::\d{2})?\]",
                 "[]",
                 ctx_dialog,

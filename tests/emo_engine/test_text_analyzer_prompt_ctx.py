@@ -50,6 +50,30 @@ class TextAnalyzerPromptCtxTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("[12:34:56]", passed_input)
         self.assertEqual(passed_input.count(current_text), 1)
 
+    async def test_analyze_text_ctx_prompt_timestamp_cleanup_equivalence(self) -> None:
+        analyzer = text_analyzer.TextAnalyzer()
+        current_text = "Current line should stay intact"
+        scenarios = {
+            "short": "[12:34] User: hi",
+            "medium": "[12:34] User: hi\n[12:34:56] Assistant: hello\n[21:09] User: got it",
+        }
+
+        for name, ctx_dialog in scenarios.items():
+            with self.subTest(name=name):
+                mock_call = AsyncMock(return_value=SimpleNamespace())
+                with patch.object(text_analyzer, "_call_openai_with_retry", mock_call), patch.object(
+                    text_analyzer,
+                    "_get_output_text",
+                    return_value='{"valence":0,"arousal":0.4,"dominance":0.4}',
+                ):
+                    await analyzer.analyze_text(current_text, ctx_dialog=ctx_dialog)
+
+                passed_input = mock_call.await_args.kwargs["input"]
+                self.assertIn("[]", passed_input)
+                self.assertNotIn("[12:34]", passed_input)
+                self.assertNotIn("[12:34:56]", passed_input)
+                self.assertNotIn("[21:09]", passed_input)
+
 
 if __name__ == "__main__":
     unittest.main()
