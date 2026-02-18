@@ -148,6 +148,21 @@ return allowed
 """
 _CHAT_BUCKET_LUA = _TG_BUCKET_LUA
 
+_REQUEUE_ON_START_LUA = """
+local processing_key = KEYS[1]
+local queue_key = KEYS[2]
+
+local pending = redis.call('LRANGE', processing_key, 0, -1)
+local moved = #pending
+
+if moved > 0 then
+  redis.call('RPUSH', queue_key, unpack(pending))
+  redis.call('LTRIM', processing_key, moved, -1)
+end
+
+return moved
+"""
+
 def _mk_ctx_payload(role: str, text: str, *, speaker_id: int | None = None) -> str:
     r = (role or "").strip().lower()
     if r not in ("user", "assistant", "system"):
@@ -1741,11 +1756,8 @@ async def queue_worker(stop_evt: asyncio.Event) -> None:
     requeue_lock_key = f"{processing_key}:requeue_lock"
     try:
         if await REDIS_QUEUE.set(requeue_lock_key, os.getpid(), nx=True, ex=60):
-            pending = await REDIS_QUEUE.lrange(processing_key, 0, -1)
-            if pending:
-                await REDIS_QUEUE.rpush(queue_key, *pending)
-                await REDIS_QUEUE.delete(processing_key)
-            logger.info("Requeue on start done by pid=%s", os.getpid())
+            moved = await REDIS_QUEUE.eval(_REQUEUE_ON_START_LUA, 2, processing_key, queue_key)
+            logger.info("Requeue on start done by pid=%s moved=%s", os.getpid(), moved)
         else:
             logger.info("Skip requeue on start (another worker holds the lock)")
     except Exception as e:

@@ -132,13 +132,7 @@ class _BootRedis:
     async def set(self, *_args, **_kwargs):
         return True
 
-    async def lrange(self, *_args, **_kwargs):
-        return []
-
-    async def rpush(self, *_args, **_kwargs):
-        return 0
-
-    async def delete(self, *_args, **_kwargs):
+    async def eval(self, *_args, **_kwargs):
         return 0
 
     async def brpoplpush(self, *_args, **_kwargs):
@@ -220,6 +214,49 @@ class QueueWorkerRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         close_redis_pools.assert_not_awaited()
         get_redis_queue.assert_not_called()
+
+    async def test_startup_requeue_uses_atomic_eval_without_losing_concurrent_processing_items(self):
+        stop_evt = queue_worker.asyncio.Event()
+
+        class _AtomicRequeueRedis(_BootRedis):
+            def __init__(self):
+                self.lists = {
+                    "q:in": ["queued"],
+                    "q:in:processing": ["p1", "p2"],
+                }
+                self.last_eval_moved = None
+
+            async def eval(self, _script, _numkeys, processing_key, queue_key):
+                pending = list(self.lists.get(processing_key, []))
+                moved = len(pending)
+
+                if pending:
+                    self.lists.setdefault(queue_key, []).extend(pending)
+
+                # Конкурентная запись во время startup requeue: новый inflight элемент.
+                self.lists.setdefault(processing_key, []).append("new-inflight")
+
+                # Атомарная операция должна удалять только прочитанные элементы.
+                self.lists[processing_key] = self.lists.get(processing_key, [])[moved:]
+                self.last_eval_moved = moved
+                return moved
+
+            async def brpoplpush(self, *_args, **_kwargs):
+                stop_evt.set()
+                return None
+
+        redis = _AtomicRequeueRedis()
+        queue_worker.REDIS_QUEUE = redis
+
+        async def _fake_sweeper(stop_evt_arg, *_args, **_kwargs):
+            await stop_evt_arg.wait()
+
+        with patch.object(queue_worker, "_sweeper_loop", _fake_sweeper):
+            await queue_worker.queue_worker(stop_evt)
+
+        self.assertEqual(redis.last_eval_moved, 2)
+        self.assertEqual(redis.lists["q:in"], ["queued", "p1", "p2"])
+        self.assertEqual(redis.lists["q:in:processing"], ["new-inflight"])
 
 
 if __name__ == "__main__":
