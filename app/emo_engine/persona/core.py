@@ -398,14 +398,15 @@ class Persona:
         self._restored_evt.set()
 
 
-    async def _start_bg_worker(self) -> None:
+    async def _start_bg_worker(self) -> bool:
         if self._worker_task and not self._worker_task.done():
-            return
+            return True
         if getattr(self, "_bg_queue", None) is None:
             logger.error("persona: cannot start bg_worker because _bg_queue is None")
-            return
+            return False
         self._bg_stop = False
         self._worker_task = asyncio.create_task(self._bg_worker(), name="persona-bg-worker")
+        return self._worker_task is not None and not self._worker_task.done()
 
     async def _ensure_background_started(self) -> None:
         try:
@@ -430,9 +431,12 @@ class Persona:
             if self._bg_started and self._worker_task and not self._worker_task.done():
                 return
 
-            await self._start_bg_worker()
-            self.spawn_coro(self._notify_ready, name="persona-notify-ready")
-            self._bg_started = True
+            started = await self._start_bg_worker()
+            if started:
+                self.spawn_coro(self._notify_ready, name="persona-notify-ready")
+                self._bg_started = True
+            else:
+                self._bg_started = False
 
     def tweak(self, knob: str, delta: float) -> None:
         if knob not in COGNITIVE_METRICS:
