@@ -113,7 +113,7 @@ class _TransactionalCreateDb:
 
 
 class ApiKeysCacheAuthTests(unittest.TestCase):
-    def test_cache_hit_active_true_validates_in_db(self) -> None:
+    def test_cache_hit_active_true_returns_cached_api_key_without_db(self) -> None:
         key_hash = "hash-cache-hit"
         redis = _FakeRedis(
             {
@@ -124,8 +124,7 @@ class ApiKeysCacheAuthTests(unittest.TestCase):
                 }
             }
         )
-        db_api_key = api_keys.ApiKey(id=9, user_id=99, key_hash=key_hash, active=True)
-        db = _DbAuthResult(db_api_key)
+        db = _ForbiddenDbExecute()
 
         with (
             mock.patch.object(api_keys, "get_redis", return_value=redis),
@@ -133,14 +132,13 @@ class ApiKeysCacheAuthTests(unittest.TestCase):
         ):
             result = asyncio.run(api_keys.authenticate_key(db, "raw-token"))
 
-        self.assertEqual(db.execute_calls, 1)
         self.assertIsNotNone(result)
-        self.assertEqual(result.id, 9)
-        self.assertEqual(result.user_id, 99)
+        self.assertEqual(result.id, 7)
+        self.assertEqual(result.user_id, 42)
         self.assertEqual(result.key_hash, key_hash)
         self.assertTrue(result.active)
 
-    def test_positive_cache_hit_without_db_record_sets_negative_cache(self) -> None:
+    def test_malformed_positive_cache_falls_back_to_db_and_sets_negative_cache(self) -> None:
         key_hash = "hash-cache-miss"
         redis = _FakeRedis({f"api:key:{key_hash}": {b"active": b"1"}})
         db = _DbAuthResult(None)
@@ -160,6 +158,39 @@ class ApiKeysCacheAuthTests(unittest.TestCase):
             self.assertIn((f"api:key:{key_hash}", max(10, settings.API_KEY_CACHE_NEGATIVE_TTL_SEC)), redis.expire_calls)
         finally:
             settings.API_KEY_CACHE_NEGATIVE_TTL_SEC = original_negative_ttl
+
+    def test_malformed_positive_cache_with_db_hit_recaches_active_key(self) -> None:
+        key_hash = "hash-cache-recovers"
+        redis = _FakeRedis({f"api:key:{key_hash}": {b"active": b"1", b"id": b"bad"}})
+        db_api_key = api_keys.ApiKey(id=13, user_id=88, key_hash=key_hash, active=True)
+        db = _DbAuthResult(db_api_key)
+
+        original_ttl = settings.API_KEY_CACHE_TTL_SEC
+        settings.API_KEY_CACHE_TTL_SEC = 29
+        try:
+            with (
+                mock.patch.object(api_keys, "get_redis", return_value=redis),
+                mock.patch.object(api_keys, "_hash_api_key", return_value=key_hash),
+            ):
+                result = asyncio.run(api_keys.authenticate_key(db, "raw-token"))
+
+            self.assertIsNotNone(result)
+            self.assertEqual(db.execute_calls, 1)
+            self.assertEqual(result.id, 13)
+            self.assertEqual(result.user_id, 88)
+            self.assertIn(
+                (
+                    f"api:key:{key_hash}",
+                    {"id": 13, "user_id": 88, "active": 1},
+                ),
+                redis.hset_calls,
+            )
+            self.assertIn(
+                (f"api:key:{key_hash}", max(10, settings.API_KEY_CACHE_TTL_SEC)),
+                redis.expire_calls,
+            )
+        finally:
+            settings.API_KEY_CACHE_TTL_SEC = original_ttl
 
     def test_deactivation_negative_cache_blocks_without_db(self) -> None:
         key_hash = "hash-negative"

@@ -169,7 +169,19 @@ async def authenticate_key(db, raw_key: str) -> Optional[ApiKey]:
             cached_active = _parse_cached_int("active")
             if cached_active == 0:
                 return None
-            cached_positive = cached_active == 1
+            if cached_active == 1:
+                cached_id = _parse_cached_int("id")
+                cached_user_id = _parse_cached_int("user_id")
+                if cached_id is not None and cached_user_id is not None:
+                    return ApiKey(
+                        id=cached_id,
+                        user_id=cached_user_id,
+                        key_hash=key_hash,
+                        active=True,
+                    )
+                cached_positive = False
+            else:
+                cached_positive = False
         else:
             cached_positive = False
     else:
