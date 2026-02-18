@@ -28,8 +28,16 @@ class _RecordingPersona:
     def __init__(self, owner_id: int):
         self.owner_id = owner_id
         self.apply_calls: list[dict] = []
+        self.reset_calls: int = 0
+        self.last_prefs: dict | None = None
 
-    def apply_overrides(self, prefs: dict):
+    def apply_overrides(self, prefs: dict | None, reset: bool = False):
+        if reset:
+            self.reset_calls += 1
+            self.last_prefs = None
+            return
+        assert prefs is not None
+        self.last_prefs = dict(prefs)
         self.apply_calls.append(dict(prefs))
 
     async def close(self):
@@ -62,6 +70,26 @@ class RegistryUpdateCachedPersonasOwnerFallbackTests(unittest.IsolatedAsyncioTes
 
         self.assertEqual(persona_legacy.apply_calls, [prefs])
         self.assertEqual(persona_direct.apply_calls, [prefs])
+
+    async def test_empty_prefs_resets_overrides_for_all_cached_personas_of_owner(self) -> None:
+        owner_id = 321
+
+        persona_legacy = _RecordingPersona(owner_id=owner_id)
+        persona_direct = _RecordingPersona(owner_id=owner_id)
+        persona_legacy.apply_overrides({"tone": "friendly"})
+        persona_direct.apply_overrides({"tone": "friendly"})
+
+        async with registry._lock:
+            now = registry._now()
+            registry._cache[(1001, 0, 0, "")] = (persona_legacy, now)
+            registry._cache[(1002, owner_id, 0, "")] = (persona_direct, now)
+
+        await registry.update_cached_personas_for_owner(owner_id, {})
+
+        self.assertEqual(persona_legacy.reset_calls, 1)
+        self.assertEqual(persona_direct.reset_calls, 1)
+        self.assertIsNone(persona_legacy.last_prefs)
+        self.assertIsNone(persona_direct.last_prefs)
 
 
 if __name__ == "__main__":

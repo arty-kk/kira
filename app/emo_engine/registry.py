@@ -242,16 +242,25 @@ async def get_persona(
     logger.debug("persona.ready key=%s dt=%.3fs", key, _now() - t0)
     return ret
 
-async def update_cached_personas_for_owner(owner_id: int, prefs: dict) -> None:
-    if not prefs:
+async def update_cached_personas_for_owner(owner_id: int, prefs: dict | None) -> None:
+    """Refresh cached personas for owner.
+
+    prefs is None -> no-op.
+    prefs == {} -> explicit reset of persona overrides.
+    """
+    if prefs is None:
         return
+    is_reset = prefs == {}
     async with _lock:
         now = _now()
         for key, (persona, ts) in list(_cache.items()):
             chat_id, uid, group_flag, profile_key = key
             if uid == owner_id or persona.owner_id == owner_id:
                 try:
-                    persona.apply_overrides(prefs)
+                    if is_reset:
+                        persona.apply_overrides(None, reset=True)
+                    else:
+                        persona.apply_overrides(prefs)
                     _cache[key] = (persona, now)
                 except Exception:
                     logger.debug(
