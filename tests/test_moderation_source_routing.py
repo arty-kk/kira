@@ -69,7 +69,11 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         ai_mock.assert_not_awaited()
 
 class _FakePipe:
+    def __init__(self, set_calls):
+        self._set_calls = set_calls
+
     def set(self, *args, **kwargs):
+        self._set_calls.append((args, kwargs))
         return None
 
     async def execute(self):
@@ -88,12 +92,71 @@ class _FakeRedis:
         self.sadd = AsyncMock()
         self.set = AsyncMock()
         self.zrem = AsyncMock()
+        self.pipeline_set_calls = []
 
     def pipeline(self, transaction=True):
-        return _FakePipe()
+        return _FakePipe(self.pipeline_set_calls)
 
 
 class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_handle_passive_moderation_empty_payload_skips_light_throttle_set(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "check_light", AsyncMock(return_value="clean")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)) as check_deep_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="   ",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "clean")
+        self.assertEqual(fake_redis.pipeline_set_calls, [])
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+
+    async def test_handle_passive_moderation_non_empty_payload_sets_light_throttle(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="clean")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+                is_comment_context=True,
+            )
+
+        self.assertEqual(status, "clean")
+        self.assertEqual(len(fake_redis.pipeline_set_calls), 1)
+        set_args, set_kwargs = fake_redis.pipeline_set_calls[0]
+        self.assertEqual(set_args, ("mod_alert:light:100:42", 1))
+        self.assertEqual(set_kwargs, {"ex": 60, "nx": True})
+
     async def test_handle_passive_moderation_passes_channel_source_as_is(self) -> None:
         fake_redis = _FakeRedis()
         check_light_mock = AsyncMock(return_value="clean")
