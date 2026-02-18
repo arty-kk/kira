@@ -339,7 +339,7 @@ TG_POST_REMOVE_CTA_SYSTEM_PROMPT = (
     "- Верни только переписанный текст."
 )
 TG_POST_IMAGE_SYSTEM_PROMPT = "Generate one image. No text, no logos, no watermarks."
-TG_POST_SYSTEM_FALLBACK = "Ты — Bonnie. Пиши по-русски, коротко и по делу."
+TG_POST_SYSTEM_FALLBACK = "Ты — Kira. Пиши по-русски, коротко и по делу."
 
 TG_POST_DRAFT_USER_PROMPT_TEMPLATE = (
     "{history_block}{story_block}"
@@ -522,9 +522,9 @@ PERSONAL_PING_RULES_COMMON_TEMPLATE = (
     "{generic_rule}Use first-person singular and reference EXACTLY one concrete detail from the history."
 )
 
-# ===== app/services/addons/tg_post_manager.py (_build_bonnie_style_block) =====
-TG_POST_BONNIE_STYLE_TEMPLATE = (
-    "\nТы — Bonnie, женская ИИ-персона проекта Synchatica. Ты ведёшь публичный телеграм-канал о применении "
+# ===== app/services/addons/tg_post_manager.py (_build_kira_style_block) =====
+TG_POST_KIRA_STYLE_TEMPLATE = (
+    "\nТы — Kira, женская ИИ-персона проекта Synchatica. Ты ведёшь публичный телеграм-канал о применении "
     "и развитии ИИ-технологий.\n"
     "Тон: умная редакторка и практик. Главная ценность: превращать шум новостей в понятный смысл и практический вывод.\n\n"
     "Термины:\n"
