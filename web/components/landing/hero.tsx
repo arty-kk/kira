@@ -58,12 +58,12 @@ export function Hero({ lang }: { lang: 'ru' | 'en' }) {
     <section className="relative overflow-hidden section-divider">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_16%,_rgba(68,232,197,0.24),_transparent_46%)]" />
 
-      <div className="mx-auto grid min-h-[52vh] w-full max-w-6xl gap-8 px-6 pb-6 pt-4 md:grid-cols-2 md:items-center md:pb-10 md:pt-6">
+      <div className="mx-auto grid min-h-[46vh] w-full max-w-6xl gap-7 px-6 pb-4 pt-2 md:grid-cols-2 md:items-center md:pb-7 md:pt-3">
         <motion.div
           initial={reducedMotion ? false : { opacity: 0, y: 14 }}
           animate={reducedMotion ? {} : { opacity: 1, y: 0 }}
           transition={{ duration: 0.38 }}
-          className="relative z-10 space-y-5"
+          className="relative z-10 space-y-4 md:space-y-5"
         >
           <p className="text-xs uppercase tracking-[0.2em] text-primary">{t.eyebrow}</p>
           <h1 className="max-w-[14ch] text-4xl font-semibold leading-[1.03] tracking-tight md:text-[3.2rem]">{t.title}</h1>

@@ -8,14 +8,14 @@ const content = {
   ru: {
     eyebrow: 'Финальный шаг',
     title: 'Готовы посмотреть Synchatica на вашем кейсе?',
-    text: 'Оставьте рабочий email — покажем демо с ролью персоны, памятью, эмоциональной адаптацией и модерацией под ваш кейс.',
+    text: 'Оставьте рабочий email — покажем, как Synchatica встраивает AI-персону в ваш Telegram/API-контур: память, контекстный тон и управляемая модерация 24/7.',
     placeholder: 'Рабочий email',
     cta: 'Запросить демо'
   },
   en: {
     eyebrow: 'Final CTA',
     title: 'Ready to see Synchatica on your use case?',
-    text: 'Leave your work email and we will prepare a focused demo with persona role, memory, emotional adaptation, and moderation for your use case.',
+    text: 'Leave your work email and we will show how Synchatica plugs an AI persona into your Telegram/API flow with memory, context-aware tone, and managed moderation 24/7.',
     placeholder: 'Work email',
     cta: 'Request demo'
   }

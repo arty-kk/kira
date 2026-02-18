@@ -53,9 +53,8 @@ export function KpiImpact({ lang }: { lang: 'ru' | 'en' }) {
             whileInView={reducedMotion ? {} : { y: [10, 0], opacity: [0.82, 1] }}
             transition={{ duration: 0.35, delay: idx * 0.06 }}
             viewport={{ once: true, amount: 0.2 }}
-            className="surface-card relative flex min-h-[220px] flex-col overflow-hidden rounded-xl p-5"
+            className="surface-card relative flex min-h-[190px] flex-col overflow-hidden rounded-xl p-5"
           >
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_80%_10%,rgba(68,232,197,0.12),transparent_42%)]" />
             <div className="pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-primary/80 to-transparent" />
 
             <div className="relative z-10 flex items-center justify-between gap-2">
@@ -68,7 +67,7 @@ export function KpiImpact({ lang }: { lang: 'ru' | 'en' }) {
             <p className="relative z-10 mt-4 text-4xl font-semibold leading-none text-primary">{metric.value}</p>
             <p className="relative z-10 mt-3 min-h-[44px] text-sm leading-relaxed text-muted">{metric.note}</p>
 
-            <div className="relative z-10 mt-auto pt-5">
+            <div className="relative z-10 mt-4">
               <div className="mb-2 flex gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary/80" />
                 <span className="h-1.5 w-1.5 rounded-full bg-primary/60" />

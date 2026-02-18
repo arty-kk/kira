@@ -121,11 +121,10 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
             data-shift-item
             onMouseEnter={() => setActive(idx)}
             onFocus={() => setActive(idx)}
-            className={`surface-card group relative flex min-h-[138px] flex-col overflow-hidden rounded-xl p-5 text-left transition-all ${
+            className={`surface-card group relative flex min-h-[120px] flex-col overflow-hidden rounded-xl p-5 text-left transition-all ${
               active === idx ? 'border-primary shadow-glow' : 'opacity-90 hover:opacity-100'
             }`}
           >
-            <div className="pointer-events-none absolute right-0 top-0 h-20 w-20 bg-[radial-gradient(circle,rgba(68,232,197,0.24),transparent_72%)]" />
             <div className="flex items-start justify-between gap-2">
               <p className="text-xs uppercase tracking-[0.16em] text-primary">{pair.label}</p>
               <div className="inline-flex w-fit rounded-md border border-primary/30 bg-slate-950/35 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-primary/90">
@@ -134,7 +133,7 @@ export function ProblemShift({ lang }: { lang: 'ru' | 'en' }) {
             </div>
             <p className="mt-3 text-sm leading-relaxed text-muted">{pair.signal}</p>
 
-            <div className="mt-auto pt-4">
+            <div className="mt-3 pt-2">
               <div className="h-px bg-gradient-to-r from-transparent via-primary/35 to-transparent" />
               <div className="mt-2 flex items-center gap-1.5">
                 {[0, 1, 2, 3, 4].map((dot) => (

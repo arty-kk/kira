@@ -54,11 +54,11 @@ export default function HomePage() {
       <header className="mx-auto mt-3 flex w-full max-w-6xl items-center justify-between gap-3 rounded-2xl border border-slate-700/60 bg-slate-950/55 px-4 py-3 backdrop-blur md:px-6">
         <Link href="/" className="text-sm font-semibold tracking-[0.16em] text-primary">SYNCHATICA</Link>
 
-        <nav className="hidden items-center gap-1 rounded-xl border border-slate-700/50 bg-slate-900/45 p-1 text-sm text-muted md:flex">
-          <a className="rounded-lg px-3 py-1.5 hover:bg-slate-800/80 hover:text-slate-100" href="#shift">{t.product}</a>
-          <a className="rounded-lg px-3 py-1.5 hover:bg-slate-800/80 hover:text-slate-100" href="#capability">{t.scenarios}</a>
-          <a className="rounded-lg px-3 py-1.5 hover:bg-slate-800/80 hover:text-slate-100" href="#kpi">{t.metrics}</a>
-          <a className="rounded-lg px-3 py-1.5 hover:bg-slate-800/80 hover:text-slate-100" href="#final-cta">{t.contact}</a>
+        <nav className="hidden items-center gap-1 text-sm text-muted md:flex">
+          <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#shift">{t.product}</a>
+          <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#capability">{t.scenarios}</a>
+          <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#kpi">{t.metrics}</a>
+          <a className="rounded-lg px-3 py-1.5 hover:text-slate-100" href="#final-cta">{t.contact}</a>
         </nav>
 
         <div className="flex items-center gap-2">
