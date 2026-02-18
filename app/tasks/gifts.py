@@ -37,29 +37,34 @@ _FORBIDDEN_REQUEST_META = re.compile(
     r")"
 )
 
-_TONE_HINTS = {
-    "matcha": "cozy and soothing; soft warmth with a tiny playful smile",
-    "plushie": "cute and affectionate; comforting vibe, gentle excitement",
-    "keyboard_skin": "geeky-cute delight; keyboard/typing metaphor used subtly",
-    "cat_headset": "playful streamer energy; bright and slightly teasing",
-    "game_pass": "hyped gamer mood; upbeat, ready-for-adventure energy",
-    "energy_drink": "charged and lively; quick boost, energetic but not chaotic",
-    "rgb_setup": "neon aesthetic glow; stylish, confident, and fun",
-    "stream_throne": "big wow moment; proud, grateful, and a little dramatic",
+DEFAULT_TONE_HINT = "energetic, cozy, playful gamer-girl vibe; warm and natural, no drama"
+
+_GIFT_TONE_PROFILE_OVERRIDES = {
+    "matcha": "cozy energy-up sip vibe; playful gamer-girl warmth",
+    "plushie": "cozy-cute comfort drop; bright playful gamer-girl mood",
+    "keyboard_skin": "keyboard-nerdy delight; playful gamer-girl confidence",
+    "cat_headset": "stream-ready playful hype; cozy gamer-girl grin",
+    "game_pass": "quest-start excitement; energetic and playful gamer-girl tone",
+    "energy_drink": "quick power-up vibe; lively cozy gamer-girl spark",
+    "rgb_setup": "neon desk glow mood; stylish playful gamer-girl energy",
+    "stream_throne": "big upgrade flex; energetic cozy gamer-girl gratitude",
 }
+
+_TONE_PROFILE_VALIDATED = False
+_MISSING_TONE_PROFILE_CODES: set[str] = set()
 
 _MICRO_STYLES = [
     "Understated and conversational; like it naturally fits between two messages.",
-    "Playful and lightly teasing; no cringe, no overdoing it.",
-    "Warm and soft; affectionate vibe, still natural.",
+    "Playful and lightly teasing; gamer-girl sparkle, no cringe.",
+    "Warm and soft; cozy gamer energy, still natural.",
     "Dry-ish humor; one subtle witty note, not mean.",
-    "Quiet appreciation; like a small smile you can hear in text.",
+    "Quiet appreciation; like a soft smile between game rounds.",
     "Slightly bashful; a tiny pause, then a simple line.",
     "Confident and bright; appreciative without being dramatic.",
-    "A calm, flirty note; subtle, not performative.",
+    "A calm playful note; subtle, not performative.",
     "A little amused; one light chuckle vibe.",
     "Low-key sweet; minimal words, maximum sincerity.",
-    "Relaxed and intimate; like you’re continuing a real chat.",
+    "Relaxed and friendly; like you’re continuing a real chat.",
     "Warm with a tiny wink; keep it tasteful.",
 ]
 
@@ -87,6 +92,47 @@ def _lang_fallback_label(ui_lang: str) -> str:
 def _looks_forbidden(txt: str) -> bool:
     t = txt or ""
     return bool(_FORBIDDEN_META.search(t) or _FORBIDDEN_REQUEST_META.search(t))
+
+def _gift_tier_codes() -> set[str]:
+    codes: set[str] = set()
+    for tier in getattr(settings, "GIFT_TIERS", []) or []:
+        if not isinstance(tier, dict):
+            continue
+        code = str(tier.get("code") or "").strip().lower()
+        if code:
+            codes.add(code)
+    return codes
+
+def _gift_tone_profiles() -> dict[str, str]:
+    profiles: dict[str, str] = {}
+    for code in _gift_tier_codes():
+        profiles[code] = _GIFT_TONE_PROFILE_OVERRIDES.get(code, DEFAULT_TONE_HINT)
+    return profiles
+
+def _ensure_tone_profile_coverage() -> set[str]:
+    global _TONE_PROFILE_VALIDATED
+    global _MISSING_TONE_PROFILE_CODES
+
+    if _TONE_PROFILE_VALIDATED:
+        return set(_MISSING_TONE_PROFILE_CODES)
+
+    tier_codes = _gift_tier_codes()
+    missing = {c for c in tier_codes if c not in _GIFT_TONE_PROFILE_OVERRIDES}
+
+    if missing:
+        logger.warning(
+            "missing gift tone profiles; using default tone hint",
+            extra={"missing_gift_codes": sorted(missing)},
+        )
+
+    _MISSING_TONE_PROFILE_CODES = missing
+    _TONE_PROFILE_VALIDATED = True
+    return set(missing)
+
+def _tone_hint_for_code(gift_code: str) -> str:
+    _ensure_tone_profile_coverage()
+    code = (gift_code or "").strip().lower()
+    return _gift_tone_profiles().get(code, DEFAULT_TONE_HINT)
 
 def _pick_micro_style(uid: int, gift_code: str, charge_id: str | None) -> str:
     seed = f"{int(uid)}:{(gift_code or '').strip().lower()}:{(charge_id or '').strip()}"
@@ -261,17 +307,15 @@ def _fallback_reply(gift_label: str, ui_lang: str) -> str:
     lang_code = (ui_lang or "").strip().lower()
     if lang_code in ("ru", "rus", "russian"):
         opts = [
-            f"{gl} — это неожиданно приятно.",
-            f"От {gl} у меня прям тихая улыбка.",
-            f"{gl} — мило. Спасибо не обязательно говорить вслух 🙂",
+            f"{gl} — это прям уютный буст настроения.",
+            f"{gl} влетел как маленький геймерский праздник.",
+            f"{gl} — очень в мой вайб сегодня.",
         ]
-        if gl and any(unicodedata.category(ch).startswith("S") for ch in gl):
-            opts[-1] = f"{gl} — мило. Очень в тему."
     else:
         opts = [
-            f"{gl} — that’s genuinely sweet.",
-            f"{gl} made me smile, quietly.",
-            f"{gl} — soft little win for my mood.",
+            f"{gl} is such a cozy little mood boost.",
+            f"{gl} landed like a tiny gamer win.",
+            f"{gl} totally matches my vibe right now.",
         ]
     h = hashlib.md5(gl.encode("utf-8", "ignore")).hexdigest()
     return opts[int(h, 16) % len(opts)].strip()
@@ -281,7 +325,7 @@ def _build_prompt(
     gift_label: str,
     gift_code: str,
     fallback_lang: str,
-    tone_hint: str | None,
+    tone_hint: str,
     micro_style: str | None,
     gift_streak: int,
     intensity_hint: str,
@@ -310,14 +354,14 @@ def _build_prompt(
         "\n"
         "STYLE\n"
         "- 1–2 short sentences. Sound like a real person, not a bot.\n"
+        "- Target vibe: energetic + cozy + playful gamer-girl, always natural and chatty.\n"
         "- Avoid clichés and repetitive openers (e.g., starting with 'Thanks!', 'Aww!', 'Wow!' every time).\n"
         "- Avoid starting with: Thanks / Thank you / Aww / Wow / OMG.\n"
-        "- Keep it restrained: no ALL CAPS, no 'OMG', no dramatic declarations.\n"
+        "- Keep it restrained: no ALL CAPS, no 'OMG', no romantic or dramatic declarations.\n"
         "- Punctuation: prefer 0 exclamation marks; max 1 total.\n"
         "- Max 1 emoji.\n"
     )
-    if tone_hint:
-        base += f"- Tone hint (use subtly): {tone_hint}.\n"
+    base += f"- Tone hint (use subtly): {tone_hint}.\n"
     if micro_style:
         base += f"- Micro-style: {micro_style}.\n"
     base += GIFTS_REACT_HARD_RULES_PROMPT
@@ -381,7 +425,7 @@ def gifts_react(
         code = (gift_code or "").strip().lower()
 
         fallback_lang = _lang_fallback_label(ui_lang)
-        tone_hint = _TONE_HINTS.get(code)
+        tone_hint = _tone_hint_for_code(code)
         micro_style = _pick_micro_style(uid=int(uid), gift_code=code, charge_id=charge_id)
         gift_streak = _peek_gift_streak(int(uid))
         intensity_hint, intensity_score = _streak_profile(gift_streak)
