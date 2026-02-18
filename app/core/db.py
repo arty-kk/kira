@@ -67,13 +67,10 @@ async def session_scope(*, stmt_timeout_ms: int | None = None, read_only: bool =
     try:
         try:
             if stmt_timeout_ms and stmt_timeout_ms > 0:
-                with suppress(Exception):
-                    await session.execute(text(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}"))
-                with suppress(Exception):
-                    await session.execute(text("SET LOCAL lock_timeout = 1000"))
+                await session.execute(text(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}"))
+                await session.execute(text("SET LOCAL lock_timeout = 1000"))
             if read_only:
-                with suppress(Exception):
-                    await session.execute(text("SET LOCAL default_transaction_read_only = on"))
+                await session.execute(text("SET LOCAL default_transaction_read_only = on"))
 
             yield session
 
