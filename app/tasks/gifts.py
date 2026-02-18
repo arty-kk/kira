@@ -38,14 +38,14 @@ _FORBIDDEN_REQUEST_META = re.compile(
 )
 
 _TONE_HINTS = {
-    "flower":  "tender, warm, a little flirty; a small ‘aww’ and a smile",
-    "coffee":  "cozy and energized; like a sip that brings you back to life",
-    "cake":    "playful and delighted; a soft laugh, ‘mmm’ vibe",
-    "music":   "romantic and inspired; subtle rhythm/playlist metaphors",
-    "perfume": "softly intimate and elegant; sensory imagery, a hint of mystery",
-    "bag":     "luxury sparkle; confident, bright, appreciative",
-    "trip":    "adventurous anticipation; ‘when do we leave?’ energy",
-    "ring":    "big wow moment; pause, then sincere and slightly dramatic (in a good way)",
+    "matcha": "cozy and soothing; soft warmth with a tiny playful smile",
+    "plushie": "cute and affectionate; comforting vibe, gentle excitement",
+    "keyboard_skin": "geeky-cute delight; keyboard/typing metaphor used subtly",
+    "cat_headset": "playful streamer energy; bright and slightly teasing",
+    "game_pass": "hyped gamer mood; upbeat, ready-for-adventure energy",
+    "energy_drink": "charged and lively; quick boost, energetic but not chaotic",
+    "rgb_setup": "neon aesthetic glow; stylish, confident, and fun",
+    "stream_throne": "big wow moment; proud, grateful, and a little dramatic",
 }
 
 _MICRO_STYLES = [
