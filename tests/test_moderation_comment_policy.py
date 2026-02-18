@@ -147,6 +147,55 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("external_reply", reason)
         self.assertIn("context=group", reason)
 
+    async def test_group_context_external_reply_returns_handled_when_delete_fails(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            message_id=12,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=object(),
+            text="hi",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings()),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=False)) as delete_mock,
+            self.assertLogs("app.bot.handlers.moderation", level="WARNING") as logs,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertTrue(handled)
+        delete_mock.assert_awaited_once()
+        flag_mock.assert_awaited_once()
+        self.assertTrue(any("failed to delete (external_reply)" in record for record in logs.output))
+
     def test_resolve_policy_relaxed_comment_disables_external_channel_checks(self) -> None:
         cfg = self._base_settings(COMMENT_MODERATION_LINK_POLICY="relaxed")
         policy = moderation.resolve_moderation_policy("comment", cfg)

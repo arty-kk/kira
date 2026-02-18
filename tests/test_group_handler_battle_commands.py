@@ -140,5 +140,41 @@ class GroupBattleOtherBotCommandIgnoreTests(unittest.IsolatedAsyncioTestCase):
         store_context_mock.assert_not_awaited()
 
 
+class GroupModerationGateTests(unittest.IsolatedAsyncioTestCase):
+    async def test_on_group_message_stops_pipeline_when_moderation_handles_message(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=777, username="allowed-group"),
+            message_id=101,
+            text="/battle",
+            caption=None,
+            entities=[types.SimpleNamespace(type=MessageEntityType.BOT_COMMAND, offset=0, length=7)],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+        )
+
+        with (
+            patch.object(group, "_is_chat_allowed", return_value=True),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "_update_presence", AsyncMock()),
+            patch.object(group, "record_activity", AsyncMock()),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=True)),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("/battle", "/battle")),
+            patch.object(group, "_ensure_daily_limit", AsyncMock()) as daily_limit_mock,
+            patch.object(group, "_store_context", AsyncMock()) as store_context_mock,
+            patch.object(group, "_maybe_handle_battle", AsyncMock()) as maybe_battle_mock,
+            patch.object(group.asyncio, "create_task", lambda _coro: _coro.close()),
+        ):
+            await group.on_group_message(message)
+
+        maybe_battle_mock.assert_not_awaited()
+        daily_limit_mock.assert_not_awaited()
+        store_context_mock.assert_not_awaited()
+
+
 if __name__ == "__main__":
     unittest.main()

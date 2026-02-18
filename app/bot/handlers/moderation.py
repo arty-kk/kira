@@ -605,6 +605,12 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     def _ctx_reason(reason: str) -> str:
         return f"{reason}|context={context}"
 
+    async def _delete_and_handle(reason: str) -> bool:
+        ok = await _delete_message_safe(chat_id, message.message_id)
+        if not ok:
+            logger.warning("Moderation: failed to delete (%s) chat=%s msg=%s", reason, chat_id, message.message_id)
+        return True
+
     logger.debug(
         "apply_moderation_filters: context=%s link_policy=%s chat=%s msg=%s",
         context,
@@ -642,7 +648,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         try:
             uid = int(getattr(getattr(message, "from_user", None), "id", 0) or 0)
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("external_channel"), user_id=uid)
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("external_channel")
         except Exception:
             pass
 
@@ -661,7 +667,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                 await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("forward_disallowed"), user_id=uid)
             except Exception:
                 pass
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("forward_disallowed")
 
     try:
         delete_buttons_on = bool(getattr(settings, "MODERATION_DELETE_BUTTON_MESSAGES", True))
@@ -694,7 +700,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("button"), user_id=uid)
         except Exception:
             pass
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("button")
 
     if not u or is_admin:
         return False
@@ -702,66 +708,66 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if getattr(message, "sticker", None):
         if not settings.MODERATION_ALLOW_STICKERS:
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("sticker"), user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("sticker")
         return False
 
     if getattr(message, "game", None):
         if not settings.MODERATION_ALLOW_GAMES:
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("game"), user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("game")
         return False
 
     if getattr(message, "dice", None):
         if not settings.MODERATION_ALLOW_DICE:
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("dice"), user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("dice")
         return False
 
     if getattr(message, "via_bot", None) and settings.MODERATION_INLINE_BOT_MSGS_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("via_bot"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("via_bot")
 
     if getattr(message, "story", None) and settings.MODERATION_STORIES_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("story"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("story")
 
     if getattr(message, "voice", None) and settings.MODERATION_VOICE_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("voice"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("voice")
 
     if getattr(message, "video_note", None) and settings.MODERATION_VIDEO_NOTE_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("video_note"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("video_note")
 
     if getattr(message, "audio", None) and settings.MODERATION_AUDIO_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("audio"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("audio")
 
     if getattr(message, "photo", None) and settings.MODERATION_IMAGES_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("image"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("image")
 
     if getattr(message, "video", None) and settings.MODERATION_VIDEOS_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("video"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("video")
 
     if getattr(message, "animation", None) and settings.MODERATION_GIFS_DELETE:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("gif"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("gif")
 
     if getattr(message, "document", None) and settings.MODERATION_FILES_DELETE_ALL:
         mime = getattr(getattr(message, "document", None), "mime_type", "") or ""
         if (not mime.startswith("image/")) or settings.MODERATION_IMAGES_DELETE:
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("file"), user_id=u.id)
-            return await _delete_message_safe(chat_id, message.message_id)
+            return await _delete_and_handle("file")
 
     if is_forward and settings.MODERATION_NEW_DELETE_FORWARDS_24H and await _is_new_user(chat_id, u.id):
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("forward_new_user"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("forward_new_user")
 
     if getattr(message, "external_reply", None) and policy["delete_external_replies"]:
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("external_reply"), user_id=u.id)
-        return await _delete_message_safe(chat_id, message.message_id)
+        return await _delete_and_handle("external_reply")
 
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
@@ -771,14 +777,14 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             t = e.type.value if hasattr(e.type, "value") else e.type
             if t in ("mention", "text_mention"):
                 await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("mention"), user_id=u.id)
-                return await _delete_message_safe(chat_id, message.message_id)
+                return await _delete_and_handle("mention")
 
     if not settings.MODERATION_ALLOW_CUSTOM_EMOJI:
         for e in ents:
             t = e.type.value if hasattr(e.type, "value") else e.type
             if t == "custom_emoji":
                 await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("custom_emoji"), user_id=u.id)
-                return await _delete_message_safe(chat_id, message.message_id)
+                return await _delete_and_handle("custom_emoji")
 
     if settings.MODERATION_COMMANDS_DELETE_ALL:
         for e in ents:
@@ -813,7 +819,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                         chat_id, message.message_id,
                         action="delete", reason=_ctx_reason(f"command:{cmd_name}"), user_id=u.id
                     )
-                    return await _delete_message_safe(chat_id, message.message_id)
+                    return await _delete_and_handle(f"command:{cmd_name}")
 
     ents_payload = []
     for e in ents:
