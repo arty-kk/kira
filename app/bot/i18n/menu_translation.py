@@ -5,7 +5,7 @@ from typing import Dict, Tuple
 
 Lang = str
 
-CHANNEL_URL = "https://t.me/synchatica"
+CHANNEL_URL = "https://t.me/kupikod"
 
 # Language picker buttons
 LANG_BUTTONS: Dict[Lang, str] = {
@@ -290,7 +290,7 @@ _EN: Dict[str, str] = {
 _RU: Dict[str, str] = {
     # Private / entry
     "private.choose_lang": "🔎 Выберите язык",
-    "private.channel": "📢 Заходи в канал, чтобы быть в курсе последних обновлений.",
+    "private.channel": "📢 Подписывайся, чтобы быть в курсе последних обновлений от Kupikod.",
     "private.channel_url": CHANNEL_URL,
     "private.need_gift_soft": "😕 Запросы закончились.\nОткрой магазин: купи ещё 💬 или подари 🎁 подарок.",
     "private.need_purchase": "⚠️ Чтобы продолжить, купите запросы для общения.",
