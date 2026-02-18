@@ -162,10 +162,10 @@ class TextAnalyzer:
         if not text:
             return {}
 
-        prompt_base = text
+        cleaned_ctx_dialog = ""
         if ctx_dialog:
             # remove timestamps like [12:34] / [12:34:56]
-            prompt_base = await asyncio.to_thread(
+            cleaned_ctx_dialog = await asyncio.to_thread(
                 re.sub,
                 r"\[\d{2}:\d{2}(?::\d{2})?\]",
                 "[]",
@@ -176,7 +176,10 @@ class TextAnalyzer:
         system_prompt = TEXT_ANALYZER_SYSTEM_PROMPT_TEMPLATE.format(metric_list=metric_list)
 
         if ctx_dialog:
-            user_prompt = TEXT_ANALYZER_USER_PROMPT_WITH_CTX_TEMPLATE.format(prompt_base=prompt_base)
+            user_prompt = TEXT_ANALYZER_USER_PROMPT_WITH_CTX_TEMPLATE.format(
+                text=text,
+                ctx_dialog=cleaned_ctx_dialog,
+            )
         else:
             user_prompt = TEXT_ANALYZER_USER_PROMPT_NO_CTX_TEMPLATE.format(text=text)
 
