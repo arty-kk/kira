@@ -5,6 +5,7 @@ import logging
 import asyncio
 import time
 import html
+import secrets
 from typing import Any, List
 
 from aiogram import types, F
@@ -521,6 +522,26 @@ async def _flag(chat_id: int, msg_id: int, *, action: str, reason: str, user_id:
     except Exception:
         logger.debug("store combot flag failed", exc_info=True)
 
+
+async def _flag_inline_without_message(chat_id: int, *, action: str, reason: str, user_id: int | None = None) -> None:
+    ts = _now()
+    unique_suffix = secrets.token_hex(4)
+    key = f"mod:combot:inline:{chat_id}:{ts}:{unique_suffix}"
+    ttl = int(max(1, int(getattr(settings, "NEW_USER_TTL_SECONDS", 86400))))
+    try:
+        await redis_client.hset(
+            key,
+            mapping={
+                "action": action,
+                "reason": reason,
+                "user_id": int(user_id) if user_id is not None else 0,
+                "ts": ts,
+            },
+        )
+        await redis_client.expire(key, ttl)
+    except Exception:
+        logger.debug("store inline combot flag without message failed", exc_info=True)
+
 @dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]), F.new_chat_members)
 async def moderation_on_join(message: types.Message) -> None:
     chat_id = message.chat.id
@@ -887,7 +908,12 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
 
         chat_id = int(chat_id_str)
         offender_id = int(offender_id_str)
-        trigger_msg_id = int(rest[0]) if rest else None
+        trigger_msg_id = None
+        if rest:
+            try:
+                trigger_msg_id = int(rest[0])
+            except Exception:
+                trigger_msg_id = None
 
         admin_id = cb.from_user.id if cb.from_user else 0
         if not await _is_admin(chat_id, int(admin_id)):
@@ -897,7 +923,10 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
         banned = await _ban_user_safe(chat_id, offender_id, revoke=getattr(settings, "MODERATION_BAN_REVOKE_MESSAGES", True))
         if banned:
             try:
-                await _flag(chat_id, trigger_msg_id or 0, action="ban", reason="inline_button", user_id=offender_id)
+                if isinstance(trigger_msg_id, int) and trigger_msg_id > 0:
+                    await _flag(chat_id, trigger_msg_id, action="ban", reason="inline_button", user_id=offender_id)
+                else:
+                    await _flag_inline_without_message(chat_id, action="ban", reason="inline_button", user_id=offender_id)
             except Exception:
                 logger.debug("inline ban: flag failed", exc_info=True)
 
