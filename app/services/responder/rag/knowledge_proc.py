@@ -185,6 +185,26 @@ def _strip_emb_memory(entries: List[Dict[str, Any]]) -> None:
     for e in entries:
         e.pop("emb", None)
 
+
+async def _ensure_state_built_under_lock(
+    model: str,
+    entries: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    async with _kb_init_lock:
+        state = _KB_STATE.get(model)
+        if state:
+            return state
+        if not entries:
+            return None
+
+        state = await asyncio.to_thread(_build_state, entries)
+        if not state:
+            return None
+
+        _KB_STATE[model] = state
+        _strip_emb_memory(entries)
+        return state
+
 async def _init_kb(model_name: Optional[str] = None) -> List[Dict[str, Any]]:
     model = model_name or settings.EMBEDDING_MODEL
     async with _kb_init_lock:
@@ -259,11 +279,9 @@ async def get_relevant(
 
     state = _KB_STATE.get(file_model)
     if not state:
-        state = await asyncio.to_thread(_build_state, entries)
+        state = await _ensure_state_built_under_lock(file_model, entries)
         if not state:
             return []
-        _KB_STATE[file_model] = state
-        _strip_emb_memory(entries)
 
     mean_vec: np.ndarray = state["mean"]
     E: np.ndarray = state["E"]
