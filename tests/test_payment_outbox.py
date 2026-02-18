@@ -73,7 +73,10 @@ def _load_payments_module():
     target_modules["app.bot.components.dispatcher"].dp = _FakeDispatcher()
     target_modules["app.bot.i18n"].t = AsyncMock(return_value="")
     target_modules["app.bot.utils.shop_tiers"].find_gift = lambda *_args, **_kwargs: None
-    target_modules["app.bot.utils.shop_tiers"].gift_display_name = lambda *_args, **_kwargs: "gift"
+    async def _gift_display_name(_user_id, gift):
+        return (gift or {}).get("title", "Matcha Latte")
+
+    target_modules["app.bot.utils.shop_tiers"].gift_display_name = _gift_display_name
     target_modules["app.bot.utils.shop_tiers"].gift_tiers = lambda *_args, **_kwargs: []
     target_modules["app.bot.utils.shop_tiers"].purchase_tiers = lambda *_args, **_kwargs: {1: 1}
     target_modules["app.bot.utils.telegram_safe"].delete_message_safe = AsyncMock()
