@@ -66,6 +66,91 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         self.assertTrue(kwargs["is_comment_context"])
         self.assertNotIn("is_channel_post", kwargs)
 
+    def test_passive_moderate_invalid_payload_returns_terminal_status(self) -> None:
+        payload = {
+            "chat_id": 1,
+            "user_id": 2,
+            "text": "hi",
+        }
+
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation") as handle_mock,
+            self.assertLogs("app.tasks.moderation", level="WARNING") as logs,
+        ):
+            result = passive_moderate.run(payload)
+
+        self.assertEqual(result, "invalid_payload")
+        handle_mock.assert_not_called()
+        self.assertTrue(any("invalid payload" in entry for entry in logs.output))
+
+    def test_passive_moderate_non_dict_payload_returns_terminal_status(self) -> None:
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation") as handle_mock,
+            self.assertLogs("app.tasks.moderation", level="WARNING") as logs,
+        ):
+            result = passive_moderate.run("bad-payload")
+
+        self.assertEqual(result, "invalid_payload")
+        handle_mock.assert_not_called()
+        self.assertTrue(any("payload must be dict" in entry for entry in logs.output))
+
+    def test_passive_moderate_valid_payload_keeps_contract(self) -> None:
+        payload = {
+            "chat_id": "100",
+            "user_id": "200",
+            "message_id": "300",
+            "text": "hi",
+            "entities": [],
+            "source": "user",
+        }
+
+        async def _fake_handle(**kwargs):
+            return "clean"
+
+        def _fake_run(coro):
+            return asyncio.run(coro)
+
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
+            patch("app.tasks.moderation._run", side_effect=_fake_run),
+        ):
+            result = passive_moderate.run(payload)
+
+        self.assertEqual(result, "clean")
+        _, kwargs = handle_mock.call_args
+        self.assertEqual(kwargs["chat_id"], 100)
+        self.assertEqual(kwargs["user_id"], 200)
+        self.assertEqual(kwargs["message_id"], 300)
+
+
+    def test_passive_moderate_valid_channel_user_id_keeps_contract(self) -> None:
+        payload = {
+            "chat_id": -100123,
+            "user_id": -100456,
+            "message_id": 300,
+            "text": "hi",
+            "entities": [],
+            "source": "channel",
+        }
+
+        async def _fake_handle(**kwargs):
+            return "clean"
+
+        def _fake_run(coro):
+            return asyncio.run(coro)
+
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
+            patch("app.tasks.moderation._run", side_effect=_fake_run),
+        ):
+            result = passive_moderate.run(payload)
+
+        self.assertEqual(result, "clean")
+        _, kwargs = handle_mock.call_args
+        self.assertEqual(kwargs["chat_id"], -100123)
+        self.assertEqual(kwargs["user_id"], -100456)
+        self.assertEqual(kwargs["message_id"], 300)
+
     def test_prepare_moderation_payload_drops_oversized_json(self) -> None:
         oversized = {"text": "x", "image_b64": "a" * (settings.CELERY_MODERATION_MAX_PAYLOAD_BYTES + 128)}
         prepared = prepare_moderation_payload(oversized, context="test")
