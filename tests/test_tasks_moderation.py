@@ -1,5 +1,7 @@
 import os
+import asyncio
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "12345:abcde")
@@ -33,6 +35,36 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         self.assertEqual(passive_moderate.time_limit, settings.MODERATION_TIMEOUT + 5)
         self.assertTrue(passive_moderate.retry_backoff)
         self.assertTrue(passive_moderate.retry_jitter)
+
+
+    def test_passive_moderate_forwards_comment_context_only(self) -> None:
+        payload = {
+            "chat_id": 1,
+            "user_id": 2,
+            "message_id": 3,
+            "text": "hi",
+            "entities": [],
+            "source": "user",
+            "is_channel_post": True,
+            "is_comment_context": True,
+        }
+
+        async def _fake_handle(**kwargs):
+            return "clean"
+
+        def _fake_run(coro):
+            return asyncio.run(coro)
+
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
+            patch("app.tasks.moderation._run", side_effect=_fake_run),
+        ):
+            result = passive_moderate.run(payload)
+
+        self.assertEqual(result, "clean")
+        _, kwargs = handle_mock.call_args
+        self.assertTrue(kwargs["is_comment_context"])
+        self.assertNotIn("is_channel_post", kwargs)
 
     def test_prepare_moderation_payload_drops_oversized_json(self) -> None:
         oversized = {"text": "x", "image_b64": "a" * (settings.CELERY_MODERATION_MAX_PAYLOAD_BYTES + 128)}

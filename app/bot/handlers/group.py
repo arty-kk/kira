@@ -536,10 +536,10 @@ async def _push_group_stm_and_recent(
         logger.debug("append_group_recent failed", exc_info=True)
 
 
-def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, ents: List[dict], is_channel: bool, user_id_val: int) -> None:
+def _is_comment_context(message: Message, *, is_channel: bool) -> bool:
     sender_chat = getattr(message, "sender_chat", None)
     forward_from_chat = getattr(message, "forward_from_chat", None)
-    is_comment_context = bool(
+    return bool(
         not is_channel and (
             getattr(message, "is_automatic_forward", False)
             or (sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL)
@@ -547,6 +547,10 @@ def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, 
             or getattr(message.chat, "linked_chat_id", None)
         )
     )
+
+
+def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, ents: List[dict], is_channel: bool, user_id_val: int) -> None:
+    is_comment_context = _is_comment_context(message, is_channel=is_channel)
 
     moderation_payload = prepare_moderation_payload(
         {
@@ -558,7 +562,6 @@ def _dispatch_passive_moderation(message: Message, payload: dict, *, text: str, 
             "image_b64": payload.get("image_b64"),
             "image_mime": payload.get("image_mime"),
             "source": "channel" if is_channel else "user",
-            "is_channel_post": bool(is_channel),
             "is_comment_context": is_comment_context,
         },
         context="group.dispatch",
@@ -849,6 +852,7 @@ async def on_group_message(message: Message) -> None:
         )
 
         channel = _channel_obj(message)
+        is_comment_context = _is_comment_context(message, is_channel=is_channel)
 
         payload = {
             "chat_id": cid,
@@ -858,6 +862,7 @@ async def on_group_message(message: Message) -> None:
             "is_group": True,
             "msg_id": message.message_id,
             "is_channel_post": is_channel,
+            "is_comment_context": is_comment_context,
             "channel_id": channel.id if channel else None,
             "channel_title": getattr(channel, "title", None) if channel else None,
             "trigger": trigger,
@@ -1102,6 +1107,8 @@ async def _handle_group_image_message_common(
 
     channel = _channel_obj(message)
 
+    is_comment_context = _is_comment_context(message, is_channel=is_channel)
+
     preprocess_payload = {
         "chat_id": cid,
         "message_id": message.message_id,
@@ -1109,6 +1116,7 @@ async def _handle_group_image_message_common(
         "trigger": trigger,
         "reply_to": reply_to_id,
         "is_channel_post": is_channel,
+        "is_comment_context": is_comment_context,
         "channel_id": channel.id if channel else None,
         "channel_title": getattr(channel, "title", None) if channel else None,
         "entities": ents,

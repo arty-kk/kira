@@ -195,7 +195,6 @@ async def handle_passive_moderation(
     source: str = "user",
     user_id: int | None = None,
     message_id: int | None = None,
-    is_channel_post: bool | None = None,
     is_comment_context: bool | None = None,
 ) -> str:
 
@@ -240,8 +239,6 @@ async def handle_passive_moderation(
 
     if is_comment_context is not None:
         moderation_context = "comment" if bool(is_comment_context) else "group"
-    elif is_channel_post is not None:
-        moderation_context = "comment" if bool(is_channel_post) else "group"
     elif message is not None:
         moderation_context = _resolve_message_context(message, from_linked=False)
     else:
@@ -321,7 +318,7 @@ async def handle_passive_moderation(
         except Exception:
             new_user = False
 
-        risk = (
+        base_risk = (
             (image_b64 is not None) or
             bool(urls_for_risk) or
             contains_telegram_obfuscated(text or "") or
@@ -330,6 +327,10 @@ async def handle_passive_moderation(
             new_user or
             (light_status == "toxic")
         )
+
+        risk = base_risk
+        if moderation_context == "comment":
+            risk = bool(base_risk and light_status != "clean")
 
         blocked = False
         if risk:

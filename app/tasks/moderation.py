@@ -126,7 +126,6 @@ def passive_moderate(self, payload: dict) -> str:
                 source=payload.get("source", "user"),
                 user_id=payload["user_id"],
                 message_id=payload["message_id"],
-                is_channel_post=payload.get("is_channel_post"),
                 is_comment_context=payload.get("is_comment_context"),
             ),
             timeout=MODERATION_TIMEOUT,

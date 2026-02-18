@@ -83,9 +83,9 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         moderation_payload = delay_mock.call_args.args[0]
         self.assertNotIn("image_b64", moderation_payload)
         self.assertNotIn("image_mime", moderation_payload)
-        self.assertIn("is_channel_post", moderation_payload)
+        self.assertNotIn("is_channel_post", moderation_payload)
         self.assertIn("is_comment_context", moderation_payload)
-        self.assertFalse(moderation_payload["is_channel_post"])
+        self.assertFalse(moderation_payload["is_comment_context"])
 
     def test_dispatch_passive_moderation_channel_source_kept(self) -> None:
         message = types.SimpleNamespace(
@@ -108,8 +108,31 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
 
         moderation_payload = delay_mock.call_args.args[0]
         self.assertEqual(moderation_payload["source"], "channel")
-        self.assertTrue(moderation_payload["is_channel_post"])
+        self.assertNotIn("is_channel_post", moderation_payload)
         self.assertFalse(moderation_payload["is_comment_context"])
+
+class GroupCommentContextTests(unittest.TestCase):
+    def test_is_comment_context_detects_linked_chat_message(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, linked_chat_id=-100500),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        self.assertTrue(group._is_comment_context(message, is_channel=False))
+
+    def test_is_comment_context_false_for_regular_group_message(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, linked_chat_id=None),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        self.assertFalse(group._is_comment_context(message, is_channel=False))
+
+
 
 if __name__ == "__main__":
     unittest.main()
