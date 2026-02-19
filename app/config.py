@@ -192,6 +192,9 @@ class Settings:
     WEBHOOK_PATH: str = field(default_factory=lambda: _get_env("WEBHOOK_PATH", "/webhook"))
     WEBHOOK_HOST: str = field(default_factory=lambda: _get_env("WEBHOOK_HOST", "0.0.0.0"))
     WEBHOOK_PORT: int = field(default_factory=lambda: _get_env("WEBHOOK_PORT", "8443", conv=int))
+    WEBHOOK_FEED_UPDATE_TIMEOUT_SEC: float = field(
+        default_factory=lambda: _get_env("WEBHOOK_FEED_UPDATE_TIMEOUT_SEC", "30", conv=float)
+    )
     WEBHOOK_CERT: str = field(init=False)
     WEBHOOK_KEY: str = field(init=False)
     USE_SELF_SIGNED_CERT: bool = field(default_factory=lambda: _get_env("USE_SELF_SIGNED_CERT", "false", conv=_parse_bool))
