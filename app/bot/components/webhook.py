@@ -159,10 +159,18 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
             ),
             timeout=60,
         )
-    except asyncio.TimeoutError:
+    except asyncio.TimeoutError as exc:
         logger.error("Timeout while setting webhook")
-    except Exception:
+        if settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION:
+            logger.warning("Starting bot without successful webhook registration (timeout)")
+        else:
+            raise RuntimeError("webhook registration failed") from exc
+    except Exception as exc:
         logger.exception("Error setting webhook")
+        if settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION:
+            logger.error("Starting bot without successful webhook registration (error)")
+        else:
+            raise RuntimeError("webhook registration failed") from exc
 
     tls_files = resolve_tls_server_files(
         use_self_signed=settings.USE_SELF_SIGNED_CERT,
