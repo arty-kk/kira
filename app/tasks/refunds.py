@@ -11,6 +11,7 @@ from app.core.db import session_scope
 from app.core.models import RefundOutbox
 from app.services.user.user_service import InvalidBillingTierError, refund_user_balance
 from app.tasks.celery_app import celery, _run
+from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
 REFUND_OUTBOX_LEASE_TTL_SECONDS = 300
@@ -79,7 +80,15 @@ def process_refund_outbox_task(outbox_id: int, lease_token: str) -> None:
     _run(_run_task(str(lease_token)))
 
 
-async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_SIZE) -> tuple[int, int]:
+async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_SIZE) -> RequeueResult:
+    """Requeue pending refund outbox rows for processing.
+
+    Returns:
+        RequeueResult.enqueued: number of rows successfully enqueued to Celery.
+        RequeueResult.enqueue_errors: number of claimed rows that failed to enqueue.
+
+    Invariant for the current claimed batch: enqueued + enqueue_errors == scanned.
+    """
     safe_batch_size = max(1, int(batch_size))
     lease_token = uuid.uuid4().hex
     async with session_scope(stmt_timeout_ms=5000) as db:
@@ -113,11 +122,13 @@ async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_S
         )).all()
 
     enqueued = 0
+    enqueue_errors = 0
     for outbox_id, row_lease_token in claimed_rows:
         try:
             celery.send_task("refunds.process_outbox", args=[int(outbox_id), str(row_lease_token)])
             enqueued += 1
         except Exception as exc:
+            enqueue_errors += 1
             async with session_scope(stmt_timeout_ms=3000) as db:
                 release_stmt = (
                     update(RefundOutbox)
@@ -141,9 +152,10 @@ async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_S
             )
 
     logger.info(
-        "refunds.requeue_pending_refund_outbox: scanned=%s enqueued=%s batch_size=%s",
+        "refunds.requeue_pending_refund_outbox: scanned=%s enqueued=%s enqueue_errors=%s batch_size=%s",
         len(claimed_rows),
         enqueued,
+        enqueue_errors,
         safe_batch_size,
     )
-    return len(claimed_rows), enqueued
+    return RequeueResult(enqueued=enqueued, enqueue_errors=enqueue_errors)
