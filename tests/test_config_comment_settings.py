@@ -113,6 +113,24 @@ class CommentSettingsConfigTests(unittest.TestCase):
         self.assertTrue(any("Invalid integer tokens in ALLOWED_GROUP_IDS" in msg for msg in cm.output))
         self.assertTrue(any("Group access config contains invalid CSV tokens" in msg for msg in cm.output))
 
+    def test_moderator_ids_mixed_csv_parsing_logs_invalid_tokens(self) -> None:
+        env = {
+            "OPENAI_API_KEY": "test-key",
+            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "REDIS_URL_QUEUE": "redis://localhost:6379/1",
+            "REDIS_URL_VECTOR": "redis://localhost:6379/2",
+            "MODERATOR_IDS": "123, abc, 456 ",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertLogs("app.config", level="WARNING") as cm:
+                cfg = config.Settings()
+
+        self.assertEqual(cfg.MODERATOR_IDS, [123, 456])
+        self.assertEqual(cfg._MODERATOR_IDS_INVALID_TOKENS, ["abc"])
+        self.assertTrue(any("Moderator config contains invalid CSV tokens: MODERATOR_IDS" in msg for msg in cm.output))
+
 
 class CommentSettingsMixedAccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_allowed_groups_and_comment_scope_work_without_conflict(self) -> None:

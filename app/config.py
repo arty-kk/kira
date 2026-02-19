@@ -114,6 +114,12 @@ def validate_settings_config(cfg: "Settings") -> None:
             cfg._ALLOWED_GROUP_IDS_INVALID_TOKENS,
         )
 
+    if cfg._MODERATOR_IDS_INVALID_TOKENS:
+        logger.warning(
+            "Moderator config contains invalid CSV tokens: MODERATOR_IDS=%s",
+            cfg._MODERATOR_IDS_INVALID_TOKENS,
+        )
+
     overlap = set(cfg.COMMENT_TARGET_CHAT_IDS) & set(cfg.COMMENT_SOURCE_CHANNEL_IDS)
     if overlap:
         logger.warning(
@@ -217,6 +223,7 @@ class Settings:
         self.COMMENT_SOURCE_CHANNEL_IDS, self._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS = _parse_int_csv_env(
             "COMMENT_SOURCE_CHANNEL_IDS"
         )
+        self.MODERATOR_IDS, self._MODERATOR_IDS_INVALID_TOKENS = _parse_int_csv_env("MODERATOR_IDS")
         validate_settings_config(self)
 
     # ─── Public HTTP API ─────────────────────────────────────
@@ -261,6 +268,7 @@ class Settings:
     #Group Limits
     ALLOWED_GROUP_IDS: List[int] = field(default_factory=list)
     _ALLOWED_GROUP_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
+    _MODERATOR_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
     COMMENT_MODERATION_ENABLED: bool = field(
         default_factory=lambda: _get_env("COMMENT_MODERATION_ENABLED", "false", conv=_parse_bool)
     )
@@ -317,14 +325,7 @@ class Settings:
             conv=_parse_bool,
         )
     )
-    MODERATOR_IDS: List[int] = field(
-        default_factory=lambda: [
-            *(
-                int(x) for x in _get_env("MODERATOR_IDS", "").split(",")
-                if x.strip().isdigit()
-            )
-        ]
-    )
+    MODERATOR_IDS: List[int] = field(default_factory=list)
     MODERATOR_ADMIN_CACHE_TTL_SECONDS: int = field(default_factory=lambda: _get_env("MODERATOR_ADMIN_CACHE_TTL_SECONDS", "86400", conv=int))
     MODERATOR_NOTIFICATION_CHAT_ID: int = field(default_factory=lambda: _get_env("MODERATOR_NOTIFICATION_CHAT_ID", "0", conv=int))
     MODERATION_TOXICITY_THRESHOLD: float = field(default_factory=lambda: _get_env("MODERATION_TOXICITY_THRESHOLD", "0.7", conv=float))
