@@ -130,13 +130,18 @@ class _FakeSession:
 
 
 class _FakeBot:
+    last_instance = None
+
     def __init__(self):
         self.session = _FakeSession()
+        self.last_set_webhook_kwargs = None
+        _FakeBot.last_instance = self
 
     async def get_me(self):
         return types.SimpleNamespace(id=42, username="TestBot")
 
-    async def set_webhook(self, **_kwargs):
+    async def set_webhook(self, **kwargs):
+        self.last_set_webhook_kwargs = kwargs
         return True
 
 
@@ -174,6 +179,7 @@ def _load_webhook_module():
         WEBHOOK_HOST="127.0.0.1",
         WEBHOOK_PORT=8443,
         WEBHOOK_FEED_UPDATE_TIMEOUT_SEC=1,
+        WEBHOOK_DROP_PENDING_UPDATES=False,
         ALLOWED_GROUP_IDS=[],
         MEMORY_TTL_DAYS=1,
     )
@@ -260,6 +266,18 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(_FakeTCPSite.last_instance)
         self.assertIsNone(_FakeTCPSite.last_instance.ssl_context)
         self.assertTrue(_FakeTCPSite.last_instance.started)
+
+
+    async def test_start_bot_sets_drop_pending_updates_to_false_by_default(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        await webhook.start_bot(stop_event=stop_event)
+
+        self.assertIsNotNone(_FakeBot.last_instance)
+        self.assertIsNotNone(_FakeBot.last_instance.last_set_webhook_kwargs)
+        self.assertIn("drop_pending_updates", _FakeBot.last_instance.last_set_webhook_kwargs)
+        self.assertFalse(_FakeBot.last_instance.last_set_webhook_kwargs["drop_pending_updates"])
 
     async def test_webhook_update_dedup_uses_atomic_nx_set(self):
         stop_event = asyncio.Event()

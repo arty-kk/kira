@@ -147,7 +147,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
             bot.set_webhook(
                 url=settings.WEBHOOK_URL + settings.WEBHOOK_PATH,
                 **cert_arg,
-                drop_pending_updates=True,
+                drop_pending_updates=settings.WEBHOOK_DROP_PENDING_UPDATES,
                 allowed_updates=[
                     "message",
                     "callback_query",
