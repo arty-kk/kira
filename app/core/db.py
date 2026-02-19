@@ -1,12 +1,14 @@
 #app/core/db.py
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import event
 from sqlalchemy.pool import NullPool
 from app.config import settings
 from sqlalchemy import text
 from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator
+
+from app.core.db_base import Base
 
 pool_kwargs = {"pool_pre_ping": True}
 use_nullpool = (settings.DB_POOL_CLASS or "").lower() == "nullpool"
@@ -39,8 +41,6 @@ AsyncSessionLocal = sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
-
-Base = declarative_base()
 
 @asynccontextmanager
 async def get_db() -> AsyncIterator[AsyncSession]:
