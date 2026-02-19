@@ -23,6 +23,7 @@ async def is_relevant(
     return_hits: bool,
     persona_owner_id: Optional[int] = None,
     knowledge_owner_id: Optional[int] = None,
+    strict_autoreply_gate: bool = False,
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     clean = _CLEAN.sub(" ", text).lower().strip()
@@ -62,22 +63,45 @@ async def is_relevant(
     except Exception:
         margin = 0.0
 
+    tag_top = 0.0
+    ok_tag = False
     if tag_hits:
-        logger.info(
-            "gate: keyword hits -> relevant (skip sys embeddings); hits=%d",
-            len(tag_hits),
-        )
         sys_hits = tag_hits
-        ok_sys = True
-    else:
+        if strict_autoreply_gate:
+            try:
+                tag_top = float(tag_hits[0][0])
+            except Exception:
+                tag_top = 0.0
+            try:
+                tag_delta = float(getattr(settings, "KEYWORD_RELEVANCE_CONFIRM_DELTA", 0.05) or 0.0)
+            except Exception:
+                tag_delta = 0.05
+            tag_thr_eff = threshold + margin + max(0.0, tag_delta)
+            ok_tag = tag_top >= tag_thr_eff
+            logger.info(
+                "gate: keyword hits=%d top=%.3f thr=%.3f ok=%s (strict autoreply gate)",
+                len(tag_hits),
+                tag_top,
+                tag_thr_eff,
+                ok_tag,
+            )
+        else:
+            logger.info(
+                "gate: keyword hits -> relevant (non-strict path); hits=%d",
+                len(tag_hits),
+            )
+            ok_tag = True
+
+    emb_hits: List[Tuple[float, str, str]] = []
+    if strict_autoreply_gate or not tag_hits:
         try:
-            sys_hits = await get_relevant(text, model_name=model)
+            emb_hits = await get_relevant(text, model_name=model)
         except Exception:
             logger.exception("gate: get_relevant (system KB) failed")
-            sys_hits = []
+            emb_hits = []
 
-        if sys_hits:
-            top = sys_hits[0][0]
+        if emb_hits:
+            top = emb_hits[0][0]
             thr_eff = threshold + margin
             ok_sys = top >= thr_eff
             logger.info(
@@ -86,8 +110,20 @@ async def is_relevant(
                 ok_sys,
                 top,
                 thr_eff,
-                len(sys_hits),
+                len(emb_hits),
             )
+            if sys_hits:
+                merged = list(sys_hits)
+                known = {h[1] for h in merged if isinstance(h, (list, tuple)) and len(h) > 1}
+                for h in emb_hits:
+                    hid = h[1] if isinstance(h, (list, tuple)) and len(h) > 1 else None
+                    if hid and hid in known:
+                        continue
+                    merged.append(h)
+                merged.sort(key=lambda h: h[0], reverse=True)
+                sys_hits = merged
+            else:
+                sys_hits = emb_hits
 
     custom_hits: List[Tuple[float, str, str]] = []
     ok_custom = False
@@ -126,7 +162,7 @@ async def is_relevant(
         )
 
     has_any_hits = bool(sys_hits or custom_hits)
-    ok_any = bool(ok_sys or ok_custom)
+    ok_any = bool(ok_tag or ok_sys or ok_custom)
 
     if not has_any_hits:
         logger.info("gate: no-hits (system + custom) -> not relevant")

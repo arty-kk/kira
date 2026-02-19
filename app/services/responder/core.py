@@ -1324,6 +1324,7 @@ async def respond_to_user(
                 return_hits=True,
                 persona_owner_id=persona_owner_id,
                 knowledge_owner_id=knowledge_owner_id,
+                strict_autoreply_gate=(trigger == "check_on_topic"),
             )
         except Exception:
             logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
@@ -1395,11 +1396,19 @@ async def respond_to_user(
     emb_model = None
     if reply is None:
         top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 3))
+        if trigger == "check_on_topic":
+            try:
+                top_k = int(getattr(settings, "AUTOREPLY_KNOWLEDGE_TOP_K", 1) or 1)
+            except Exception:
+                top_k = 1
+        top_k = max(1, top_k)
         if on_topic_flag and on_topic_hits:
             emb_model = settings.EMBEDDING_MODEL
             hits = on_topic_hits[:top_k]
             logger.info(
-                "RAG: on_topic; hits=%d; top_scores=%s",
+                "RAG: on_topic; trigger=%s top_k=%d hits=%d; top_scores=%s",
+                trigger,
+                top_k,
                 len(hits), [round(h[0], 3) for h in hits[:3]]
             )
         else:

@@ -648,10 +648,12 @@ class Settings:
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
     RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.28", conv=float))
     KEYWORD_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("KEYWORD_RELEVANCE_THRESHOLD", "0.28", conv=float))
+    KEYWORD_RELEVANCE_CONFIRM_DELTA: float = field(default_factory=lambda: _get_env("KEYWORD_RELEVANCE_CONFIRM_DELTA", "0.05", conv=float))
     RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
     RELEVANCE_GAP_MIN: float = field(default_factory=lambda: _get_env("RELEVANCE_GAP_MIN", "0.05", conv=float))
     MMR_LAMBDA: float = field(default_factory=lambda: _get_env("MMR_LAMBDA", "0.2", conv=float))
     KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "3", conv=int))
+    AUTOREPLY_KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("AUTOREPLY_KNOWLEDGE_TOP_K", "1", conv=int))
 
     # ─── SCHEDULER ────────────────────────────────────────────────
     SCHED_ENABLE_KB_GC: bool = field(default_factory=lambda: _get_env("SCHED_ENABLE_KB_GC", "true", conv=_parse_bool))
