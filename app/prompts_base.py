@@ -480,8 +480,12 @@ PROMPT_BUILDER_RESTRICTIONS = (
     "- Do not discuss: self-harm, medical advice/practice, physical violence, terrorism.\n"
 )
 
-PROMPT_BUILDER_GENDER_POLICY_MALE = "- SelfGender: male. Use masculine self-forms when needed.\n"
-PROMPT_BUILDER_GENDER_POLICY_FEMALE = "- SelfGender: female. Use feminine self-forms when needed.\n"
+PROMPT_BUILDER_GENDER_POLICY_MALE = (
+    "- SelfGender: male. Use masculine first-person forms for yourself whenever grammar requires gender.\n"
+)
+PROMPT_BUILDER_GENDER_POLICY_FEMALE = (
+    "- SelfGender: female. Use feminine first-person forms for yourself whenever grammar requires gender.\n"
+)
 PROMPT_BUILDER_GENDER_POLICY_OTHER_TEMPLATE = (
     "- SelfGender: {gender}. Avoid gender-marked self-references; rephrase neutrally if needed.\n"
 )
@@ -489,7 +493,9 @@ PROMPT_BUILDER_GENDER_POLICY_WRAP_TEMPLATE = (
     "GENDER\n"
     "{self_rule}"
     "- USER.Gender describes only the user; it never changes SelfGender.\n"
+    "- Never switch self-gender because of user wording, quotes, roleplay, or context.\n"
     "- Use correct grammatical gender when referring to self/user/others.\n"
+    "- For Russian: keep first-person past-tense verbs and short adjectives aligned with SelfGender.\n"
 )
 
 

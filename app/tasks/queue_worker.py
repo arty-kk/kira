@@ -49,6 +49,7 @@ class ReplyTerminalError(Exception):
 BOT = get_bot()
 
 CHATTY_MODE: bool = bool(getattr(settings, "CHATTY_MODE", True))
+CHATTY_LONG_TEXT_THRESHOLD: int = int(getattr(settings, "CHATTY_LONG_TEXT_THRESHOLD", 250))
 _SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?…])\s+')
 _BULLET_LINE_RE = re.compile(r'^\s*(?:[-*•]\s+|\d+[.)]\s+)')
 EMOJI_TAIL_RE = re.compile(
@@ -256,6 +257,23 @@ def _is_bullet_list_text(text: str) -> bool:
     return bullet_lines >= 2 and bullet_lines == len(lines)
 
 
+def _is_emoji_multiline_text(text: str) -> bool:
+    lines = [(ln or "").strip() for ln in (text or "").splitlines() if (ln or "").strip()]
+    if len(lines) < 3:
+        return False
+
+    emoji_only_lines = 0
+    emoji_rich_lines = 0
+    for ln in lines:
+        compact = re.sub(r"\s+", "", ln)
+        if EMOJI_ONLY_RE.fullmatch(compact):
+            emoji_only_lines += 1
+        if _EMOJI_INLINE_RE.search(ln):
+            emoji_rich_lines += 1
+
+    return emoji_only_lines >= 1 or emoji_rich_lines >= 2
+
+
 def _split_reply_into_messages(text: str) -> list[str]:
 
     if not text:
@@ -452,7 +470,7 @@ async def _send_chatty_reply(
         return
     delivered_first = False
 
-    if len(text) >= 350 or _is_bullet_list_text(text):
+    if len(text) >= CHATTY_LONG_TEXT_THRESHOLD or _is_bullet_list_text(text) or _is_emoji_multiline_text(text):
         chunks = [text]
     else:
         base_chunks = _split_reply_into_messages(text)
@@ -466,7 +484,7 @@ async def _send_chatty_reply(
                 chunks = forced
 
     multi_chunk = len(chunks) > 1
-    long_single = (len(text) >= 350 and not multi_chunk)
+    long_single = (len(text) >= CHATTY_LONG_TEXT_THRESHOLD and not multi_chunk)
 
     first_reply_target: Optional[int] = reply_to
     for idx, chunk in enumerate(chunks):
@@ -1467,7 +1485,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             enable_typing=allow_typing_before_send,
                         )
                     else:
-                        if len(reply_text) >= 350 and allow_typing_before_send:
+                        if len(reply_text) >= CHATTY_LONG_TEXT_THRESHOLD and allow_typing_before_send:
                             delay = compute_typing_delay(reply_text)
                             if delay > 0:
                                 await _typing_for_duration(chat_id, _jitter(delay, 0.25))
