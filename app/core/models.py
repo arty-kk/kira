@@ -7,7 +7,7 @@ from sqlalchemy import (
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB
 
-from app.core.db import Base
+from app.core.db_base import Base
 
 
 class User(Base):

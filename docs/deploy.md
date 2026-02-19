@@ -39,6 +39,24 @@ Expected bootstrap result in the same CD step:
 - If `DEPLOY_COMMIT_SHA` is empty (for example, manual `workflow_dispatch`), the script falls back to branch deployment via `DEPLOY_BRANCH`.
 - In automatic CD (`workflow_run` after successful CI), the workflow passes `github.event.workflow_run.head_sha`, so production deploys the exact commit that passed CI checks.
 
+
+## Alembic migrations: minimal env
+
+For migration-only runs (`migrate` service or manual `alembic upgrade head`), only database context is required.
+
+Minimum env:
+
+- `DATABASE_URL`
+
+`REDIS_URL`, `REDIS_URL_QUEUE`, and `REDIS_URL_VECTOR` are not required to initialize Alembic migration environment.
+
+Example:
+
+```bash
+DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/appdb \
+python -m alembic -c alembic/alembic.ini upgrade head
+```
+
 ## Supported scale variables
 
 - `DB_SCALE` → `db`
