@@ -244,6 +244,7 @@ async def extract_external_mentions(
 
     redis = get_redis()
     bot = get_bot()
+    own_bot_username = str(getattr(settings, "TELEGRAM_BOT_USERNAME", "") or "").lstrip("@").strip().lower()
     external: list[str] = []
     usernames: list[str] = []
 
@@ -259,6 +260,8 @@ async def extract_external_mentions(
             continue
         uname = _norm_uname(text[off:off + ln])
         if not uname:
+            continue
+        if own_bot_username and uname == own_bot_username:
             continue
         usernames.append(uname)
 
@@ -496,10 +499,12 @@ async def check_light(
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 
-    external_mentions = await extract_external_mentions(chat_id, text or "", entities)
-    if external_mentions and links_blocked:
-        logger.debug("check_light: external_mentions=%r", external_mentions)
-        return "link_violation"
+    external_mentions: list[str] = []
+    if links_blocked:
+        external_mentions = await extract_external_mentions(chat_id, text or "", entities)
+        if external_mentions:
+            logger.debug("check_light: external_mentions=%r", external_mentions)
+            return "link_violation"
 
     if links_blocked and contains_telegram_obfuscated(text or ""):
         return "link_violation"

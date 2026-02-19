@@ -769,7 +769,7 @@ async def on_group_message(message: Message) -> None:
 
         try:
             if not await _is_message_allowed_for_group_handlers(message):
-                logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
+                logger.info("Ignore unauthorized group chat=%s title=%r uname=%s", cid, getattr(message.chat, "title", None), getattr(message.chat, "username", None))
                 return
         except Exception:
             logger.exception("Group access check failed")
@@ -940,7 +940,7 @@ async def on_group_voice(message: Message) -> None:
 
         try:
             if not await _is_message_allowed_for_group_handlers(message):
-                logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
+                logger.info("Ignore unauthorized group chat=%s title=%r uname=%s", cid, getattr(message.chat, "title", None), getattr(message.chat, "username", None))
                 return
         except Exception:
             logger.exception("Group access check failed")
@@ -1189,7 +1189,7 @@ async def on_group_photo(message: Message) -> None:
 
         try:
             if not await _is_message_allowed_for_group_handlers(message):
-                logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
+                logger.info("Ignore unauthorized group chat=%s title=%r uname=%s", cid, getattr(message.chat, "title", None), getattr(message.chat, "username", None))
                 return
         except Exception:
             logger.exception("Group access check failed")
@@ -1232,7 +1232,7 @@ async def on_group_document_image(message: Message) -> None:
 
         try:
             if not await _is_message_allowed_for_group_handlers(message):
-                logger.info("Ignore unauthorized group chat=%s uname=%s", cid, getattr(message.chat, "username", None))
+                logger.info("Ignore unauthorized group chat=%s title=%r uname=%s", cid, getattr(message.chat, "title", None), getattr(message.chat, "username", None))
                 return
         except Exception:
             logger.exception("Group access check failed")

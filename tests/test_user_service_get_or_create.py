@@ -2,6 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from sqlalchemy.dialects import postgresql
+
 from app.core.models import User
 from app.services.user.user_service import get_or_create_user
 
@@ -30,6 +32,10 @@ class GetOrCreateUserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RETURNING users.id", sql)
         self.assertIn("users.free_requests", sql)
         self.assertIn("users.paid_requests", sql)
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        self.assertEqual(compiled.params["free_requests"], 20)
+        self.assertEqual(compiled.params["paid_requests"], 0)
+        self.assertEqual(compiled.params["used_requests"], 0)
 
 
 if __name__ == "__main__":

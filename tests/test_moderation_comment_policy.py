@@ -211,7 +211,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
             ),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=["https://example.com/page"]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=["external_channel"])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=["external_channel"])) as ext_mentions_mock,
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=True),
         ):
@@ -225,6 +225,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(status, "clean")
+        ext_mentions_mock.assert_not_awaited()
 
     async def test_check_light_group_default_still_blocks_same_link(self) -> None:
         with (

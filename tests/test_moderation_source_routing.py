@@ -350,5 +350,49 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         analytics_mock.assert_any_await(100, "error", "internal_error")
 
 
+class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
+        class _Forbidden(Exception):
+            pass
+
+        send_message = AsyncMock(side_effect=[_Forbidden("forbidden")])
+        fake_bot = types.SimpleNamespace(send_message=send_message)
+
+        with (
+            patch.object(moderation, "bot", fake_bot),
+            patch.object(moderation, "TelegramForbiddenError", _Forbidden),
+            patch.object(moderation, "logger") as logger_mock,
+        ):
+            await moderation._send_alert_with_actions(
+                [777],
+                text="alert",
+                chat_id=100,
+                offender_id=42,
+                msg_id=10,
+            )
+
+        logger_mock.info.assert_called_once()
+        logger_mock.error.assert_not_called()
+
+    async def test_send_alert_with_actions_logs_non_forbidden_failures_as_error(self) -> None:
+        send_message = AsyncMock(side_effect=[RuntimeError("boom")])
+        fake_bot = types.SimpleNamespace(send_message=send_message)
+
+        with (
+            patch.object(moderation, "bot", fake_bot),
+            patch.object(moderation, "logger") as logger_mock,
+        ):
+            await moderation._send_alert_with_actions(
+                [778],
+                text="alert",
+                chat_id=100,
+                offender_id=42,
+                msg_id=10,
+            )
+
+        logger_mock.error.assert_called_once()
+
+
+
 if __name__ == "__main__":
     unittest.main()
