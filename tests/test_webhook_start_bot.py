@@ -326,6 +326,29 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         stop_event.set()
         await task
 
+    async def test_webhook_dedup_happens_after_schema_validation(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        payload = {"update_id": 880}
+        with mock.patch.object(webhook.types, "Update", side_effect=[ValueError("bad schema"), {}]):
+            response_a = await handler(_FakeWeb.Request(payload))
+            response_b = await handler(_FakeWeb.Request(payload))
+
+        await asyncio.sleep(0)
+
+        self.assertEqual(response_a.status, 400)
+        self.assertEqual(response_b.status, 200)
+        self.assertEqual(_FakeDispatcher.calls, 1)
+
+        stop_event.set()
+        await task
+
     async def test_webhook_returns_503_when_scheduling_fails(self):
         stop_event = asyncio.Event()
 

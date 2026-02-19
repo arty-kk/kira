@@ -114,7 +114,14 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
             logger.warning("Invalid webhook payload: bad update_id type=%s", type(update_id).__name__)
             return web.Response(status=400)
 
-        # (b) Redis deduplication
+        # (b) Update schema construction
+        try:
+            upd = types.Update(**data)
+        except Exception as exc:
+            logger.warning("invalid update schema: %s", exc)
+            return web.Response(status=400)
+
+        # (c) Redis deduplication
         key = f"tg:{consts.BOT_ID}:update:{update_id}"
         try:
             claimed = await redis_client.set(key, "1", ex=60, nx=True)
@@ -127,13 +134,6 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
             return web.Response(status=200)
 
         logger.info("Incoming update: %s", data)
-
-        # (c) Update schema construction
-        try:
-            upd = types.Update(**data)
-        except Exception as exc:
-            logger.warning("invalid update schema: %s", exc)
-            return web.Response(status=400)
 
         # (d) Schedule update processing
         try:
