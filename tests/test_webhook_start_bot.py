@@ -1,9 +1,12 @@
 import asyncio
 import importlib.util
+import contextlib
 import pathlib
 import sys
 import types
 import unittest
+import importlib.abc
+import importlib.machinery
 from unittest import mock
 
 
@@ -156,16 +159,48 @@ class _FakeBot:
 class _FakeDispatcher:
     calls = 0
     should_fail = False
+    start_handler_registered = False
+    cmd_start_calls = 0
 
     async def feed_update(self, *_args, **_kwargs):
         _FakeDispatcher.calls += 1
         if _FakeDispatcher.should_fail:
             raise RuntimeError("dispatcher failed")
+
+        if isinstance(_args[1], dict):
+            message = _args[1].get("message")
+            if isinstance(message, dict) and message.get("text") == "/start":
+                if not _FakeDispatcher.start_handler_registered:
+                    raise RuntimeError("start handler not registered")
+                _FakeDispatcher.cmd_start_calls += 1
         return None
+
+
+class _HandlersLoader(importlib.abc.Loader):
+    def create_module(self, spec):
+        return types.ModuleType(spec.name)
+
+    def exec_module(self, module):
+        _FakeDispatcher.start_handler_registered = True
+
+
+class _HandlersFinder(importlib.abc.MetaPathFinder):
+    def __init__(self, fullname):
+        self.fullname = fullname
+        self.loader = _HandlersLoader()
+
+    def find_spec(self, fullname, path, target=None):
+        if fullname == self.fullname:
+            return importlib.machinery.ModuleSpec(fullname, self.loader)
+        return None
+
+HANDLERS_MODULE_NAME = "app.bot.handlers"
+HANDLERS_FINDER = _HandlersFinder(HANDLERS_MODULE_NAME)
 
 
 def _load_webhook_module():
     fake_app = types.ModuleType("app")
+    fake_app.__path__ = []
     fake_config = types.ModuleType("app.config")
     fake_core = types.ModuleType("app.core")
     fake_core.__path__ = []
@@ -174,6 +209,8 @@ def _load_webhook_module():
     fake_clients = types.ModuleType("app.clients")
     fake_telegram = types.ModuleType("app.clients.telegram_client")
     fake_bot_pkg = types.ModuleType("app.bot")
+    fake_bot_pkg.__path__ = []
+    fake_app.bot = fake_bot_pkg
     fake_bot_components = types.ModuleType("app.bot.components")
     fake_dispatcher = types.ModuleType("app.bot.components.dispatcher")
     fake_constants = types.ModuleType("app.bot.components.constants")
@@ -239,8 +276,7 @@ def _load_webhook_module():
         "aiogram.types": fake_aiogram_types,
     }
     module_name = "webhook_under_test"
-
-    previous_modules = {name: sys.modules.get(name) for name in [*injected_modules, module_name]}
+    previous_modules = {name: sys.modules.get(name) for name in [*injected_modules, module_name, HANDLERS_MODULE_NAME]}
     try:
         sys.modules.update(injected_modules)
 
@@ -265,8 +301,18 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _FakeDispatcher.calls = 0
         _FakeDispatcher.should_fail = False
+        _FakeDispatcher.start_handler_registered = False
+        _FakeDispatcher.cmd_start_calls = 0
+        sys.modules.pop(HANDLERS_MODULE_NAME, None)
+        if HANDLERS_FINDER not in sys.meta_path:
+            sys.meta_path.insert(0, HANDLERS_FINDER)
         _FakeBot.set_webhook_side_effect = None
         webhook.settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION = False
+
+
+    async def asyncTearDown(self):
+        with contextlib.suppress(ValueError):
+            sys.meta_path.remove(HANDLERS_FINDER)
 
     async def test_start_bot_without_self_signed_cert_uses_none_ssl_context(self):
         stop_event = asyncio.Event()
@@ -318,6 +364,62 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(any("Starting bot without successful webhook registration" in message for message in logs.output))
 
+
+    async def test_start_command_fails_without_handler_side_effect_registration(self):
+        stop_event = asyncio.Event()
+        sys.modules.pop(HANDLERS_MODULE_NAME, None)
+
+        with mock.patch.object(_HandlersLoader, "exec_module", lambda self, module: None):
+            task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+            await asyncio.sleep(0)
+
+            app = _FakeApplication.last_instance
+            self.assertIsNotNone(app)
+            handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+            payload = {
+                "update_id": 990,
+                "message": {
+                    "text": "/start",
+                    "chat": {"id": 1, "type": "private"},
+                    "from": {"id": 2},
+                },
+            }
+            response = await handler(_FakeWeb.Request(payload))
+
+            self.assertEqual(response.status, 503)
+            self.assertEqual(_FakeDispatcher.cmd_start_calls, 0)
+
+            stop_event.set()
+            await task
+
+
+    async def test_start_command_is_routed_after_start_bot_imports_handlers(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        self.assertIsNotNone(app)
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        payload = {
+            "update_id": 991,
+            "message": {
+                "text": "/start",
+                "chat": {"id": 1, "type": "private"},
+                "from": {"id": 2},
+            },
+        }
+        response = await handler(_FakeWeb.Request(payload))
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(_FakeDispatcher.start_handler_registered)
+        self.assertEqual(_FakeDispatcher.cmd_start_calls, 1)
+
+        stop_event.set()
+        await task
 
     async def test_webhook_update_dedup_uses_atomic_nx_set(self):
         stop_event = asyncio.Event()
