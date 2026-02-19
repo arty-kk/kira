@@ -22,6 +22,7 @@ def _seed_env() -> None:
 
 _seed_env()
 
+import app.emo_engine.persona.neurograph as neurograph_module
 from app.emo_engine.persona.neurograph import SelfNeuronNetwork
 
 
@@ -44,8 +45,8 @@ class NeurographReadyRetryTests(unittest.IsolatedAsyncioTestCase):
         net._ready_retry_backoff_sec = 0.0
         redis_ok = _RedisOk(raw=None)
 
-        with patch(
-            "app.emo_engine.persona.neurograph.get_redis_vector",
+        with patch.object(
+            neurograph_module, "get_redis_vector",
             side_effect=[RuntimeError("redis down"), redis_ok],
         ):
             await net.ready()
@@ -67,8 +68,8 @@ class NeurographReadyRetryTests(unittest.IsolatedAsyncioTestCase):
         net = SelfNeuronNetwork(chat_id=77)
         net._ready_retry_backoff_sec = 30.0
 
-        with patch(
-            "app.emo_engine.persona.neurograph.get_redis_vector",
+        with patch.object(
+            neurograph_module, "get_redis_vector",
             side_effect=RuntimeError("redis down"),
         ) as mocked_get_redis:
             await net.ready()
@@ -79,8 +80,8 @@ class NeurographReadyRetryTests(unittest.IsolatedAsyncioTestCase):
 
         net._last_ready_attempt_ts -= (net._ready_retry_backoff_sec + 0.1)
         redis_ok = _RedisOk(raw=None)
-        with patch(
-            "app.emo_engine.persona.neurograph.get_redis_vector",
+        with patch.object(
+            neurograph_module, "get_redis_vector",
             return_value=redis_ok,
         ) as mocked_get_redis:
             await net.ready()
