@@ -55,7 +55,8 @@ async def _resolve_stats_target_user_id(message: Message) -> Optional[str]:
     for ent in entities:
         if ent.type == MessageEntityType.MENTION:
             uname = raw[ent.offset + 1 : ent.offset + ent.length]  # без '@'
-            cached = await redis_client.hget(f"user_map:{chat_id}", uname)
+            uname_norm = uname.lstrip('@').strip().lower()
+            cached = await redis_client.hget(f"user_map:{chat_id}", uname_norm)
             normalized_cached = _normalize_cached_user_id(cached)
             if normalized_cached is not None:
                 return normalized_cached
