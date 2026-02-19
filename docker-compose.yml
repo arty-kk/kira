@@ -230,6 +230,7 @@ services:
     init: true
     environment:
       DB_APP_NAME: "migrations"
+      PYTHONPATH: "/app"
     depends_on:
       db:
         condition: service_healthy
