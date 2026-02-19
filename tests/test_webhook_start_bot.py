@@ -131,6 +131,7 @@ class _FakeSession:
 
 class _FakeBot:
     last_instance = None
+    set_webhook_side_effect = None
 
     def __init__(self):
         self.session = _FakeSession()
@@ -142,6 +143,13 @@ class _FakeBot:
 
     async def set_webhook(self, **kwargs):
         self.last_set_webhook_kwargs = kwargs
+        side_effect = _FakeBot.set_webhook_side_effect
+        if isinstance(side_effect, Exception):
+            raise side_effect
+        if callable(side_effect):
+            result = side_effect()
+            if isinstance(result, Exception):
+                raise result
         return True
 
 
@@ -180,6 +188,7 @@ def _load_webhook_module():
         WEBHOOK_PORT=8443,
         WEBHOOK_FEED_UPDATE_TIMEOUT_SEC=1,
         WEBHOOK_DROP_PENDING_UPDATES=False,
+        WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION=False,
         ALLOWED_GROUP_IDS=[],
         MEMORY_TTL_DAYS=1,
     )
@@ -256,6 +265,8 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _FakeDispatcher.calls = 0
         _FakeDispatcher.should_fail = False
+        _FakeBot.set_webhook_side_effect = None
+        webhook.settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION = False
 
     async def test_start_bot_without_self_signed_cert_uses_none_ssl_context(self):
         stop_event = asyncio.Event()
@@ -278,6 +289,35 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(_FakeBot.last_instance.last_set_webhook_kwargs)
         self.assertIn("drop_pending_updates", _FakeBot.last_instance.last_set_webhook_kwargs)
         self.assertFalse(_FakeBot.last_instance.last_set_webhook_kwargs["drop_pending_updates"])
+
+    async def test_start_bot_raises_runtime_error_when_webhook_registration_fails_by_default(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+        _FakeBot.set_webhook_side_effect = Exception("boom")
+
+        with self.assertRaisesRegex(RuntimeError, "webhook registration failed"):
+            await webhook.start_bot(stop_event=stop_event)
+
+
+    async def test_start_bot_raises_runtime_error_on_webhook_registration_timeout_by_default(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+        _FakeBot.set_webhook_side_effect = asyncio.TimeoutError()
+
+        with self.assertRaisesRegex(RuntimeError, "webhook registration failed"):
+            await webhook.start_bot(stop_event=stop_event)
+
+    async def test_start_bot_continues_when_registration_fails_and_allow_flag_enabled(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+        webhook.settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION = True
+        _FakeBot.set_webhook_side_effect = Exception("boom")
+
+        with self.assertLogs(webhook.logger, level="WARNING") as logs:
+            await webhook.start_bot(stop_event=stop_event)
+
+        self.assertTrue(any("Starting bot without successful webhook registration" in message for message in logs.output))
+
 
     async def test_webhook_update_dedup_uses_atomic_nx_set(self):
         stop_event = asyncio.Event()
