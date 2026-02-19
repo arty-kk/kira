@@ -168,6 +168,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             stars_amount=50,
             telegram_payment_charge_id="charge_ok",
             notified_at=None,
+            lease_token="lease-token",
         )
         db = _FakeDB([1, 1, None])
         update_calls = []
@@ -189,17 +190,16 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
-            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="notify-token")),
         ):
-            await payments._notify_payment_result(outbox, remaining=10, duplicate=False)
+            await payments._notify_payment_result(outbox, remaining=10, duplicate=False, lease_token="lease-token")
             outbox.notified_at = None
-            await payments._notify_payment_result(outbox, remaining=10, duplicate=False)
+            await payments._notify_payment_result(outbox, remaining=10, duplicate=False, lease_token="lease-token")
 
         send_mock.assert_awaited_once()
         self.assertEqual(len(update_calls), 3)
         self.assertEqual(
             update_calls[0].values_kwargs,
-            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+            {"leased_at": "now", "updated_at": "now"},
         )
         self.assertEqual(
             update_calls[1].values_kwargs,
@@ -207,7 +207,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             update_calls[2].values_kwargs,
-            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+            {"leased_at": "now", "updated_at": "now"},
         )
 
     async def test_notify_rolls_back_claim_when_send_fails(self):
@@ -223,6 +223,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             stars_amount=10,
             telegram_payment_charge_id="charge_fail",
             notified_at=None,
+            lease_token="lease-token",
         )
         db = _FakeDB([1, 1])
         update_calls = []
@@ -242,15 +243,14 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
-            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="notify-token")),
         ):
-            await payments._notify_payment_result(outbox, remaining=1, duplicate=False)
+            await payments._notify_payment_result(outbox, remaining=1, duplicate=False, lease_token="lease-token")
 
         self.assertIsNone(outbox.notified_at)
         self.assertEqual(db.execute_calls, 2)
         self.assertEqual(
             update_calls[0].values_kwargs,
-            {"lease_token": "notify-token", "leased_at": "now", "updated_at": "now"},
+            {"leased_at": "now", "updated_at": "now"},
         )
         self.assertEqual(
             update_calls[1].values_kwargs,
@@ -270,6 +270,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             stars_amount=10,
             telegram_payment_charge_id="charge_error",
             notified_at=None,
+            lease_token="lease-token",
         )
         db = _FakeDB([1, 1, 1, 1])
         update_calls = []
@@ -289,16 +290,11 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
-            patch.object(
-                payments.uuid,
-                "uuid4",
-                side_effect=[SimpleNamespace(hex="notify-token-1"), SimpleNamespace(hex="notify-token-2")],
-            ),
         ):
             with self.assertRaises(RuntimeError):
-                await payments._notify_payment_result(outbox, remaining=1, duplicate=False)
+                await payments._notify_payment_result(outbox, remaining=1, duplicate=False, lease_token="lease-token")
             self.assertIsNone(outbox.notified_at)
-            await payments._notify_payment_result(outbox, remaining=1, duplicate=False)
+            await payments._notify_payment_result(outbox, remaining=1, duplicate=False, lease_token="lease-token")
 
         self.assertEqual(len(update_calls), 4)
         self.assertEqual(
@@ -323,6 +319,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             stars_amount=200,
             telegram_payment_charge_id="charge_gift",
             notified_at=None,
+            lease_token="lease-token",
         )
 
         db = _FakeDB([1, 1])
@@ -347,10 +344,9 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "t", AsyncMock(return_value="gift sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
-            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="notify-token")),
             patch.object(payments.celery, "send_task") as send_task_mock,
         ):
-            await payments._notify_payment_result(outbox, remaining=30, duplicate=False)
+            await payments._notify_payment_result(outbox, remaining=30, duplicate=False, lease_token="lease-token")
 
         send_mock.assert_awaited_once()
         push_mock.assert_awaited_once()
@@ -402,6 +398,7 @@ class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
             stars_amount=100,
             telegram_payment_charge_id="charge_retry_notify",
             notified_at=None,
+            lease_token="lease-token",
         )
 
         db = _FakeRequeueNotifyDB(charge_id=outbox.telegram_payment_charge_id)
@@ -418,21 +415,22 @@ class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
             patch.object(payments, "func", _Func()),
-            patch.object(payments.uuid, "uuid4", side_effect=[SimpleNamespace(hex="notify-1"), SimpleNamespace(hex="lease-1"), SimpleNamespace(hex="notify-2")]),
+            patch.object(payments.uuid, "uuid4", return_value=SimpleNamespace(hex="lease-1")),
             patch.object(payments.celery, "send_task") as send_task_mock,
         ):
-            await payments._notify_payment_result(outbox, remaining=15, duplicate=True)
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True, lease_token="lease-token")
             self.assertIsNone(outbox.notified_at)
 
             enqueued, errors = await payments.requeue_applied_unnotified_outbox(batch_size=10)
             self.assertEqual((enqueued, errors), (1, 0))
             send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_retry_notify", "lease-1"])
 
-            await payments._notify_payment_result(outbox, remaining=15, duplicate=True)
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True, lease_token="lease-token")
 
         self.assertIsNotNone(outbox.notified_at)
         self.assertEqual(send_mock.await_count, 2)
         payments.add_paid_requests.assert_not_awaited()
+
 
 
 if __name__ == "__main__":

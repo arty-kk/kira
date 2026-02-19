@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import pathlib
 import sys
@@ -411,9 +412,37 @@ class ProcessOutboxLeaseTokenTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outbox.attempts, 1)
         self.assertEqual(outbox.status, "applied")
         self.assertIsNotNone(outbox.applied_at)
-        self.assertIsNone(outbox.lease_token)
+        self.assertEqual(outbox.lease_token, "fresh-token")
         self.assertEqual(insert_capture["index_elements"], ["telegram_payment_charge_id"])
         add_paid_requests_mock.assert_not_awaited()
+
+
+class ProcessOutboxRetryNotifyTests(unittest.TestCase):
+    def test_process_outbox_retry_with_same_lease_token_reaches_notify_without_requeue(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(status="applied", notified_at=None)
+        apply_mock = AsyncMock(side_effect=[(outbox, 9, False), (outbox, 9, True)])
+        notify_mock = AsyncMock(side_effect=[RuntimeError("send failed"), None])
+
+        def _run_sync(coro, timeout=None):
+            return asyncio.run(coro)
+
+        with (
+            patch.object(payments, "_apply_outbox", apply_mock),
+            patch.object(payments, "_notify_payment_result", notify_mock),
+            patch.object(payments, "_run", _run_sync),
+            patch.object(payments, "requeue_applied_unnotified_outbox", AsyncMock()) as requeue_mock,
+        ):
+            with self.assertRaises(RuntimeError):
+                payments.process_outbox_task("charge_retry", "lease-token")
+            payments.process_outbox_task("charge_retry", "lease-token")
+
+        self.assertEqual(apply_mock.await_count, 2)
+        apply_mock.assert_any_await("charge_retry", "lease-token")
+        self.assertEqual(notify_mock.await_count, 2)
+        self.assertEqual(notify_mock.await_args_list[0].args[3], "lease-token")
+        self.assertEqual(notify_mock.await_args_list[1].args[3], "lease-token")
+        requeue_mock.assert_not_called()
 
 
 if __name__ == "__main__":
