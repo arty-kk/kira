@@ -108,6 +108,12 @@ def validate_settings_config(cfg: "Settings") -> None:
             cfg._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS,
         )
 
+    if cfg._ALLOWED_GROUP_IDS_INVALID_TOKENS:
+        logger.warning(
+            "Group access config contains invalid CSV tokens: ALLOWED_GROUP_IDS=%s",
+            cfg._ALLOWED_GROUP_IDS_INVALID_TOKENS,
+        )
+
     overlap = set(cfg.COMMENT_TARGET_CHAT_IDS) & set(cfg.COMMENT_SOURCE_CHANNEL_IDS)
     if overlap:
         logger.warning(
@@ -204,6 +210,7 @@ class Settings:
         self.WEBHOOK_CERT = os.path.join(self.CERTS_DIR, "cert.pem")
         self.WEBHOOK_KEY  = os.path.join(self.CERTS_DIR, "key.pem")
         os.makedirs(self.CERTS_DIR, exist_ok=True)
+        self.ALLOWED_GROUP_IDS, self._ALLOWED_GROUP_IDS_INVALID_TOKENS = _parse_int_csv_env("ALLOWED_GROUP_IDS")
         self.COMMENT_TARGET_CHAT_IDS, self._COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS = _parse_int_csv_env(
             "COMMENT_TARGET_CHAT_IDS"
         )
@@ -252,12 +259,8 @@ class Settings:
     SPAM_WINDOW: int = field(default_factory=lambda: _get_env("SPAM_WINDOW", "10", conv=int))
     SPAM_LIMIT: int = field(default_factory=lambda: _get_env("SPAM_LIMIT", "6", conv=int))
     #Group Limits
-    ALLOWED_GROUP_IDS: List[int] = field(
-        default_factory=lambda: [
-            int(x) for x in (_get_env("ALLOWED_GROUP_IDS", "", conv=str) or "").split(",")
-            if x.strip()
-        ]
-    )
+    ALLOWED_GROUP_IDS: List[int] = field(default_factory=list)
+    _ALLOWED_GROUP_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
     COMMENT_MODERATION_ENABLED: bool = field(
         default_factory=lambda: _get_env("COMMENT_MODERATION_ENABLED", "false", conv=_parse_bool)
     )

@@ -94,6 +94,25 @@ class CommentSettingsConfigTests(unittest.TestCase):
         self.assertEqual(cfg._COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS, [])
         self.assertEqual(cfg._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS, [])
 
+    def test_allowed_group_ids_csv_parsing_logs_invalid_tokens(self) -> None:
+        env = {
+            "OPENAI_API_KEY": "test-key",
+            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "REDIS_URL": "redis://localhost:6379/0",
+            "REDIS_URL_QUEUE": "redis://localhost:6379/1",
+            "REDIS_URL_VECTOR": "redis://localhost:6379/2",
+            "ALLOWED_GROUP_IDS": "111, bad, 222, nope",
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertLogs("app.config", level="WARNING") as cm:
+                cfg = config.Settings()
+
+        self.assertEqual(cfg.ALLOWED_GROUP_IDS, [111, 222])
+        self.assertEqual(cfg._ALLOWED_GROUP_IDS_INVALID_TOKENS, ["bad", "nope"])
+        self.assertTrue(any("Invalid integer tokens in ALLOWED_GROUP_IDS" in msg for msg in cm.output))
+        self.assertTrue(any("Group access config contains invalid CSV tokens" in msg for msg in cm.output))
+
 
 class CommentSettingsMixedAccessTests(unittest.IsolatedAsyncioTestCase):
     async def test_allowed_groups_and_comment_scope_work_without_conflict(self) -> None:
