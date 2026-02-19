@@ -402,6 +402,7 @@ class Settings:
     CELERY_MODERATION_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_PREFETCH", "1", conv=int))
     CELERY_MODERATION_MAX_IMAGE_BYTES: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_MAX_IMAGE_BYTES", str(5 * 1024 * 1024), conv=int))
     CELERY_MODERATION_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_MAX_PAYLOAD_BYTES", str(256 * 1024), conv=int))
+    CELERY_RUN_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("CELERY_RUN_TIMEOUT_SEC", "120", conv=float))
     MEDIA_PREPROCESS_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("MEDIA_PREPROCESS_TIMEOUT_SEC", "20", conv=float))
     MEDIA_PREPROCESSED_TTL_SEC: int = field(default_factory=lambda: _get_env("MEDIA_PREPROCESSED_TTL_SEC", "300", conv=int))
     MEDIA_MAX_INPUT_BYTES: int = field(default_factory=lambda: _get_env("MEDIA_MAX_INPUT_BYTES", str(30 * 1024 * 1024), conv=int))

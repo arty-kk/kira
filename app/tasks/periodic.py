@@ -22,6 +22,8 @@ from app.services.addons import (
 
 
 logger = logging.getLogger(__name__)
+PRICES_POST_TIME_LIMIT_SEC = 180
+PRICES_POST_RUN_TIMEOUT_SEC = 170
 
 
 @celery.task(name="cleanup_nonbuyers")
@@ -52,7 +54,7 @@ def battle_job_task():
     logger.info("battle_job_task done")
 
 
-@celery.task(name="prices_post")
+@celery.task(name="prices_post", time_limit=PRICES_POST_TIME_LIMIT_SEC)
 def prices_post_task():
     logger.info("prices_post_task start")
 
@@ -104,7 +106,7 @@ def prices_post_task():
 
         logger.info("prices_post: sent %d message(s)", len(data))
 
-    _run(_inner())
+    _run(_inner(), timeout=PRICES_POST_RUN_TIMEOUT_SEC)
     logger.info("prices_post_task done")
 
 

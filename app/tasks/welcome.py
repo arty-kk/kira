@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 WELCOME_TTL = getattr(settings, "WELCOME_TTL_SECONDS", 180)
+WELCOME_GROUP_TIME_LIMIT_SEC = 90
+WELCOME_GROUP_RUN_TIMEOUT_SEC = 85
+WELCOME_PRIVATE_TIME_LIMIT_SEC = 90
+WELCOME_PRIVATE_RUN_TIMEOUT_SEC = 85
 
 
 async def _delete_later(bot, chat_id: int, msg_id: int, delay: int) -> None:
@@ -59,7 +63,7 @@ async def typing_loop(bot, chat_id: int, action: ChatAction = ChatAction.TYPING,
         logger.debug("typing_loop error for chat_id=%s", chat_id, exc_info=True)
 
 
-@celery.task(name="welcome.group")
+@celery.task(name="welcome.group", time_limit=WELCOME_GROUP_TIME_LIMIT_SEC)
 def send_group_welcome_task(chat_id: int, user: dict) -> None:
 
     try:
@@ -123,10 +127,10 @@ def send_group_welcome_task(chat_id: int, user: dict) -> None:
             with suppress(asyncio.CancelledError):
                 await typing_task
 
-    _run(_inner())
+    _run(_inner(), timeout=WELCOME_GROUP_RUN_TIMEOUT_SEC)
 
 
-@celery.task(name="welcome.private_ai")
+@celery.task(name="welcome.private_ai", time_limit=WELCOME_PRIVATE_TIME_LIMIT_SEC)
 def send_private_ai_welcome_task(uid: int) -> None:
 
     async def _inner():
@@ -146,4 +150,4 @@ def send_private_ai_welcome_task(uid: int) -> None:
             with suppress(asyncio.CancelledError):
                 await typing_task
 
-    _run(_inner())
+    _run(_inner(), timeout=WELCOME_PRIVATE_RUN_TIMEOUT_SEC)
