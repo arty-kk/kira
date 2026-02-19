@@ -232,7 +232,7 @@ TWITTER_USER_PROMPT_TEMPLATE = (
 # ===== app/services/addons/personal_ping.py (classifiers) =====
 PERSONAL_PING_CONTEXT_CLASSIFIER_SYSTEM_TEMPLATE = (
     "Fast multilingual context classifier. Output ONLY minified JSON: "
-    "{motive: one of [{taxo}] or null, care_needed: bool, care_reason: short or null, anchor: short or null}. "
+    "{{\"motive\": one of [{taxo}] or null, \"care_needed\": bool, \"care_reason\": short or null, \"anchor\": short or null}}. "
     "care_needed=true if transcript indicates user was ill/sad/stressed/tired/anxious/grieving/busy recently.\n\n"
 )
 PERSONAL_PING_CONTEXT_CLASSIFIER_USER_TEMPLATE = "Transcript:\n{transcript}\nJSON only.\n\n"
@@ -308,7 +308,7 @@ TG_POST_JUDGE_USER_TEMPLATE = (
     "RECENT_POSTS:\n{recent_posts}\n\n"
     "CANDIDATE:\n{candidate}\n\n"
     "Верни ТОЛЬКО JSON:\n"
-    "{"
+    "{{"
     "\"score\":0-100,"
     "\"hallucination_risk\":\"low|medium|high\","
     "\"has_cta\":true|false,"
@@ -317,7 +317,7 @@ TG_POST_JUDGE_USER_TEMPLATE = (
     "\"too_similar\":true|false,"
     "\"tone\":\"ok|too_dry|too_funny\","
     "\"notes\":[\"короткие замечания\"]"
-    "}"
+    "}}"
 )
 
 TG_POST_POLISH_SYSTEM_PROMPT = (
@@ -358,7 +358,7 @@ CORE_SELECT_MEMORIES_SYSTEM_TEMPLATE = (
     "Select relevant memory item indices by category.\n"
     "Items may be any language; do not translate/paraphrase.\n"
     "Pick up to 2 indices per category (past/present/future) relevant to NOW + context.\n"
-    "Output ONLY JSON: {\"past\":[...],\"present\":[...],\"future\":[...]}.\n"
+    "Output ONLY JSON: {{\"past\":[...],\"present\":[...],\"future\":[...]}}.\n"
     "Now: {now}\nContext: {context}\n\n"
 )
 CORE_SELECT_MEMORIES_USER_PROMPT = "Select indices. JSON only.\n\n"
