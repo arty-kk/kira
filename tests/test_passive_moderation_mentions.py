@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "12345:abcde")
+os.environ.setdefault("TELEGRAM_BOT_USERNAME", "kiragame_aibot")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("REDIS_URL_QUEUE", "redis://localhost:6379/1")
@@ -107,6 +108,63 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first, [])
         self.assertEqual(second, [])
         bot.get_chat.assert_awaited_once_with("@known")
+
+
+    async def test_extract_external_mentions_skips_own_bot_username(self) -> None:
+        redis = _FakeRedisMentions()
+        bot = types.SimpleNamespace(get_chat=AsyncMock())
+        text = "ping @kiragame_aibot"
+        entities = [{"type": "mention", "offset": 5, "length": 15}]
+
+        with (
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_bot", return_value=bot),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    TELEGRAM_BOT_USERNAME="kiragame_aibot",
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+        ):
+            external = await passive_moderation.extract_external_mentions(1, text, entities)
+
+        self.assertEqual(external, [])
+        bot.get_chat.assert_not_awaited()
+
+    async def test_check_light_does_not_flag_own_bot_mention_as_link_violation(self) -> None:
+        text = "@kiragame_aibot ."
+        entities = [{"type": "mention", "offset": 0, "length": 15}]
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    TELEGRAM_BOT_USERNAME="kiragame_aibot",
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(passive_moderation, "get_bot", return_value=types.SimpleNamespace(get_chat=AsyncMock())),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "clean")
 
     async def test_handle_passive_moderation_timeout_is_risky_not_clean(self) -> None:
         fake_redis = _FakeRedisHandler()

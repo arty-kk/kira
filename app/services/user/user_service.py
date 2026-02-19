@@ -19,6 +19,7 @@ from app.core.db import session_scope
 logger = logging.getLogger(__name__)
 
 PRICE_PER_REQUEST_MILLS = 56
+INITIAL_FREE_REQUESTS = 20
 
 
 class InvalidBillingTierError(ValueError):
@@ -31,6 +32,11 @@ async def get_or_create_user(db: AsyncSession, tg_user: "TelegramUser") -> User:
             id=tg_user.id,
             username=tg_user.username,
             full_name=tg_user.full_name,
+            free_requests=INITIAL_FREE_REQUESTS,
+            paid_requests=0,
+            used_requests=0,
+            total_paid_cents=0,
+            persona_prefs={},
         )
         .on_conflict_do_update(
             index_elements=[User.id],

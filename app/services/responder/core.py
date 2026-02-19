@@ -869,6 +869,9 @@ async def respond_to_user(
             eff_response_model = settings.BASE_MODEL
             req_tier = "none"
 
+    if group_mode or is_channel_post:
+        eff_response_model = str(getattr(settings, "RESPONSE_GROUP_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini")
+
     logger.info("   ↳ model selection: %s (tier=%s, free=%s, paid=%s)",
                 eff_response_model, req_tier, free_left, paid_left)
 

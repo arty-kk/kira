@@ -11,6 +11,7 @@ from typing import Any, List
 from aiogram import types, F
 from aiogram.enums import ChatType
 from aiogram.dispatcher.event.bases import SkipHandler
+from aiogram.exceptions import TelegramForbiddenError
 
 from app.clients.telegram_client import get_bot
 from app.bot.components.dispatcher import dp
@@ -146,21 +147,29 @@ async def _send_alert_with_actions(targets: list[int], *, text: str, chat_id: in
         logger.warning("No moderator targets configured; skipping alert with actions")
         return
 
-    tasks = [
-        bot.send_message(
-            chat_id=int(mid),
-            text=text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=_ban_markup(chat_id, offender_id, msg_id),
-        )
-        for mid in targets
-    ]
-    for fut in asyncio.as_completed(tasks):
-        try:
-            await fut
-        except Exception:
-            logger.exception("Failed to send moderation alert with actions")
+    results = await asyncio.gather(
+        *[
+            bot.send_message(
+                chat_id=int(mid),
+                text=text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=_ban_markup(chat_id, offender_id, msg_id),
+            )
+            for mid in targets
+        ],
+        return_exceptions=True,
+    )
+    for mid, result in zip(targets, results):
+        if isinstance(result, TelegramForbiddenError):
+            logger.info("Skip moderation alert: forbidden to initiate chat with target=%s", int(mid))
+            continue
+        if isinstance(result, Exception):
+            logger.error(
+                "Failed to send moderation alert with actions target=%s",
+                int(mid),
+                exc_info=(type(result), result, result.__traceback__),
+            )
 
 def _serialize_entities(ents: List[types.MessageEntity]) -> List[dict]:
     out = []

@@ -350,7 +350,7 @@ async def build_quick_links_kb(user_id: int) -> ReplyKeyboardMarkup | None:
             resolved.append(b)
 
     rows = [resolved[i:i + 2] for i in range(0, len(resolved), 2)]
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=False)
 
 
 async def _show_main_panel(uid: int, text: str, *, hide_after: int | None = None) -> None:
@@ -476,7 +476,7 @@ async def _ensure_access_and_increment(message: Message, text_for_guard: str | N
             await reserve_request(
                 db,
                 user.id,
-                prefer_paid=(user.paid_requests > 0),
+                prefer_paid=False,
                 chat_id=chat_id,
                 message_id=message.message_id,
             )
