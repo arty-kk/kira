@@ -192,6 +192,73 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(queue_worker._is_bullet_list_text("- one.\n- two;\n- three."))
         self.assertFalse(queue_worker._is_bullet_list_text("- one.\nplain line"))
 
+
+    def test_is_emoji_multiline_text_detects_emoji_lists(self) -> None:
+        self.assertTrue(
+            queue_worker._is_emoji_multiline_text(
+                "Если ты геймер, у нас много общего 🫶\nКатки, гринд, тиммейты — обсудим всё 🎮\nОтвечаю 24/7"
+            )
+        )
+
+    async def test_send_chatty_reply_keeps_multiline_emoji_text_in_single_message(self) -> None:
+        sent = []
+
+        async def _fake_send_reply(**kwargs):
+            sent.append(kwargs)
+
+        with (
+            patch.object(queue_worker, "_send_reply", _fake_send_reply),
+            patch.object(queue_worker, "compute_typing_delay", lambda *_args, **_kwargs: 0.0),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=42,
+                text=(
+                    "Если ты геймер, у нас много общего 🫶\n\n"
+                    "Катки, гринд, тиммейты, стата, гайды — обсудим всё 🎮\n\n"
+                    "Отвечаю 24/7 на текст, голос и картинки"
+                ),
+                reply_to=100,
+                msg_id=200,
+                merged_ids=[200],
+                user_id=1,
+                enable_typing=False,
+            )
+
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Если ты геймер", sent[0]["text"])
+        self.assertIn("обсудим всё 🎮", sent[0]["text"])
+
+    async def test_send_chatty_reply_keeps_text_over_250_chars_in_single_message(self) -> None:
+        sent = []
+
+        async def _fake_send_reply(**kwargs):
+            sent.append(kwargs)
+
+        long_text = (
+            "Это длинный ответ для проверки порога разбиения. "
+            "Здесь несколько предложений, чтобы обычная логика могла делить по точкам. "
+            "Добавляю ещё одно предложение для уверенного превышения порога. "
+            "И финальная фраза, чтобы длина была больше 250 символов и осталась одним сообщением."
+        )
+        self.assertGreater(len(long_text), 250)
+
+        with (
+            patch.object(queue_worker, "_send_reply", _fake_send_reply),
+            patch.object(queue_worker, "compute_typing_delay", lambda *_args, **_kwargs: 0.0),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=42,
+                text=long_text,
+                reply_to=100,
+                msg_id=200,
+                merged_ids=[200],
+                user_id=1,
+                enable_typing=False,
+            )
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["text"], long_text)
+
     async def test_send_chatty_reply_keeps_bullet_list_in_single_message(self) -> None:
         sent = []
 
