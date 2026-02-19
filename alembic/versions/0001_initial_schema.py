@@ -16,7 +16,7 @@ def upgrade():
         sa.Column("username", sa.String(), nullable=True),
         sa.Column("full_name", sa.String(), nullable=False),
         sa.Column("registered_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
-        sa.Column("free_requests", sa.Integer(), nullable=False, server_default=sa.text("5")),
+        sa.Column("free_requests", sa.Integer(), nullable=False, server_default=sa.text("20")),
         sa.Column("paid_requests", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("used_requests", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("gender", sa.String(length=6), nullable=True),
