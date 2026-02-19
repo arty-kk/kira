@@ -135,7 +135,7 @@ class _FakeTelegramBadRequest(Exception):
     pass
 
 
-def _load_group_battle_module():
+def _load_group_battle_module(bot_id=777):
     module_name = "group_battle_under_test"
     target_modules = {
         "app": types.ModuleType("app"),
@@ -162,7 +162,7 @@ def _load_group_battle_module():
     target_modules["app.config"].settings = SimpleNamespace(ALLOWED_GROUP_IDS=[999])
     target_modules["app.core.memory"].get_redis = lambda: None
     target_modules["app.core.memory"]._b2s = lambda x: x.decode() if isinstance(x, bytes) else ("" if x is None else str(x))
-    target_modules["app.bot.components.constants"].BOT_ID = 777
+    target_modules["app.bot.components.constants"].BOT_ID = bot_id
     target_modules["app.bot.utils.debouncer"].buffer_message_for_response = lambda _payload: None
 
     class _InlineKeyboardButton:
@@ -205,6 +205,34 @@ def _load_group_battle_module():
 
 
 class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
+
+    async def test_launch_battle_uses_runtime_bot_id_after_import(self):
+        mod = _load_group_battle_module(bot_id=None)
+        redis = FakeRedis()
+        bot = FakeBot()
+        mod.get_redis = lambda: redis
+        mod.bot = bot
+
+        mod.consts.BOT_ID = 4242
+
+        start_task = SimpleNamespace(apply_async=Mock())
+        prev_battle_module = sys.modules.get("app.tasks.battle")
+        sys.modules["app.tasks.battle"] = types.SimpleNamespace(
+            battle_start_timeout_check_task=start_task,
+            battle_move_timeout_check_task=SimpleNamespace(apply_async=Mock()),
+        )
+        try:
+            await mod.launch_battle("4242", "7", chat_id=999)
+        finally:
+            if prev_battle_module is None:
+                sys.modules.pop("app.tasks.battle", None)
+            else:
+                sys.modules["app.tasks.battle"] = prev_battle_module
+
+        ready_keys = [k for k in redis.kv if k.startswith("ready:")]
+        self.assertEqual(len(ready_keys), 1)
+        self.assertTrue(ready_keys[0].endswith(":4242"))
+
     async def test_launch_battle_schedules_start_timeout_via_celery(self):
         mod = _load_group_battle_module()
         redis = FakeRedis()

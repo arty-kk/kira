@@ -8,7 +8,8 @@ from aiogram.enums import ChatType, MessageEntityType
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.components.constants import BOT_ID as SELF_BOT_ID, redis_client
+import app.bot.components.constants as consts
+from app.bot.components.constants import redis_client
 from app.bot.components.dispatcher import dp
 from app.clients.telegram_client import get_bot
 from app.config import settings
@@ -94,7 +95,7 @@ async def cmd_battle_stats(message: Message) -> None:
     total = wins + losses + ties
 
     target_id = await _resolve_stats_target_user_id(message)
-    if target_id and target_id == str(SELF_BOT_ID):
+    if target_id and target_id == str(consts.BOT_ID):
         target_id = None
     per_user_text = ""
     if target_id:
@@ -122,7 +123,7 @@ async def cmd_battle_stats(message: Message) -> None:
         return
 
     try:
-        me_cm = await bot.get_chat_member(chat_id, int(SELF_BOT_ID))
+        me_cm = await bot.get_chat_member(chat_id, int(consts.BOT_ID))
         bot_disp = f"@{me_cm.user.username}" if me_cm.user.username else (me_cm.user.full_name or "Bot")
     except Exception:
         try:

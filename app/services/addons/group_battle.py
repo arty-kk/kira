@@ -18,7 +18,7 @@ from aiogram.exceptions import TelegramBadRequest
 from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.memory import get_redis, _b2s
-from app.bot.components.constants import BOT_ID as SELF_BOT_ID
+import app.bot.components.constants as consts
 from app.bot.utils.debouncer import buffer_message_for_response
 from redis.exceptions import LockError
 
@@ -139,9 +139,9 @@ async def launch_battle(p1_id: str, p2_id: str, chat_id: int | str | None = None
             pipe.expire(key, ttl_start)
             await pipe.execute()
 
-        if str(SELF_BOT_ID) in (p1_id, p2_id):
+        if str(consts.BOT_ID) in (p1_id, p2_id):
             try:
-                await redis.set(f"ready:{gid}:{SELF_BOT_ID}", "1", ex=ttl_start)
+                await redis.set(f"ready:{gid}:{consts.BOT_ID}", "1", ex=ttl_start)
             except Exception:
                 logger.exception("Failed to pre-mark bot ready for game %s", gid)
 
@@ -461,7 +461,7 @@ async def on_battle_move(query: CallbackQuery) -> None:
         await redis.hincrby(key, "version", 1)
 
         updated = _decode_hmap(await redis.hgetall(key))
-        bot_id_str = str(SELF_BOT_ID)
+        bot_id_str = str(consts.BOT_ID)
         bot_field = ("choice2" if updated.get("player2_id") == bot_id_str
                      else "choice1" if updated.get("player1_id") == bot_id_str
                      else None)
@@ -553,7 +553,7 @@ async def conclude_game(gid: str) -> None:
             return
         chat_id = int(chat_id)
 
-        bot_id_str = str(SELF_BOT_ID)
+        bot_id_str = str(consts.BOT_ID)
         bot_participates = bot_id_str in (game.get("player1_id"), game.get("player2_id"))
         bot_outcome = "none"
         if bot_participates:
@@ -609,7 +609,7 @@ async def conclude_game(gid: str) -> None:
             payload = {
                 "chat_id": chat_id,
                 "text": "[battle_result] " + json.dumps(ctx, ensure_ascii=False),
-                "user_id": SELF_BOT_ID,
+                "user_id": consts.BOT_ID,
                 "reply_to": int(game["msg_id"]),
                 "is_group": True,
                 "msg_id": int(game["msg_id"]),
