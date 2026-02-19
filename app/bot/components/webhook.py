@@ -111,6 +111,8 @@ def _extract_log_context(data: dict) -> dict:
 async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
 
+    import app.bot.handlers  # noqa: F401
+
     consts.redis_client = get_redis()
     consts.redis_queue  = get_redis_queue()
     redis_client = consts.redis_client
