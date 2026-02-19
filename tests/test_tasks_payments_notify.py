@@ -60,6 +60,21 @@ class _Func:
         return "now"
 
 
+class _SharedRequeueResult(tuple):
+    __slots__ = ()
+
+    def __new__(cls, enqueued: int, enqueue_errors: int):
+        return tuple.__new__(cls, (enqueued, enqueue_errors))
+
+    @property
+    def enqueued(self) -> int:
+        return self[0]
+
+    @property
+    def enqueue_errors(self) -> int:
+        return self[1]
+
+
 def _load_payments_module():
     module_name = "tasks_payments_under_test"
     target_modules = {
@@ -79,6 +94,7 @@ def _load_payments_module():
         "app.services.user.user_service": types.ModuleType("app.services.user.user_service"),
         "app.tasks": types.ModuleType("app.tasks"),
         "app.tasks.celery_app": types.ModuleType("app.tasks.celery_app"),
+        "app.tasks.requeue_result": types.ModuleType("app.tasks.requeue_result"),
     }
 
     target_modules["app.bot.utils.telegram_safe"].send_message_safe = AsyncMock()
@@ -132,6 +148,7 @@ def _load_payments_module():
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
     target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
 
     previous = {}
     names = set(target_modules) | {module_name}
