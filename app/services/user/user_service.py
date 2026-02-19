@@ -39,12 +39,9 @@ async def get_or_create_user(db: AsyncSession, tg_user: "TelegramUser") -> User:
                 "full_name": tg_user.full_name,
             },
         )
-        .returning(User.id)
+        .returning(User)
     )
-    user_id = (await db.execute(stmt)).scalar_one()
-
-    user = await db.get(User, user_id)
-    return user
+    return (await db.execute(stmt)).scalar_one()
 
 @dataclass(frozen=True)
 class ConsumeResult:
