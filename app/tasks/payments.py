@@ -16,6 +16,7 @@ from app.core.memory import push_message
 from app.core.models import GiftPurchase, PaymentOutbox, PaymentReceipt, User
 from app.services.user.user_service import add_paid_requests, compute_remaining
 from app.tasks.celery_app import celery, _run
+from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
 bot = get_bot()
@@ -290,7 +291,15 @@ def process_outbox_task(charge_id: str, lease_token: str) -> None:
     _run(_run_task(), timeout=PROCESS_OUTBOX_RUN_TIMEOUT_SEC)
 
 
-async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:
+async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> RequeueResult:
+    """Requeue pending payment outbox rows for processing.
+
+    Returns:
+        RequeueResult.enqueued: number of rows successfully enqueued to Celery.
+        RequeueResult.enqueue_errors: number of claimed rows that failed to enqueue.
+
+    Invariant for the current claimed batch: enqueued + enqueue_errors == scanned.
+    """
     safe_batch_size = max(1, int(batch_size))
     lease_token = uuid.uuid4().hex
     async with session_scope(stmt_timeout_ms=5000) as db:
@@ -356,7 +365,7 @@ async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_
         enqueue_errors,
         safe_batch_size,
     )
-    return enqueued, enqueue_errors
+    return RequeueResult(enqueued=enqueued, enqueue_errors=enqueue_errors)
 
 
 async def requeue_applied_unnotified_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:

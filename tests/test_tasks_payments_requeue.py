@@ -118,6 +118,106 @@ class _FakeSessionFactory:
         yield _FakeDB(self._state)
 
 
+class _FakeRefundColumn:
+    def __init__(self, name):
+        self.name = name
+
+    def __eq__(self, other):
+        return _FakeRefundWhereValue(self.name, other)
+
+
+class _FakeRefundWhereValue:
+    def __init__(self, field, value):
+        self.left = type("_Left", (), {"name": field})()
+        self.right = type("_Right", (), {"value": value})()
+
+
+class _FakeRefundOutbox:
+    id = _FakeRefundColumn("id")
+    status = _FakeRefundColumn("status")
+    lease_token = _FakeRefundColumn("lease_token")
+
+
+class _FakeRefundReleaseStmt:
+    table = _FakeRefundOutbox
+
+    def __init__(self):
+        self._where_criteria = []
+        self._values = {}
+
+    def where(self, *criteria):
+        self._where_criteria = criteria
+        return self
+
+    def values(self, **values):
+        self._values = values
+        return self
+
+
+def _fake_refund_update(_model):
+    return _FakeRefundReleaseStmt()
+
+
+class _FakeRefundDB:
+    def __init__(self, state):
+        self._state = state
+
+    async def execute(self, stmt, params=None):
+        stmt_text = str(stmt)
+        if "RETURNING id, lease_token" in stmt_text:
+            batch_size = int(params["batch_size"])
+            lease_token = params["lease_token"]
+            claimed = []
+            for row in self._state:
+                if row["status"] != "pending" or row["lease_token"] is not None:
+                    continue
+                row["lease_token"] = lease_token
+                row["leased_at"] = "now"
+                row["lease_attempts"] += 1
+                claimed.append((row["id"], row["lease_token"]))
+                if len(claimed) >= batch_size:
+                    break
+            return _FakeClaimResult(claimed)
+
+        if getattr(stmt, "table", None) is _FakeRefundOutbox:
+            outbox_id = int(stmt._where_criteria[0].right.value)
+            lease_token = str(stmt._where_criteria[2].right.value)
+            values = stmt._values
+            for row in self._state:
+                if row["id"] == outbox_id and row["status"] == "pending" and row["lease_token"] == lease_token:
+                    row["leased_at"] = values.get("leased_at")
+                    row["lease_token"] = values.get("lease_token")
+                    row["last_error"] = values.get("last_error")
+            return _FakeClaimResult([])
+
+        raise AssertionError(f"Unexpected statement: {stmt_text}")
+
+
+class _FakeRefundSessionFactory:
+    def __init__(self, state):
+        self._state = state
+
+    @asynccontextmanager
+    async def __call__(self, *_args, **_kwargs):
+        yield _FakeRefundDB(self._state)
+
+
+class _SharedRequeueResult(tuple):
+    __slots__ = ()
+    _fields = ("enqueued", "enqueue_errors")
+
+    def __new__(cls, enqueued, enqueue_errors):
+        return super().__new__(cls, (enqueued, enqueue_errors))
+
+    @property
+    def enqueued(self):
+        return self[0]
+
+    @property
+    def enqueue_errors(self):
+        return self[1]
+
+
 def _load_payments_module():
     module_name = "tasks_payments_requeue_under_test"
     target_modules = {
@@ -137,6 +237,7 @@ def _load_payments_module():
         "app.services.user.user_service": types.ModuleType("app.services.user.user_service"),
         "app.tasks": types.ModuleType("app.tasks"),
         "app.tasks.celery_app": types.ModuleType("app.tasks.celery_app"),
+        "app.tasks.requeue_result": types.ModuleType("app.tasks.requeue_result"),
     }
 
     target_modules["app.bot.utils.telegram_safe"].send_message_safe = AsyncMock()
@@ -168,6 +269,7 @@ def _load_payments_module():
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
     target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
 
     previous = {}
     names = set(target_modules) | {module_name}
@@ -179,6 +281,65 @@ def _load_payments_module():
         sys.modules.update(target_modules)
         payments_path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "payments.py"
         spec = importlib.util.spec_from_file_location(module_name, payments_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name in names:
+            sys.modules.pop(name, None)
+            if previous[name] is not None:
+                sys.modules[name] = previous[name]
+
+
+def _load_refunds_module():
+    module_name = "tasks_refunds_requeue_under_test"
+    target_modules = {
+        "app": types.ModuleType("app"),
+        "app.core": types.ModuleType("app.core"),
+        "app.core.db": types.ModuleType("app.core.db"),
+        "app.core.models": types.ModuleType("app.core.models"),
+        "app.tasks": types.ModuleType("app.tasks"),
+        "app.tasks.celery_app": types.ModuleType("app.tasks.celery_app"),
+        "app.tasks.requeue_result": types.ModuleType("app.tasks.requeue_result"),
+        "app.services": types.ModuleType("app.services"),
+        "app.services.user": types.ModuleType("app.services.user"),
+        "app.services.user.user_service": types.ModuleType("app.services.user.user_service"),
+    }
+
+    @asynccontextmanager
+    async def _dummy_session_scope(*_args, **_kwargs):
+        yield None
+
+    class _Celery:
+        def task(self, *_args, **_kwargs):
+            def _decorator(func):
+                return func
+
+            return _decorator
+
+        def send_task(self, *_args, **_kwargs):
+            return None
+
+    target_modules["app.core.db"].session_scope = _dummy_session_scope
+    target_modules["app.core.models"].RefundOutbox = _FakeRefundOutbox
+    target_modules["app.tasks.celery_app"].celery = _Celery()
+    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+
+    target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
+    target_modules["app.services.user.user_service"].InvalidBillingTierError = RuntimeError
+    target_modules["app.services.user.user_service"].refund_user_balance = AsyncMock()
+
+    previous = {}
+    names = set(target_modules) | {module_name}
+    for name in names:
+        previous[name] = sys.modules.get(name)
+        sys.modules.pop(name, None)
+
+    try:
+        sys.modules.update(target_modules)
+        path = pathlib.Path(__file__).resolve().parents[1] / "app" / "tasks" / "refunds.py"
+        spec = importlib.util.spec_from_file_location(module_name, path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
@@ -202,13 +363,13 @@ class RequeuePendingOutboxTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments.celery, "send_task") as send_task_mock,
             patch.object(payments, "update", _fake_update),
         ):
-            first_enqueued, first_errors = await payments.requeue_pending_outbox(batch_size=20)
-            second_enqueued, second_errors = await payments.requeue_pending_outbox(batch_size=20)
+            first_result = await payments.requeue_pending_outbox(batch_size=20)
+            second_result = await payments.requeue_pending_outbox(batch_size=20)
 
-        self.assertEqual(first_enqueued, 1)
-        self.assertEqual(first_errors, 0)
-        self.assertEqual(second_enqueued, 0)
-        self.assertEqual(second_errors, 0)
+        self.assertEqual(first_result.enqueued, 1)
+        self.assertEqual(first_result.enqueue_errors, 0)
+        self.assertEqual(second_result.enqueued, 0)
+        self.assertEqual(second_result.enqueue_errors, 0)
         self.assertEqual(send_task_mock.call_count, 1)
         send_task_mock.assert_called_once_with("payments.process_outbox", args=["charge_1", state[0]["lease_token"]])
 
@@ -223,13 +384,13 @@ class RequeuePendingOutboxTests(unittest.IsolatedAsyncioTestCase):
             patch.object(payments.celery, "send_task", side_effect=[Exception("broker down"), None]) as send_task_mock,
             patch.object(payments, "update", _fake_update),
         ):
-            first_enqueued, first_errors = await payments.requeue_pending_outbox(batch_size=20)
-            second_enqueued, second_errors = await payments.requeue_pending_outbox(batch_size=20)
+            first_result = await payments.requeue_pending_outbox(batch_size=20)
+            second_result = await payments.requeue_pending_outbox(batch_size=20)
 
-        self.assertEqual(first_enqueued, 0)
-        self.assertEqual(first_errors, 1)
-        self.assertEqual(second_enqueued, 1)
-        self.assertEqual(second_errors, 0)
+        self.assertEqual(first_result.enqueued, 0)
+        self.assertEqual(first_result.enqueue_errors, 1)
+        self.assertEqual(second_result.enqueued, 1)
+        self.assertEqual(second_result.enqueue_errors, 0)
         self.assertEqual(send_task_mock.call_count, 2)
         self.assertEqual(state[0]["lease_attempts"], 2)
         self.assertIsNotNone(state[0]["lease_token"])
@@ -278,6 +439,40 @@ class RequeueAppliedUnnotifiedOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(state[0]["notified_at"])
         self.assertIsNotNone(state[0]["lease_token"])
         self.assertEqual(state[0]["last_error"], "broker down")
+
+
+class RequeueContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_payments_and_refunds_requeue_share_result_contract(self):
+        payments = _load_payments_module()
+        refunds = _load_refunds_module()
+
+        payment_state = [
+            {"charge_id": "charge_contract_1", "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None},
+            {"charge_id": "charge_contract_2", "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None},
+        ]
+        refund_state = [
+            {"id": 101, "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None},
+            {"id": 102, "status": "pending", "lease_token": None, "leased_at": None, "lease_attempts": 0, "last_error": None},
+        ]
+
+        with (
+            patch.object(payments, "session_scope", _FakeSessionFactory(payment_state)),
+            patch.object(payments.celery, "send_task", side_effect=[Exception("broker down"), None]),
+            patch.object(payments, "update", _fake_update),
+            patch.object(refunds, "session_scope", _FakeRefundSessionFactory(refund_state)),
+            patch.object(refunds.celery, "send_task", side_effect=[Exception("broker down"), None]),
+            patch.object(refunds, "update", _fake_refund_update),
+        ):
+            payments_result = await payments.requeue_pending_outbox(batch_size=2)
+            refunds_result = await refunds.requeue_pending_refund_outbox(batch_size=2)
+
+        self.assertIs(type(payments_result), type(refunds_result))
+        self.assertEqual(payments_result._fields, ("enqueued", "enqueue_errors"))
+        self.assertEqual(refunds_result._fields, ("enqueued", "enqueue_errors"))
+        self.assertEqual(payments_result.enqueued, 1)
+        self.assertEqual(payments_result.enqueue_errors, 1)
+        self.assertEqual(refunds_result.enqueued, 1)
+        self.assertEqual(refunds_result.enqueue_errors, 1)
 
 
 class _ApplyOutboxResult:

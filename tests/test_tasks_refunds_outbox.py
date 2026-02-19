@@ -261,6 +261,7 @@ def _load_refunds_module():
         "app.core.models": types.ModuleType("app.core.models"),
         "app.tasks": types.ModuleType("app.tasks"),
         "app.tasks.celery_app": types.ModuleType("app.tasks.celery_app"),
+        "app.tasks.requeue_result": types.ModuleType("app.tasks.requeue_result"),
         "app.services": types.ModuleType("app.services"),
         "app.services.user": types.ModuleType("app.services.user"),
     }
@@ -286,6 +287,23 @@ def _load_refunds_module():
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
     target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+
+    class _RequeueResult(tuple):
+        __slots__ = ()
+        _fields = ("enqueued", "enqueue_errors")
+
+        def __new__(cls, enqueued, enqueue_errors):
+            return super().__new__(cls, (enqueued, enqueue_errors))
+
+        @property
+        def enqueued(self):
+            return self[0]
+
+        @property
+        def enqueue_errors(self):
+            return self[1]
+
+    target_modules["app.tasks.requeue_result"].RequeueResult = _RequeueResult
     target_modules["app.services.user.user_service"] = user_service
 
     previous = {}
@@ -558,13 +576,13 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
                 patch.object(refunds.celery, "send_task", side_effect=[Exception("broker down"), None]) as send_task_mock,
                 patch.object(refunds, "update", _fake_update),
             ):
-                first_scanned, first_enqueued = await refunds.requeue_pending_refund_outbox(batch_size=20)
-                second_scanned, second_enqueued = await refunds.requeue_pending_refund_outbox(batch_size=20)
+                first_result = await refunds.requeue_pending_refund_outbox(batch_size=20)
+                second_result = await refunds.requeue_pending_refund_outbox(batch_size=20)
 
-            self.assertEqual(first_scanned, 1)
-            self.assertEqual(first_enqueued, 0)
-            self.assertEqual(second_scanned, 1)
-            self.assertEqual(second_enqueued, 1)
+            self.assertEqual(first_result.enqueued, 0)
+            self.assertEqual(first_result.enqueue_errors, 1)
+            self.assertEqual(second_result.enqueued, 1)
+            self.assertEqual(second_result.enqueue_errors, 0)
             self.assertEqual(send_task_mock.call_count, 2)
             first_call_args = send_task_mock.call_args_list[0].kwargs["args"]
             second_call_args = send_task_mock.call_args_list[1].kwargs["args"]
