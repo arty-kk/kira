@@ -358,6 +358,74 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         stop_event.set()
         await task
 
+
+    async def test_webhook_logs_compact_context_only(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        payload = {
+            "update_id": 901,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 123456, "type": "private", "title": "ignored"},
+                "from": {"id": 654321, "is_bot": False, "username": "tester"},
+                "text": "A" * (webhook.N + 50),
+                "photo": [{"file_id": "x" * 1000, "file_size": 999999}],
+                "document": {"file_id": "doc", "file_name": "big.bin"},
+                "entities": [{"type": "mention", "offset": 0, "length": 5}],
+                "nested": {"very": ["large", {"payload": "x" * 1000}]},
+            },
+        }
+
+        with mock.patch.object(webhook.logger, "info") as mock_info:
+            response = await handler(_FakeWeb.Request(payload))
+
+        self.assertEqual(response.status, 200)
+        self.assertTrue(mock_info.called)
+
+        incoming_call = next(
+            call
+            for call in mock_info.call_args_list
+            if call.args and call.args[0] == "Incoming update"
+        )
+
+        self.assertEqual(len(incoming_call.args), 1)
+        self.assertIn("extra", incoming_call.kwargs)
+        self.assertNotIn(payload, incoming_call.args)
+        self.assertEqual(set(incoming_call.kwargs["extra"].keys()), {
+            "update_id",
+            "update_type",
+            "chat_id",
+            "user_id",
+            "text_preview",
+        })
+
+        log_update = incoming_call.kwargs["extra"]
+        self.assertEqual(log_update["update_id"], payload["update_id"])
+        self.assertEqual(log_update["update_type"], "message")
+        self.assertEqual(log_update["chat_id"], payload["message"]["chat"]["id"])
+        self.assertEqual(log_update["user_id"], payload["message"]["from"]["id"])
+        self.assertIn("text_preview", log_update)
+        self.assertTrue(log_update["text_preview"].endswith("...[truncated]"))
+        self.assertLessEqual(
+            len(log_update["text_preview"]),
+            webhook.N + len("...[truncated]"),
+        )
+
+        self.assertNotIn("message", log_update)
+        self.assertNotIn("photo", log_update)
+        self.assertNotIn("document", log_update)
+        self.assertNotIn("entities", log_update)
+        self.assertNotIn("nested", log_update)
+
+        stop_event.set()
+        await task
+
     async def test_webhook_returns_503_and_releases_claim_when_feed_update_fails(self):
         stop_event = asyncio.Event()
 
