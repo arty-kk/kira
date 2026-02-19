@@ -28,6 +28,85 @@ bot = get_bot()
 WEBHOOK_DEDUP_TTL_SEC = 60
 WEBHOOK_DEDUP_CLAIM_VALUE = "claim"
 WEBHOOK_DEDUP_DONE_VALUE = "done"
+N = 120
+
+UPDATE_TYPE_KEYS = (
+    "message",
+    "edited_message",
+    "channel_post",
+    "edited_channel_post",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
+    "message_reaction",
+    "message_reaction_count",
+    "inline_query",
+    "chosen_inline_result",
+    "callback_query",
+    "shipping_query",
+    "pre_checkout_query",
+    "purchased_paid_media",
+    "poll",
+    "poll_answer",
+    "my_chat_member",
+    "chat_member",
+    "chat_join_request",
+    "chat_boost",
+    "removed_chat_boost",
+)
+
+
+def _truncate_preview(value: str) -> str:
+    if len(value) <= N:
+        return value
+    return f"{value[:N]}...[truncated]"
+
+
+def _extract_log_context(data: dict) -> dict:
+    context = {"update_id": data.get("update_id")}
+
+    update_type = next((key for key in UPDATE_TYPE_KEYS if key in data), None)
+    if update_type:
+        context["update_type"] = update_type
+
+    branch = data.get(update_type) if update_type else None
+    if isinstance(branch, dict):
+        chat = branch.get("chat")
+        if isinstance(chat, dict) and isinstance(chat.get("id"), int) and not isinstance(chat.get("id"), bool):
+            context["chat_id"] = chat["id"]
+
+        user = branch.get("from")
+        if isinstance(user, dict) and isinstance(user.get("id"), int) and not isinstance(user.get("id"), bool):
+            context["user_id"] = user["id"]
+
+        if update_type == "callback_query":
+            message = branch.get("message")
+            if isinstance(message, dict):
+                callback_chat = message.get("chat")
+                if isinstance(callback_chat, dict) and isinstance(callback_chat.get("id"), int) and not isinstance(callback_chat.get("id"), bool):
+                    context.setdefault("chat_id", callback_chat["id"])
+
+            callback_from = branch.get("from")
+            if isinstance(callback_from, dict) and isinstance(callback_from.get("id"), int) and not isinstance(callback_from.get("id"), bool):
+                context.setdefault("user_id", callback_from["id"])
+
+        preview = next(
+            (
+                text
+                for text in (
+                    branch.get("text"),
+                    branch.get("caption"),
+                    branch.get("data") if update_type == "callback_query" else None,
+                )
+                if isinstance(text, str) and text
+            ),
+            None,
+        )
+        if preview:
+            context["text_preview"] = _truncate_preview(preview)
+
+    return context
 
 async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
@@ -150,7 +229,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
             logger.info("Update %s is currently claimed and not finalized", update_id)
             return web.Response(status=503)
 
-        logger.info("Incoming update: %s", data)
+        logger.info("Incoming update", extra=_extract_log_context(data))
 
         # (d) Process update and confirm only on success
         try:
