@@ -4,8 +4,9 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
-from celery import Celery
+from celery import Celery, current_task
 from celery.signals import setup_logging as celery_setup_logging, worker_ready
 
 from app.config import settings
@@ -75,10 +76,42 @@ celery.conf.update(
 )
 
 
-def _run(coro):
+def _resolve_run_context(coro) -> tuple[str | None, str | None]:
+    coro_name = getattr(coro, "__qualname__", None)
+    if not coro_name:
+        coro_code = getattr(coro, "cr_code", None)
+        coro_name = getattr(coro_code, "co_name", None)
+
+    task_name = None
+    try:
+        task_name = getattr(current_task, "name", None)
+        if not task_name:
+            task_name = getattr(getattr(current_task, "request", None), "task", None)
+    except Exception:
+        task_name = None
+
+    return coro_name, task_name
+
+
+def _run(coro, timeout: float | None = None):
     loop = get_bg_loop()
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result()
+    effective_timeout = settings.CELERY_RUN_TIMEOUT_SEC if timeout is None else timeout
+    try:
+        return fut.result(timeout=effective_timeout)
+    except FuturesTimeoutError:
+        cancelled = fut.cancel()
+        coro_name, task_name = _resolve_run_context(coro)
+        logger.error(
+            "Celery coroutine timed out",
+            extra={
+                "celery_task_name": task_name,
+                "coroutine_name": coro_name,
+                "timeout_sec": effective_timeout,
+                "future_cancelled": cancelled,
+            },
+        )
+        raise
 
 
 @worker_ready.connect

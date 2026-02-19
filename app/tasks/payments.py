@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 bot = get_bot()
 REQUEUE_PENDING_OUTBOX_BATCH_SIZE = 100
 OUTBOX_LEASE_TTL_SECONDS = 300
+PROCESS_OUTBOX_TIME_LIMIT_SEC = 90
+PROCESS_OUTBOX_RUN_TIMEOUT_SEC = 85
 
 
 def _is_active_lease(outbox: PaymentOutbox) -> bool:
@@ -269,7 +271,13 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             logger.exception("payment_outbox: failed to schedule gift reaction")
 
 
-@celery.task(name="payments.process_outbox", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 5})
+@celery.task(
+    name="payments.process_outbox",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 5},
+    time_limit=PROCESS_OUTBOX_TIME_LIMIT_SEC,
+)
 def process_outbox_task(charge_id: str, lease_token: str) -> None:
     async def _run_task():
         outbox, remaining, duplicate = await _apply_outbox(charge_id, lease_token)
@@ -279,7 +287,7 @@ def process_outbox_task(charge_id: str, lease_token: str) -> None:
             return
         await _notify_payment_result(outbox, remaining, duplicate)
 
-    _run(_run_task())
+    _run(_run_task(), timeout=PROCESS_OUTBOX_RUN_TIMEOUT_SEC)
 
 
 async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> tuple[int, int]:

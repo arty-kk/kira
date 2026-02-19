@@ -166,7 +166,7 @@ def _load_payments_module():
             return None
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
-    target_modules["app.tasks.celery_app"]._run = lambda _coro: None
+    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
 
     previous = {}
     names = set(target_modules) | {module_name}
