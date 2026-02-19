@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import bindparam, func, select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.bot.utils.telegram_safe import send_message_safe
@@ -43,7 +43,12 @@ async def _apply_outbox(charge_id: str, lease_token: str) -> tuple[Optional[Paym
             logger.warning("payment_outbox: missing charge_id=%s", charge_id)
             return None, None, False
 
-        if outbox.lease_token != lease_token:
+        if outbox.status == "applied":
+            if outbox.notified_at is None and outbox.lease_token == lease_token:
+                user = await db.get(User, outbox.user_id)
+                remaining = compute_remaining(user) if user else None
+                return outbox, remaining, True
+
             logger.info(
                 "payment_outbox: stale lease skip charge_id=%s expected_lease_token=%s actual_lease_token=%s",
                 charge_id,
@@ -52,13 +57,14 @@ async def _apply_outbox(charge_id: str, lease_token: str) -> tuple[Optional[Paym
             )
             return None, None, False
 
-        if outbox.status == "applied":
-            if outbox.leased_at is not None or outbox.lease_token is not None:
-                outbox.leased_at = None
-                outbox.lease_token = None
-            user = await db.get(User, outbox.user_id)
-            remaining = compute_remaining(user) if user else None
-            return outbox, remaining, True
+        if outbox.lease_token != lease_token:
+            logger.info(
+                "payment_outbox: stale lease skip charge_id=%s expected_lease_token=%s actual_lease_token=%s",
+                charge_id,
+                lease_token,
+                outbox.lease_token,
+            )
+            return None, None, False
 
         if not _is_active_lease(outbox):
             logger.info("payment_outbox: no active claim charge_id=%s", charge_id)
@@ -123,8 +129,6 @@ async def _apply_outbox(charge_id: str, lease_token: str) -> tuple[Optional[Paym
         remaining = compute_remaining(user)
         outbox.status = "applied"
         outbox.applied_at = datetime.now(timezone.utc)
-        outbox.leased_at = None
-        outbox.lease_token = None
         logger.info(
             "payment_outbox: applied charge_id=%s user_id=%s kind=%s",
             outbox.telegram_payment_charge_id,
@@ -134,23 +138,19 @@ async def _apply_outbox(charge_id: str, lease_token: str) -> tuple[Optional[Paym
         return outbox, remaining, duplicate
 
 
-async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int], duplicate: bool) -> None:
+async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int], duplicate: bool, lease_token: str) -> None:
     if outbox.notified_at is not None:
         return
 
-    notify_token = uuid.uuid4().hex
     async with session_scope(stmt_timeout_ms=3000) as db:
         claim_stmt = (
             update(PaymentOutbox)
             .where(
                 PaymentOutbox.id == outbox.id,
                 PaymentOutbox.notified_at.is_(None),
-                text("(lease_token IS NULL OR leased_at < now() - make_interval(secs => :lease_ttl_seconds))").bindparams(
-                    bindparam("lease_ttl_seconds", OUTBOX_LEASE_TTL_SECONDS)
-                ),
+                PaymentOutbox.lease_token == lease_token,
             )
             .values(
-                lease_token=notify_token,
                 leased_at=func.now(),
                 updated_at=func.now(),
             )
@@ -193,7 +193,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
                 .where(
                     PaymentOutbox.id == outbox.id,
                     PaymentOutbox.notified_at.is_(None),
-                    PaymentOutbox.lease_token == notify_token,
+                    PaymentOutbox.lease_token == lease_token,
                 )
                 .values(lease_token=None, leased_at=None, updated_at=func.now())
             )
@@ -221,7 +221,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             .where(
                 PaymentOutbox.id == outbox.id,
                 PaymentOutbox.notified_at.is_(None),
-                PaymentOutbox.lease_token == notify_token,
+                PaymentOutbox.lease_token == lease_token,
             )
             .values(notified_at=func.now(), lease_token=None, leased_at=None, updated_at=func.now())
             .returning(PaymentOutbox.id)
@@ -285,7 +285,7 @@ def process_outbox_task(charge_id: str, lease_token: str) -> None:
             return
         if outbox.status != "applied":
             return
-        await _notify_payment_result(outbox, remaining, duplicate)
+        await _notify_payment_result(outbox, remaining, duplicate, lease_token)
 
     _run(_run_task(), timeout=PROCESS_OUTBOX_RUN_TIMEOUT_SEC)
 
