@@ -39,8 +39,12 @@ class _FakeRedis:
     async def expire(self, *_args, **_kwargs):
         return True
 
-    async def get(self, _key):
-        return None
+    async def get(self, key):
+        return self.kv.get(key)
+
+    async def delete(self, key):
+        self.kv.pop(key, None)
+        return 1
 
 
 class _FailingRedis(_FakeRedis):
@@ -138,9 +142,12 @@ class _FakeBot:
 
 class _FakeDispatcher:
     calls = 0
+    should_fail = False
 
     async def feed_update(self, *_args, **_kwargs):
         _FakeDispatcher.calls += 1
+        if _FakeDispatcher.should_fail:
+            raise RuntimeError("dispatcher failed")
         return None
 
 
@@ -166,6 +173,7 @@ def _load_webhook_module():
         WEBHOOK_PATH="/webhook",
         WEBHOOK_HOST="127.0.0.1",
         WEBHOOK_PORT=8443,
+        WEBHOOK_FEED_UPDATE_TIMEOUT_SEC=1,
         ALLOWED_GROUP_IDS=[],
         MEMORY_TTL_DAYS=1,
     )
@@ -241,6 +249,7 @@ webhook = _load_webhook_module()
 class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         _FakeDispatcher.calls = 0
+        _FakeDispatcher.should_fail = False
 
     async def test_start_bot_without_self_signed_cert_uses_none_ssl_context(self):
         stop_event = asyncio.Event()
@@ -349,7 +358,7 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         stop_event.set()
         await task
 
-    async def test_webhook_returns_503_when_scheduling_fails(self):
+    async def test_webhook_returns_503_and_releases_claim_when_feed_update_fails(self):
         stop_event = asyncio.Event()
 
         task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
@@ -357,16 +366,20 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
 
         app = _FakeApplication.last_instance
         handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+        key = f"tg:{webhook.consts.BOT_ID}:update:779"
 
-        def _raise_on_create_task(coro):
-            coro.close()
-            raise RuntimeError("loop down")
+        _FakeDispatcher.should_fail = True
+        response_a = await handler(_FakeWeb.Request({"update_id": 779}))
 
-        with mock.patch.object(webhook.asyncio, "create_task", side_effect=_raise_on_create_task):
-            response = await handler(_FakeWeb.Request({"update_id": 779}))
+        self.assertEqual(response_a.status, 503)
+        self.assertEqual(webhook.redis_client.kv.get(key), None)
+        self.assertEqual(_FakeDispatcher.calls, 1)
 
-        self.assertEqual(response.status, 503)
-        self.assertEqual(_FakeDispatcher.calls, 0)
+        _FakeDispatcher.should_fail = False
+        response_b = await handler(_FakeWeb.Request({"update_id": 779}))
+
+        self.assertEqual(response_b.status, 200)
+        self.assertEqual(_FakeDispatcher.calls, 2)
 
         stop_event.set()
         await task

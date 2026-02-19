@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 
 bot = get_bot()
 
+WEBHOOK_DEDUP_TTL_SEC = 60
+WEBHOOK_DEDUP_CLAIM_VALUE = "claim"
+WEBHOOK_DEDUP_DONE_VALUE = "done"
+
 async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
 
@@ -124,22 +128,61 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         # (c) Redis deduplication
         key = f"tg:{consts.BOT_ID}:update:{update_id}"
         try:
-            claimed = await redis_client.set(key, "1", ex=60, nx=True)
+            claimed = await redis_client.set(key, WEBHOOK_DEDUP_CLAIM_VALUE, ex=WEBHOOK_DEDUP_TTL_SEC, nx=True)
         except Exception:
             logger.exception("Redis deduplication failed for update_id=%s", update_id)
             return web.Response(status=503)
 
         if not claimed:
-            logger.info("Duplicate update %s skipped", update_id)
-            return web.Response(status=200)
+            try:
+                dedup_state = await redis_client.get(key)
+            except Exception:
+                logger.exception("Redis deduplication read failed for update_id=%s", update_id)
+                return web.Response(status=503)
+
+            if isinstance(dedup_state, bytes):
+                dedup_state = dedup_state.decode("utf-8", errors="ignore")
+
+            if dedup_state == WEBHOOK_DEDUP_DONE_VALUE:
+                logger.info("Duplicate update %s skipped", update_id)
+                return web.Response(status=200)
+
+            logger.info("Update %s is currently claimed and not finalized", update_id)
+            return web.Response(status=503)
 
         logger.info("Incoming update: %s", data)
 
-        # (d) Schedule update processing
+        # (d) Process update and confirm only on success
         try:
-            asyncio.create_task(dp.feed_update(bot, upd))
+            await asyncio.wait_for(
+                dp.feed_update(bot, upd),
+                timeout=settings.WEBHOOK_FEED_UPDATE_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Webhook update handling failed",
+                extra={"update_id": update_id, "reason": "timeout"},
+            )
+            try:
+                await redis_client.delete(key)
+            except Exception:
+                logger.exception("Failed to rollback dedup claim for update_id=%s", update_id)
+            return web.Response(status=503)
         except Exception:
-            logger.exception("Failed to schedule update handling for update_id=%s", update_id)
+            logger.exception(
+                "Webhook update handling failed",
+                extra={"update_id": update_id, "reason": "exception"},
+            )
+            try:
+                await redis_client.delete(key)
+            except Exception:
+                logger.exception("Failed to rollback dedup claim for update_id=%s", update_id)
+            return web.Response(status=503)
+
+        try:
+            await redis_client.set(key, WEBHOOK_DEDUP_DONE_VALUE, ex=WEBHOOK_DEDUP_TTL_SEC)
+        except Exception:
+            logger.exception("Failed to finalize dedup state for update_id=%s", update_id)
             return web.Response(status=503)
 
         return web.Response(status=200)
