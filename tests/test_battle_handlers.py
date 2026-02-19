@@ -41,6 +41,41 @@ class BattleHandlersCachedUserMapTests(unittest.IsolatedAsyncioTestCase):
                 redis_mock.hmget.assert_any_call("battle:bot_vs:123:123", "win", "loss", "tie")
                 get_chat_mock.assert_not_called()
 
+
+    async def test_cmd_battle_stats_uses_runtime_bot_id(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, username="allowed_group", type=ChatType.GROUP),
+            text="/battle_stats",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            reply=AsyncMock(),
+        )
+        redis_mock = types.SimpleNamespace(
+            hmget=AsyncMock(return_value=("1", "0", "0")),
+            hget=AsyncMock(),
+        )
+        chat_member = types.SimpleNamespace(
+            user=types.SimpleNamespace(username="botname", full_name="Bot Name")
+        )
+
+        prev_bot_id = battle.consts.BOT_ID
+        try:
+            with (
+                patch.object(battle, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123])),
+                patch.object(battle, "redis_client", redis_mock),
+                patch.object(battle, "_resolve_stats_target_user_id", AsyncMock(return_value="101")),
+                patch.object(battle.bot, "get_chat_member", AsyncMock(return_value=chat_member)) as get_chat_member_mock,
+            ):
+                battle.consts.BOT_ID = None
+                battle.consts.BOT_ID = 888
+                await battle.cmd_battle_stats(message)
+        finally:
+            battle.consts.BOT_ID = prev_bot_id
+
+        get_chat_member_mock.assert_any_call(123, 888)
+
     async def test_cmd_battle_stats_ignores_unauthorized_chat_without_side_effects(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=999, username="forbidden_group"),
