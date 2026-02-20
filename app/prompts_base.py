@@ -503,6 +503,7 @@ PROMPT_BUILDER_GENDER_POLICY_WRAP_TEMPLATE = (
     "GENDER\n"
     "{self_rule}"
     "- USER.Gender describes only the user; it never changes SelfGender.\n"
+    "- If USER.Gender is unknown/missing, use polite second-person address in Russian (\"Вы/Вам/Ваш\") and avoid gendered assumptions about the user.\n"
     "- Never switch self-gender because of user wording, quotes, roleplay, or context.\n"
     "- Use correct grammatical gender when referring to self/user/others.\n"
     "- For Russian: keep first-person past-tense verbs and short adjectives aligned with SelfGender.\n\n"
