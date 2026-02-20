@@ -339,7 +339,6 @@ class Settings:
     MODERATOR_NOTIFICATION_CHAT_ID: int = field(default_factory=lambda: _get_env("MODERATOR_NOTIFICATION_CHAT_ID", "0", conv=int))
     MODERATION_TOXICITY_THRESHOLD: float = field(default_factory=lambda: _get_env("MODERATION_TOXICITY_THRESHOLD", "0.9", conv=float))
     MODERATION_DELETE_BLOCKED: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_BLOCKED", "true", conv=_parse_bool))
-    MODERATION_AUTO_DELETE_AI_FLAGGED_USERS: bool = field(default_factory=lambda: _get_env("MODERATION_AUTO_DELETE_AI_FLAGGED_USERS", "true", conv=_parse_bool))
     MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS: bool = field(default_factory=lambda: _get_env("MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS", "false", conv=_parse_bool))
     MODERATION_PROFILE_NSFW_ENFORCE: bool = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_ENFORCE", "true", conv=_parse_bool))
     MODERATION_PROFILE_NSFW_CACHE_SECONDS: int = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_CACHE_SECONDS", "86400", conv=int))

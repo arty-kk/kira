@@ -492,6 +492,12 @@ async def handle_passive_moderation(
             except Exception:
                 logger.debug("blocked: delete failed", exc_info=True)
 
+        if ai_flag_signal and _mid and status != "blocked":
+            try:
+                await _delete_message_safe(chat_id, _mid)
+            except Exception:
+                logger.debug("ai-flagged: delete failed", exc_info=True)
+
         try:
             ttl = int(getattr(settings, "MOD_FLAG_TTL_SECONDS", 86_400))
             await redis_client.hset(
@@ -507,8 +513,6 @@ async def handle_passive_moderation(
                 uid = int(_uid)
                 await redis_client.sadd(f"mod_flagged_users:{chat_id}", uid)
                 await redis_client.set(f"mod_flagged_ttl:{chat_id}:{uid}", 1, ex=ttl)
-                if ai_flag_signal:
-                    await redis_client.set(f"mod_ai_flagged_ttl:{chat_id}:{uid}", 1, ex=ttl)
                 try:
                     await redis_client.zrem(f"last_ping_zset:{chat_id}", str(uid))
                 except Exception:
@@ -606,6 +610,10 @@ def _profile_nsfw_cache_key(user_id: int) -> str:
     return f"mod:profile_nsfw:{int(user_id)}"
 
 
+def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
+    return f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"
+
+
 async def _is_profile_nsfw(user_id: int) -> bool:
     if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
         return False
@@ -643,12 +651,6 @@ async def _is_profile_nsfw(user_id: int) -> bool:
 
     return flagged
 
-
-async def _is_ai_flagged_user(chat_id: int, user_id: int) -> bool:
-    try:
-        return bool(await redis_client.exists(f"mod_flagged_ttl:{int(chat_id)}:{int(user_id)}"))
-    except Exception:
-        return False
 
 def _now() -> int:
     return int(time.time())
@@ -877,19 +879,18 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if not u or is_admin:
         return False
 
-    if bool(getattr(settings, "MODERATION_AUTO_DELETE_AI_FLAGGED_USERS", True)):
-        try:
-            if await _is_ai_flagged_user(chat_id, int(u.id)):
-                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("ai_flagged_user"), user_id=u.id)
-                return await _delete_and_handle("ai_flagged_user")
-        except Exception:
-            logger.debug("ai-flagged-user check failed", exc_info=True)
-
     if bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
         try:
+            blocked_key = _profile_nsfw_blocked_chat_key(chat_id, int(u.id))
+            if await redis_client.exists(blocked_key):
+                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("profile_nsfw_blocked"), user_id=u.id)
+                await _delete_and_handle("profile_nsfw_blocked")
+                await _restrict_user_write_safe(chat_id, int(u.id))
+                return True
             if await _is_profile_nsfw(int(u.id)):
                 await _flag(chat_id, message.message_id, action="restrict", reason=_ctx_reason("profile_nsfw"), user_id=u.id)
                 await _delete_and_handle("profile_nsfw")
+                await redis_client.set(blocked_key, 1)
                 restricted = await _restrict_user_write_safe(chat_id, int(u.id))
                 if not restricted:
                     await _ban_user_safe(chat_id, int(u.id), revoke=getattr(settings, "MODERATION_BAN_REVOKE_MESSAGES", True))

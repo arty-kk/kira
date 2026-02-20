@@ -410,6 +410,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
             patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
             patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
             patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
         ):
             status = await moderation.handle_passive_moderation(
@@ -423,6 +424,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
         send_alert_mock.assert_not_called()
 
     async def test_handle_passive_moderation_returns_error_and_records_error_state_on_exception(self) -> None:
