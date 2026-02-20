@@ -49,7 +49,7 @@ def compute_typing_delay(text: str) -> float:
     return max(MIN_DELAY, min(MAX_DELAY, d))
 
 
-async def _enqueue(payload: dict):
+def _collect_payload_reservation_ids(payload: dict) -> list[int]:
     reservation_ids: list[int] = []
     seen_reservation_ids: set[int] = set()
 
@@ -65,7 +65,6 @@ async def _enqueue(payload: dict):
             seen_reservation_ids.add(reservation_id_item)
             reservation_ids.append(reservation_id_item)
 
-    reservation_id = 0
     try:
         reservation_id = int(payload.get("reservation_id") or 0)
     except Exception:
@@ -73,12 +72,42 @@ async def _enqueue(payload: dict):
     if reservation_id > 0 and reservation_id not in seen_reservation_ids:
         reservation_ids.append(reservation_id)
 
-    async def _refund_reservations() -> None:
-        for reservation_id_item in reservation_ids:
-            try:
-                await refund_reservation_by_id(reservation_id_item)
-            except Exception:
-                logger.exception("debouncer: failed to refund reservation_id=%s", reservation_id_item)
+    return reservation_ids
+
+
+async def _refund_payload_reservations(payload: dict) -> bool:
+    reservation_ids = _collect_payload_reservation_ids(payload)
+    for reservation_id_item in reservation_ids:
+        try:
+            await refund_reservation_by_id(reservation_id_item)
+        except Exception:
+            logger.exception("debouncer: failed to refund reservation_id=%s", reservation_id_item)
+    return bool(reservation_ids)
+
+
+async def _log_and_refund_dropped_payload(*, chat_key: str, drop_reason: str, dropped_payload: dict) -> None:
+    reservation_count = len(_collect_payload_reservation_ids(dropped_payload))
+    has_reservation = await _refund_payload_reservations(dropped_payload)
+    if has_reservation:
+        logger.info(
+            "dropped_with_refund",
+            extra={
+                "chat_key": chat_key,
+                "drop_reason": drop_reason,
+                "reservation_count": reservation_count,
+            },
+        )
+    else:
+        logger.info(
+            "dropped_without_reservation",
+            extra={
+                "chat_key": chat_key,
+                "drop_reason": drop_reason,
+            },
+        )
+
+
+async def _enqueue(payload: dict):
 
     try:
         chat_id = int(payload.get("chat_id") or 0)
@@ -104,13 +133,13 @@ async def _enqueue(payload: dict):
                 "msg_id": msg_id,
             },
         )
-        await _refund_reservations()
+        await _refund_payload_reservations(payload)
         return
     try:
         data = json.dumps(payload, ensure_ascii=False)
     except Exception:
         logger.exception("debouncer: failed to encode queue payload")
-        await _refund_reservations()
+        await _refund_payload_reservations(payload)
         return
     payload_bytes = data.encode("utf-8")
     if BOT_QUEUE_MAX_PAYLOAD_BYTES > 0 and len(payload_bytes) > BOT_QUEUE_MAX_PAYLOAD_BYTES:
@@ -118,13 +147,13 @@ async def _enqueue(payload: dict):
             "debouncer: payload too large (%d bytes), dropping",
             len(payload_bytes),
         )
-        await _refund_reservations()
+        await _refund_payload_reservations(payload)
         return
     try:
         await consts.redis_queue.lpush(settings.QUEUE_KEY, data)
     except Exception:
         logger.exception("debouncer: enqueue failed")
-        await _refund_reservations()
+        await _refund_payload_reservations(payload)
 
 async def schedule_response(key: str):
     global total_buffered
@@ -319,26 +348,37 @@ def buffer_message_for_response(payload: dict):
         async with _global_lock:
             async with lock:
                 global total_buffered
+
+                def _drop_and_refund(*, drop_key: str, drop_reason: str) -> None:
+                    global total_buffered
+                    dropped_payload = message_buffers[drop_key].pop(0)
+                    total_buffered -= 1
+                    asyncio.create_task(
+                        _log_and_refund_dropped_payload(
+                            chat_key=drop_key,
+                            drop_reason=drop_reason,
+                            dropped_payload=dropped_payload,
+                        )
+                    )
+
                 payload.setdefault("ts", time.time())
                 if len(message_buffers[key]) >= MAX_BUFFER_PER_CHAT:
-                    message_buffers[key].pop(0)
-                    total_buffered -= 1
+                    _drop_and_refund(drop_key=key, drop_reason="per_chat_limit")
                 if GLOBAL_MAX_BUFFERS > 0 and total_buffered >= GLOBAL_MAX_BUFFERS:
                     def _head_ts(k: str) -> float:
-                        head = message_buffers.get(k, [None])[0] or {}
+                        items = message_buffers.get(k) or []
+                        head = items[0] if items else {}
                         return float(head.get("ts") or 0.0)
                     if message_buffers:
                         oldest_key = min(message_buffers, key=_head_ts)
                         if oldest_key == key:
                             if message_buffers[key]:
-                                message_buffers[key].pop(0)
-                                total_buffered -= 1
+                                _drop_and_refund(drop_key=key, drop_reason="global_limit")
                         else:
                             oldest_lock = _get_lock(oldest_key)
                             async with oldest_lock:
                                 if message_buffers.get(oldest_key):
-                                    message_buffers[oldest_key].pop(0)
-                                    total_buffered -= 1
+                                    _drop_and_refund(drop_key=oldest_key, drop_reason="global_limit")
                 message_buffers[key].append(payload)
                 total_buffered += 1
                 logger.debug("debounce[%s]: appended; size=%d", key, len(message_buffers[key]))

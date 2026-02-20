@@ -904,7 +904,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.RESPONSE_MODEL,
+                model=settings.PING_MODEL,
                 input=[
                     _msg("system", system_msg),
                     _msg("user", prompt),

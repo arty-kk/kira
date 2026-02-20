@@ -1,5 +1,6 @@
+import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.bot.utils import debouncer
 
@@ -105,6 +106,115 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
 
         lpush_mock.assert_not_awaited()
         self.assertEqual([call.args[0] for call in refund_mock.await_args_list], [11, 12])
+
+
+class DebouncerDropRefundTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        debouncer.message_buffers.clear()
+        debouncer.pending_tasks.clear()
+        debouncer._locks.clear()
+        debouncer.total_buffered = 0
+
+    async def test_per_chat_drop_refunds_unique_reservations(self) -> None:
+        refund_mock = AsyncMock()
+        with (
+            patch.object(debouncer, "MAX_BUFFER_PER_CHAT", 1),
+            patch.object(debouncer, "GLOBAL_MAX_BUFFERS", 100),
+            patch.object(debouncer, "refund_reservation_by_id", refund_mock),
+            patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)),
+        ):
+            debouncer.buffer_message_for_response(
+                {
+                    "chat_id": 1,
+                    "user_id": 1,
+                    "text": "first",
+                    "reservation_id": "10",
+                    "reservation_ids": [10, "11", 0, -1, "bad", 11],
+                }
+            )
+            await asyncio.sleep(0)
+            debouncer.buffer_message_for_response(
+                {
+                    "chat_id": 1,
+                    "user_id": 1,
+                    "text": "second",
+                }
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        self.assertEqual([call.args[0] for call in refund_mock.await_args_list], [10, 11])
+
+    async def test_global_drop_same_key_refunds(self) -> None:
+        refund_mock = AsyncMock()
+        with (
+            patch.object(debouncer, "MAX_BUFFER_PER_CHAT", 10),
+            patch.object(debouncer, "GLOBAL_MAX_BUFFERS", 1),
+            patch.object(debouncer, "refund_reservation_by_id", refund_mock),
+            patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)),
+        ):
+            debouncer.buffer_message_for_response(
+                {"chat_id": 1, "user_id": 1, "text": "first", "reservation_id": 20}
+            )
+            await asyncio.sleep(0)
+            debouncer.buffer_message_for_response(
+                {"chat_id": 1, "user_id": 1, "text": "second"}
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        refund_mock.assert_awaited_once_with(20)
+
+    async def test_global_drop_other_key_refunds(self) -> None:
+        refund_mock = AsyncMock()
+        debouncer.message_buffers["1:1"] = [
+            {"chat_id": 1, "user_id": 1, "text": "old", "reservation_id": 30, "ts": 1.0}
+        ]
+        debouncer.message_buffers["2:2"] = [
+            {"chat_id": 2, "user_id": 2, "text": "newer", "ts": 2.0}
+        ]
+        debouncer.total_buffered = 2
+
+        with (
+            patch.object(debouncer, "MAX_BUFFER_PER_CHAT", 10),
+            patch.object(debouncer, "GLOBAL_MAX_BUFFERS", 2),
+            patch.object(debouncer, "refund_reservation_by_id", refund_mock),
+            patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)),
+        ):
+            debouncer.buffer_message_for_response(
+                {"chat_id": 2, "user_id": 2, "text": "latest"}
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        refund_mock.assert_awaited_once_with(30)
+
+    async def test_drop_without_reservation_logs_event(self) -> None:
+        refund_mock = AsyncMock()
+        info_mock = MagicMock()
+
+        def _is_logged(event_name: str) -> bool:
+            for call in info_mock.call_args_list:
+                if call.args and call.args[0] == event_name:
+                    return True
+            return False
+
+        with (
+            patch.object(debouncer, "MAX_BUFFER_PER_CHAT", 1),
+            patch.object(debouncer, "GLOBAL_MAX_BUFFERS", 100),
+            patch.object(debouncer, "refund_reservation_by_id", refund_mock),
+            patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)),
+            patch.object(debouncer.logger, "info", info_mock),
+        ):
+            debouncer.buffer_message_for_response({"chat_id": 1, "user_id": 1, "text": "first"})
+            await asyncio.sleep(0)
+            debouncer.buffer_message_for_response({"chat_id": 1, "user_id": 1, "text": "second"})
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        refund_mock.assert_not_awaited()
+        self.assertTrue(_is_logged("dropped_without_reservation"))
+
 
 
 if __name__ == "__main__":

@@ -311,7 +311,7 @@ async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optio
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.BASE_MODEL,
+                model=settings.PING_MODEL,
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
                 max_output_tokens=64,
                 temperature=0.0,
@@ -578,7 +578,7 @@ async def classify_signals_llm(personal_msgs: list[dict], summary: Optional[str]
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.BASE_MODEL,
+                model=settings.PING_MODEL,
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
                 max_output_tokens=24,
                 temperature=0.0,
@@ -1293,7 +1293,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
     negative, open_loop, has_hook = await classify_signals_llm(personal_msgs, summary)
     try:
         logger.info("PP SIGNALS uid=%s negative=%s open_loop=%s has_hook=%s model=%s",
-                    user_id, negative, open_loop, has_hook, settings.REASONING_MODEL)
+                    user_id, negative, open_loop, has_hook , settings.PING_MODEL)
     except Exception:
         pass
 
@@ -1474,7 +1474,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model=settings.RESPONSE_MODEL,
+                model=settings.PING_MODEL,
                 input=[_msg("system", time_sys), _msg("system", system_msg), _msg("user", prompt)],
                 max_output_tokens=max_tokens,
                 temperature=temp,
