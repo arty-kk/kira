@@ -563,7 +563,7 @@ class Settings:
     PERSONA_NAME: str = field(default_factory=lambda: _get_env("PERSONA_NAME", "Kira"))
     PERSONA_AGE: int = field(default_factory=lambda: _get_env("PERSONA_AGE", "28", conv=int))
     PERSONA_GENDER: str = field(default_factory=lambda: _get_env("PERSONA_GENDER", "female"))
-    PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC", "Aries"))
+    PERSONA_ZODIAC: str = field(default_factory=lambda: _get_env("PERSONA_ZODIAC", "Scorpio"))
     PERSONA_TEMPERAMENT: str = field(default_factory=lambda: _get_env(
             "PERSONA_TEMPERAMENT",
             '{"sanguine":0.40,"choleric":0.26,"phlegmatic":0.20,"melancholic":0.14}',
