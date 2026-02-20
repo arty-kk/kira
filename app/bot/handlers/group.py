@@ -403,6 +403,14 @@ def _reply_gate_requires_mention(message: Message) -> bool:
     return False
 
 
+def _is_clean_message_for_on_topic(message: Message, *, mentioned: bool, mentions_other: bool) -> bool:
+    if message.reply_to_message is not None:
+        return False
+    if mentioned or mentions_other:
+        return False
+    return True
+
+
 async def _ensure_daily_limit(cid: int, reply_to: int | None) -> bool:
     today = datetime.now(tz=_get_default_tz()).date()
     key = f"daily:{cid}:{today}"
@@ -828,11 +836,17 @@ async def on_group_message(message: Message) -> None:
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
 
+        clean_for_on_topic = _is_clean_message_for_on_topic(
+            message,
+            mentioned=mentioned,
+            mentions_other=mentions_other,
+        )
+
         trigger = _resolve_autoreply_trigger(
             is_channel=is_channel,
             mentioned=mentioned,
             mentions_other=mentions_other,
-            has_content_signal=bool(raw_text),
+            has_content_signal=bool(raw_text) and clean_for_on_topic,
             is_battle_cmd_to_us=is_battle_cmd_to_us,
             autoreply_on_topic=AUTOREPLY_ON_TOPIC,
         )
@@ -1119,7 +1133,7 @@ async def _handle_group_image_message_common(
         is_channel=is_channel,
         mentioned=mentioned,
         mentions_other=mentions_other,
-        has_content_signal=bool(caption),
+        has_content_signal=False,
         is_battle_cmd_to_us=False,
         autoreply_on_topic=AUTOREPLY_ON_TOPIC,
     )

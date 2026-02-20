@@ -124,6 +124,42 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
                 self.assertEqual(group._resolve_autoreply_trigger(**kwargs), expected)
 
 
+class CleanOnTopicMessageTests(unittest.TestCase):
+    def test_requires_message_without_reply_or_mentions(self) -> None:
+        clean_message = types.SimpleNamespace(reply_to_message=None)
+        self.assertTrue(
+            group._is_clean_message_for_on_topic(
+                clean_message,
+                mentioned=False,
+                mentions_other=False,
+            )
+        )
+
+        reply_message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
+        self.assertFalse(
+            group._is_clean_message_for_on_topic(
+                reply_message,
+                mentioned=False,
+                mentions_other=False,
+            )
+        )
+
+        self.assertFalse(
+            group._is_clean_message_for_on_topic(
+                clean_message,
+                mentioned=True,
+                mentions_other=False,
+            )
+        )
+        self.assertFalse(
+            group._is_clean_message_for_on_topic(
+                clean_message,
+                mentioned=False,
+                mentions_other=True,
+            )
+        )
+
+
 class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
     async def _trigger_from_text(
         self,
@@ -544,7 +580,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                     is_channel=case["is_channel"],
                     mentioned=case["mentioned"],
                     mentions_other=case["mentions_other"],
-                    has_content_signal=case["has_content_signal"],
+                    has_content_signal=False,
                     is_battle_cmd_to_us=False,
                     autoreply_on_topic=case["autoreply_on_topic"],
                 )
