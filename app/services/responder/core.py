@@ -62,6 +62,10 @@ from .context_select import (
 logger = logging.getLogger(__name__)
 
 
+def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
+    return not (group_mode or is_channel_post)
+
+
 @dataclass
 class RagQueryContext:
     query: str
@@ -837,7 +841,7 @@ async def respond_to_user(
         gender = user.gender
     if gender is None:
         gender = await get_cached_gender(memory_uid)
-    if gender is None and redis:
+    if gender is None and redis and _allow_gender_autodetect(group_mode=group_mode, is_channel_post=is_channel_post):
         try:
             ui = await redis.hgetall(f"tg_user:{memory_uid}") or {}
         except Exception:

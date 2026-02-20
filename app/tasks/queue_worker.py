@@ -1385,7 +1385,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     enforce_on_topic=enforce_on_topic,
                     expect_voice_out=expect_voice_out_flag,
                     billing_tier=billing_tier,
-                    persona_owner_id=None,
+                    persona_owner_id=(chat_id if (is_group or is_channel) else None),
                     memory_uid=None,
                     soft_reply_context=soft_reply_context,
                 )
