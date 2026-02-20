@@ -9,6 +9,7 @@ class PromptBuilderGenderPolicyTests(unittest.TestCase):
 
         self.assertIn("SelfGender: female", policy)
         self.assertIn("Never switch self-gender", policy)
+        self.assertIn('If USER.Gender is unknown/missing, use polite second-person address in Russian ("Вы/Вам/Ваш")', policy)
         self.assertIn("For Russian", policy)
 
 
