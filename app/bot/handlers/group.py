@@ -201,10 +201,26 @@ def _extract_entities(message: types.Message) -> List[dict]:
     return out
 
 
-def _is_mention(message: types.Message) -> bool:
-    if not (consts.BOT_USERNAME and consts.BOT_ID):
+def _is_reply_to_our_bot(message: Message) -> bool:
+    reply_from = getattr(getattr(message, "reply_to_message", None), "from_user", None)
+    if not reply_from:
         return False
 
+    bot_id = getattr(consts, "BOT_ID", None)
+    if bot_id:
+        with contextlib.suppress(Exception):
+            if int(getattr(reply_from, "id", 0) or 0) == int(bot_id):
+                return True
+
+    expected = (getattr(consts, "BOT_USERNAME", "") or "").lstrip("@").lower()
+    reply_username = (getattr(reply_from, "username", "") or "").lstrip("@").lower()
+    if expected and reply_username and reply_username == expected:
+        return bool(getattr(reply_from, "is_bot", False))
+
+    return False
+
+
+def _is_mention(message: types.Message) -> bool:
     expected = (consts.BOT_USERNAME or "").lstrip("@").lower()
     raw = (message.text or message.caption or "")
     entities = (message.entities or []) + (message.caption_entities or [])
@@ -215,8 +231,10 @@ def _is_mention(message: types.Message) -> bool:
                 mention = raw[ent.offset : ent.offset + ent.length]
                 if mention.lstrip("@").lower() == expected:
                     return True
-            if ent.type == MessageEntityType.TEXT_MENTION and ent.user and int(ent.user.id) == int(consts.BOT_ID):
-                return True
+            if ent.type == MessageEntityType.TEXT_MENTION and ent.user:
+                bot_id = getattr(consts, "BOT_ID", None)
+                if bot_id and int(ent.user.id) == int(bot_id):
+                    return True
         except Exception:
             continue
 
@@ -226,12 +244,8 @@ def _is_mention(message: types.Message) -> bool:
         if re.search(rf"(^|[^/\w])@{re.escape(expected)}(?!\w)", raw_low):
             return True
 
-    if message.reply_to_message and message.reply_to_message.from_user:
-        try:
-            if int(message.reply_to_message.from_user.id) == int(consts.BOT_ID):
-                return True
-        except Exception:
-            pass
+    if _is_reply_to_our_bot(message):
+        return True
 
     return False
 
@@ -357,15 +371,7 @@ def _user_id_val(message: Message, is_channel: bool) -> int:
     return int(message.chat.id)
 
 def _replied_to_our_bot(message: Message) -> bool:
-    try:
-        if not (message.reply_to_message and message.reply_to_message.from_user):
-            return False
-        bid = getattr(consts, "BOT_ID", None)
-        if not bid:
-            return False
-        return int(message.reply_to_message.from_user.id) == int(bid)
-    except Exception:
-        return False
+    return _is_reply_to_our_bot(message)
 
 async def _update_presence(cid: int, message: Message) -> None:
     username = None
@@ -391,11 +397,9 @@ async def _update_presence(cid: int, message: Message) -> None:
 
 def _reply_gate_requires_mention(message: Message) -> bool:
     if message.reply_to_message and message.reply_to_message.from_user:
-        try:
-            if int(message.reply_to_message.from_user.id) != int(consts.BOT_ID) and not _is_mention(message):
-                return True
-        except Exception:
-            return True
+        if _is_reply_to_our_bot(message):
+            return False
+        return not _is_mention(message)
     return False
 
 

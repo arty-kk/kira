@@ -69,6 +69,31 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         load_mock.assert_not_awaited()
         ai_mock.assert_not_awaited()
 
+class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
+    async def test_classify_profile_nsfw_fast_accepts_strict_yes_json(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)) as call_mock,
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"confidence":0.97,"answer":"да"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertTrue(flagged)
+        call_mock.assert_awaited_once()
+
+    async def test_classify_profile_nsfw_fast_defaults_to_false_on_non_yes(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"confidence":0.51,"answer":"нет"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertFalse(flagged)
+
+
 class _FakePipe:
     def __init__(self, set_calls):
         self._set_calls = set_calls
@@ -462,29 +487,12 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_cleanup_user_history_and_mute_uses_ban_revoke_then_unban_and_restrict(self) -> None:
+    async def test_cleanup_user_history_and_mute_only_restricts_user(self) -> None:
         with (
-            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=True)) as ban_mock,
-            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
             patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
         ):
             await moderation._cleanup_user_history_and_mute(-1001, 42)
 
-        ban_mock.assert_awaited_once_with(-1001, 42, revoke=True)
-        unban_mock.assert_awaited_once_with(-1001, 42)
-        restrict_mock.assert_awaited_once_with(-1001, 42)
-
-    async def test_cleanup_user_history_and_mute_rebans_if_unban_succeeded_and_restrict_failed(self) -> None:
-        with (
-            patch.object(moderation, "_ban_user_safe", AsyncMock(side_effect=[True, True])) as ban_mock,
-            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
-            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=False)) as restrict_mock,
-        ):
-            await moderation._cleanup_user_history_and_mute(-1001, 42)
-
-        self.assertEqual(ban_mock.await_count, 2)
-        ban_mock.assert_any_await(-1001, 42, revoke=True)
-        unban_mock.assert_awaited_once_with(-1001, 42)
         restrict_mock.assert_awaited_once_with(-1001, 42)
 
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:

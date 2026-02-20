@@ -138,6 +138,28 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["is_channel_post"])
 
 
+class GroupReplyMentionFallbackTests(unittest.IsolatedAsyncioTestCase):
+    def test_reply_to_bot_username_works_without_bot_id(self) -> None:
+        message = types.SimpleNamespace(
+            reply_to_message=types.SimpleNamespace(
+                from_user=types.SimpleNamespace(id=9001, username="MyBot", is_bot=True),
+            ),
+            text=None,
+            caption=None,
+            entities=[],
+            caption_entities=[],
+        )
+
+        with (
+            patch.object(group.consts, "BOT_ID", None),
+            patch.object(group.consts, "BOT_USERNAME", "MyBot"),
+        ):
+            self.assertTrue(group._is_mention(message))
+            self.assertTrue(group._replied_to_our_bot(message))
+            self.assertFalse(group._reply_gate_requires_mention(message))
+
+
+
 class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_on_group_voice_skips_non_channel_bot_messages(self) -> None:
         message = types.SimpleNamespace(

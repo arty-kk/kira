@@ -295,6 +295,8 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         restrict_mock.assert_awaited_once()
         self.assertIn("profile_nsfw_blocked", flag_mock.await_args.kwargs["reason"])
 
+
+
     def test_resolve_policy_relaxed_comment_disables_external_channel_checks(self) -> None:
         cfg = self._base_settings(COMMENT_MODERATION_LINK_POLICY="relaxed")
         policy = moderation.resolve_moderation_policy("comment", cfg)

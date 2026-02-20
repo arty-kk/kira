@@ -27,7 +27,7 @@ from app.services.addons.passive_moderation import (
     contains_any_link_obfuscated,
     check_light,
     check_deep,
-    moderate_with_openai,
+    classify_profile_nsfw_fast,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import resolve_message_moderation_context
@@ -647,7 +647,10 @@ async def _is_profile_nsfw(user_id: int) -> bool:
             raw = io.BytesIO()
             await bot.download(tg_file, raw)
             image_b64 = base64.b64encode(raw.getvalue()).decode("utf-8")
-            flagged = bool(await moderate_with_openai("", image_b64=image_b64, image_mime="image/jpeg"))
+            flagged = await classify_profile_nsfw_fast(
+                image_b64=image_b64,
+                image_mime="image/jpeg",
+            )
     except Exception:
         logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
         flagged = False
@@ -662,13 +665,7 @@ async def _is_profile_nsfw(user_id: int) -> bool:
 
 
 async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
-    banned = await _ban_user_safe(chat_id, user_id, revoke=True)
-    unbanned = False
-    if banned:
-        unbanned = await _unban_user_safe(chat_id, user_id)
-    restricted = await _restrict_user_write_safe(chat_id, user_id)
-    if not restricted and (not banned or unbanned):
-        await _ban_user_safe(chat_id, user_id, revoke=True)
+    await _restrict_user_write_safe(chat_id, user_id)
 
 
 def _now() -> int:
