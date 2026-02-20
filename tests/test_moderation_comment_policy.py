@@ -196,6 +196,100 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         flag_mock.assert_awaited_once()
         self.assertTrue(any("failed to delete (external_reply)" in record for record in logs.output))
 
+
+
+    async def test_ai_flagged_user_message_is_deleted(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            message_id=21,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=None,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings(MODERATION_AUTO_DELETE_AI_FLAGGED_USERS=True, MODERATION_PROFILE_NSFW_ENFORCE=False)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_ai_flagged_user", AsyncMock(return_value=True)),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertTrue(handled)
+        delete_mock.assert_awaited_once()
+        self.assertIn("ai_flagged_user", flag_mock.await_args.kwargs["reason"])
+
+    async def test_profile_nsfw_user_is_deleted_and_restricted(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            message_id=22,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=None,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings(MODERATION_AUTO_DELETE_AI_FLAGGED_USERS=False, MODERATION_PROFILE_NSFW_ENFORCE=True)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=False)) as ban_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertTrue(handled)
+        delete_mock.assert_awaited_once()
+        restrict_mock.assert_awaited_once()
+        ban_mock.assert_not_awaited()
+        self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
+
     def test_resolve_policy_relaxed_comment_disables_external_channel_checks(self) -> None:
         cfg = self._base_settings(COMMENT_MODERATION_LINK_POLICY="relaxed")
         policy = moderation.resolve_moderation_policy("comment", cfg)
