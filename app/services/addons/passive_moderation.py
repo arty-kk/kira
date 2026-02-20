@@ -7,9 +7,10 @@ import time
 import asyncio
 import hashlib
 import unicodedata
+import json
 
 from urllib.parse import urlparse
-from typing import Literal, List, Optional
+from typing import Any, Literal, List, Optional
 
 from redis.exceptions import RedisError
 from aiogram.enums import ChatType
@@ -17,7 +18,7 @@ from aiogram.enums import ChatType
 from app.core.memory import load_context, get_redis
 from app.config import settings
 from app.clients.telegram_client import get_bot
-from app.clients.openai_client import get_openai
+from app.clients.openai_client import get_openai, _call_openai_with_retry, _get_output_text
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +365,82 @@ def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
             return False
 
     return True
+
+
+def _profile_nsfw_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "is_nude_female": {"type": "boolean"},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "answer": {"type": "string", "enum": ["да", "нет"]},
+        },
+        "required": ["is_nude_female", "confidence", "answer"],
+        "additionalProperties": False,
+    }
+
+
+async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image/jpeg") -> bool:
+    payload = (image_b64 or "").strip()
+    if not payload:
+        return False
+
+    system_prompt = (
+        "Ты модератор, который выявляет контент с голыми девушками, "
+        "чтобы система могла ограничить доступ к такому контенту. "
+        "Отвечай строго в JSON по схеме. "
+        "Если не уверен, выбирай 'нет' и is_nude_female=false."
+    )
+    user_prompt = "На картинке голая девушка?"
+
+    try:
+        resp = await asyncio.wait_for(
+            _call_openai_with_retry(
+                endpoint="responses.create",
+                model=str(getattr(settings, "MODERATION_PROFILE_NSFW_MODEL", "gpt-5-nano") or "gpt-5-nano"),
+                instructions=system_prompt,
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": user_prompt},
+                            {"type": "input_image", "image_url": f"data:{image_mime};base64,{payload}"},
+                        ],
+                    }
+                ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "profile_nsfw_label",
+                        "schema": _profile_nsfw_schema(),
+                        "strict": True,
+                    }
+                },
+                max_output_tokens=64,
+                reasoning={"effort": "low"},
+            ),
+            timeout=10.0,
+        )
+    except Exception:
+        logger.exception("classify_profile_nsfw_fast: openai call failed")
+        return False
+
+    raw = (_get_output_text(resp) or "").strip()
+    if not raw:
+        return False
+
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        logger.debug("classify_profile_nsfw_fast: invalid JSON output=%r", raw)
+        return False
+
+    answer = str(obj.get("answer", "")).strip().lower()
+    if answer not in ("да", "нет"):
+        return False
+
+    # Conservative: only an explicit positive boolean + positive answer triggers restrictions.
+    return bool(obj.get("is_nude_female", False)) and answer == "да"
 
 
 async def moderate_with_openai(

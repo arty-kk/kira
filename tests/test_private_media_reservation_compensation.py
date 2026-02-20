@@ -40,6 +40,35 @@ class PrivateMediaReservationCompensationTests(unittest.IsolatedAsyncioTestCase)
 
         refund_mock.assert_awaited_once_with(901)
 
+    async def test_photo_without_caption_is_enqueued(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=101),
+            from_user=types.SimpleNamespace(id=45, is_bot=False),
+            message_id=78,
+            media_group_id=None,
+            caption=None,
+            caption_entities=[],
+            photo=[types.SimpleNamespace(file_id="p2")],
+            reply_to_message=None,
+        )
+
+        with (
+            patch.object(private, "is_spam", AsyncMock(return_value=False)),
+            patch.object(private, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(private, "_analytics_best_effort"),
+            patch.object(private, "_ensure_access_and_increment", AsyncMock(return_value=(object(), True, "free", 904))),
+            patch.object(private, "download_to_tmp", AsyncMock(return_value="/tmp/test.jpg")),
+            patch.object(private, "strict_image_load", AsyncMock(return_value=object())),
+            patch.object(private, "sanitize_and_compress", return_value=b"jpeg-bytes"),
+            patch.object(private, "_handle_image_payload", AsyncMock()) as payload_mock,
+            patch.object(private.os.path, "exists", return_value=False),
+        ):
+            await private.on_private_photo(message)
+
+        payload_mock.assert_awaited_once()
+        self.assertEqual(payload_mock.await_args.args[1], "")
+
+
     async def test_document_refund_when_not_enqueued(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=200),
