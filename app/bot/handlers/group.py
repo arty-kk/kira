@@ -599,8 +599,8 @@ async def localized_group_image_error(chat_id: int, reason: str, reply_to: int |
     safe_reason = html.escape(reason or "", quote=True)
     msg = await tr(
         chat_id,
-        "errors.image_generic",
-        f"⚠️ Cannot process image: {safe_reason}\nPlease send exactly one image (≤ 5 MB) in a single message.",
+        "errors.image_generic_group",
+        f"⚠️ Cannot process image: {safe_reason}",
         reason=safe_reason,
     )
     await send_message_safe(bot, chat_id, msg, parse_mode="HTML", reply_to_message_id=reply_to)
@@ -1079,10 +1079,6 @@ async def _handle_group_image_message_common(
 ) -> None:
     cid = message.chat.id
 
-    if not is_single_media(message):
-        reject_image_and_reply(cid, "albums are not supported", reply_to=message.message_id)
-        return
-
     # moderation guard
     try:
         if await apply_moderation_filters(cid, message):
@@ -1124,6 +1120,10 @@ async def _handle_group_image_message_common(
     )
 
     if not trigger:
+        return
+
+    if not is_single_media(message):
+        reject_image_and_reply(cid, "albums are not supported", reply_to=message.message_id)
         return
 
     if not await _ensure_daily_limit(cid, message.message_id):
@@ -1254,7 +1254,7 @@ async def on_group_document_image(message: Message) -> None:
 
         try:
             if getattr(doc, "file_size", None) and int(doc.file_size) > MAX_DOCUMENT_BYTES:
-                reject_image_and_reply(cid, "file is too large", reply_to=message.message_id)
+                reject_image_and_reply(cid, "входной файл слишком большой для обработки", reply_to=message.message_id)
                 return
         except Exception:
             logger.debug("doc.file_size check failed", exc_info=True)

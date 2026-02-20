@@ -1,4 +1,5 @@
 import json
+import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -127,7 +128,7 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
             result = await media._preprocess(payload)
 
         self.assertEqual(result, "skipped:validation")
-        send_error.assert_awaited()
+        send_error.assert_awaited_once_with(10, "не удалось ужать до 5MB", 20)
 
     async def test_preprocess_skips_context_when_enqueue_failed(self) -> None:
         fake_redis = _FakeRedis()
@@ -185,6 +186,71 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         moderation_payload = passive_delay.call_args.args[0]
         self.assertNotIn("image_b64", moderation_payload)
         self.assertNotIn("image_mime", moderation_payload)
+
+
+
+    async def test_preprocess_allows_input_larger_than_5mb_when_compression_succeeds(self) -> None:
+        fake_redis = _FakeRedis()
+        payload = {
+            "chat_id": 10,
+            "message_id": 21,
+            "user_id": 30,
+            "trigger": "mention",
+            "file_id": "abc",
+            "caption": "cap",
+            "caption_log": "cap",
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "_download_file_to_tmp", AsyncMock(return_value="/tmp/f-big.jpg")),
+            patch.object(media, "strict_image_load", AsyncMock(return_value=object())),
+            patch.object(media, "sanitize_and_compress", return_value=b"jpeg"),
+            patch.object(media, "_send_error", AsyncMock()) as send_error,
+            patch.object(media.passive_moderate, "delay"),
+            patch("app.tasks.media.os.path.exists", return_value=False),
+        ):
+            consts_mock.redis_client = fake_redis
+            consts_mock.redis_queue = fake_redis
+            result = await media._preprocess(payload)
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(fake_redis.queue), 1)
+        send_error.assert_not_awaited()
+
+    async def test_preprocess_returns_specific_reason_when_input_exceeds_media_limit(self) -> None:
+        payload = {
+            "chat_id": 10,
+            "message_id": 22,
+            "user_id": 30,
+            "file_id": "abc",
+        }
+        with (
+            patch.object(
+                media,
+                "_download_file_to_tmp",
+                AsyncMock(side_effect=ValueError("входной файл слишком большой для обработки")),
+            ),
+            patch.object(media, "_send_error", AsyncMock()) as send_error,
+            patch("app.tasks.media.os.path.exists", return_value=False),
+        ):
+            result = await media._preprocess(payload)
+
+        self.assertEqual(result, "skipped:validation")
+        send_error.assert_awaited_once_with(10, "входной файл слишком большой для обработки", 22)
+
+    async def test_download_file_to_tmp_rejects_when_input_exceeds_media_limit(self) -> None:
+        fake_bot = types.SimpleNamespace(
+            get_file=AsyncMock(return_value=object()),
+            download=AsyncMock(return_value=None),
+        )
+        with (
+            patch.object(media, "get_bot", return_value=fake_bot),
+            patch("app.tasks.media.os.path.getsize", return_value=media.MEDIA_MAX_INPUT_BYTES + 1),
+            patch("app.tasks.media.os.path.exists", return_value=True),
+            patch("app.tasks.media.os.remove"),
+        ):
+            with self.assertRaisesRegex(ValueError, "входной файл слишком большой для обработки"):
+                await media._download_file_to_tmp(file_id="abc", suffix=".jpg", timeout_s=1.0)
 
     def test_smoke_queue_payload_contract_is_compatible(self) -> None:
         sample = {
