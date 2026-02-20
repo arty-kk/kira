@@ -224,7 +224,7 @@ def _load_webhook_module():
         WEBHOOK_HOST="127.0.0.1",
         WEBHOOK_PORT=8443,
         WEBHOOK_FEED_UPDATE_TIMEOUT_SEC=1,
-        WEBHOOK_DROP_PENDING_UPDATES=False,
+        WEBHOOK_DROP_PENDING_UPDATES=True,
         WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION=False,
         ALLOWED_GROUP_IDS=[],
         MEMORY_TTL_DAYS=1,
@@ -325,9 +325,22 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_FakeTCPSite.last_instance.started)
 
 
-    async def test_start_bot_sets_drop_pending_updates_to_false_by_default(self):
+    async def test_start_bot_drops_pending_updates_on_start(self):
         stop_event = asyncio.Event()
         stop_event.set()
+
+        await webhook.start_bot(stop_event=stop_event)
+
+        self.assertIsNotNone(_FakeBot.last_instance)
+        self.assertIsNotNone(_FakeBot.last_instance.last_set_webhook_kwargs)
+        self.assertIn("drop_pending_updates", _FakeBot.last_instance.last_set_webhook_kwargs)
+        self.assertTrue(_FakeBot.last_instance.last_set_webhook_kwargs["drop_pending_updates"])
+
+
+    async def test_start_bot_respects_drop_pending_updates_setting(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+        webhook.settings.WEBHOOK_DROP_PENDING_UPDATES = False
 
         await webhook.start_bot(stop_event=stop_event)
 

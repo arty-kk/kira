@@ -1,4 +1,5 @@
 import types
+from contextlib import ExitStack
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -444,6 +445,167 @@ class GroupCommentContextTests(unittest.TestCase):
         )
 
         self.assertFalse(group.resolve_message_moderation_context(message) == "comment")
+
+
+
+class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
+    async def test_on_group_message_trusted_chat_repost_logs_stm_without_reply(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=990,
+            text="trusted repost text",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=types.SimpleNamespace(id=-100201, type=group.ChatType.SUPERGROUP),
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123, -100201], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[], GROUP_AUTOREPLY_ON_TOPIC=True)),
+            patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "_update_presence", AsyncMock()),
+            patch.object(group, "record_activity", AsyncMock()),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("trusted repost text", "trusted repost text")),
+            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
+            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "buffer_message_for_response") as buffer_mock,
+        ):
+            await group.on_group_message(message)
+
+        buffer_mock.assert_not_called()
+        store_ctx.assert_awaited_once()
+        push_stm.assert_awaited_once()
+
+
+    async def test_on_group_message_sender_chat_same_chat_is_not_treated_as_trusted_repost(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=993,
+            text="hello from anon admin",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=None,
+            sender_chat=types.SimpleNamespace(id=123, type=group.ChatType.SUPERGROUP),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[], GROUP_AUTOREPLY_ON_TOPIC=True)))
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_reply_gate_requires_mention", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("hello from anon admin", "hello from anon admin")))
+            stack.enter_context(patch.object(group, "_is_mention", return_value=False))
+            stack.enter_context(patch.object(group, "_mentions_other_user", return_value=False))
+            stack.enter_context(patch.object(group, "_is_bot_command_to_us", return_value=False))
+            stack.enter_context(patch.object(group, "_is_cmd_addressed_to_other_bot", return_value=False))
+            stack.enter_context(patch.object(group, "_is_clean_message_for_on_topic", return_value=True))
+            stack.enter_context(patch.object(group, "_maybe_handle_battle", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=123))
+            stack.enter_context(patch.object(group, "_replied_to_our_bot", return_value=False))
+            stack.enter_context(patch.object(group, "_store_context", AsyncMock()))
+            stack.enter_context(patch.object(group, "_channel_obj", return_value=None))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_push_group_stm_and_recent", AsyncMock()))
+            stack.enter_context(patch.object(group, "_analytics_best_effort"))
+            stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+            stack.enter_context(patch.object(group.redis_client, "sadd", AsyncMock()))
+            ignored_log = stack.enter_context(patch.object(group, "_log_ignored_repost_to_stm", AsyncMock()))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            await group.on_group_message(message)
+
+        ignored_log.assert_not_awaited()
+        buffer_mock.assert_called_once()
+
+    async def test_on_group_message_trusted_channel_post_logs_stm_without_reply(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=992,
+            text="trusted channel post",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=types.SimpleNamespace(id=-10011, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[-10011], GROUP_AUTOREPLY_ON_TOPIC=True)),
+            patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "_update_presence", AsyncMock()),
+            patch.object(group, "record_activity", AsyncMock()),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_is_channel_post", return_value=True),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("trusted channel post", "trusted channel post")),
+            patch.object(group, "_maybe_log_channel_post", AsyncMock(return_value=True)) as channel_log,
+            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
+            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "buffer_message_for_response") as buffer_mock,
+        ):
+            await group.on_group_message(message)
+
+        buffer_mock.assert_not_called()
+        channel_log.assert_not_awaited()
+        store_ctx.assert_awaited_once()
+        push_stm.assert_awaited_once()
+
+    async def test_on_group_voice_trusted_channel_repost_logs_stm_without_reply(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=991,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            voice=types.SimpleNamespace(file_id="voice-file-id"),
+            reply_to_message=None,
+            entities=[],
+            caption_entities=[],
+            text=None,
+            caption=None,
+            sender_chat=types.SimpleNamespace(id=-10011, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[-10011], GROUP_AUTOREPLY_ON_TOPIC=True)),
+            patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_update_presence", AsyncMock()),
+            patch.object(group, "record_activity", AsyncMock()),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=True),
+            patch.object(group, "is_from_linked_channel", AsyncMock(return_value=True)),
+            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
+            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "buffer_message_for_response") as buffer_mock,
+        ):
+            await group.on_group_voice(message)
+
+        buffer_mock.assert_not_called()
+        store_ctx.assert_awaited_once()
+        push_stm.assert_awaited_once()
 
 
 

@@ -211,7 +211,7 @@ class Settings:
         default_factory=lambda: _get_env("WEBHOOK_FEED_UPDATE_TIMEOUT_SEC", "30", conv=float)
     )
     WEBHOOK_DROP_PENDING_UPDATES: bool = field(
-        default_factory=lambda: _get_env("WEBHOOK_DROP_PENDING_UPDATES", "false", conv=_parse_bool)
+        default_factory=lambda: _get_env("WEBHOOK_DROP_PENDING_UPDATES", "true", conv=_parse_bool)
     )
     WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION: bool = field(
         default_factory=lambda: _get_env("WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION", "false", conv=_parse_bool)
