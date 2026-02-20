@@ -9,6 +9,58 @@ from app.services.user.user_service import INITIAL_FREE_REQUESTS, get_or_create_
 
 
 class GetOrCreateUserTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_or_create_user_falls_back_to_select_when_returning_scalar_is_int(self):
+        tg_user = SimpleNamespace(id=55, username="switch", full_name="Switch")
+        expected_user = User(
+            id=tg_user.id,
+            username=tg_user.username,
+            full_name=tg_user.full_name,
+            used_requests=1,
+            free_requests=2,
+            paid_requests=0,
+        )
+
+        upsert_result = Mock()
+        upsert_result.scalar_one.return_value = tg_user.id
+        select_result = Mock()
+        select_result.scalar_one.return_value = expected_user
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[upsert_result, select_result])
+
+        actual_user = await get_or_create_user(db, tg_user)
+
+        self.assertIs(actual_user, expected_user)
+        self.assertEqual(db.execute.await_count, 2)
+        fallback_stmt = db.execute.await_args_list[1].args[0]
+        self.assertIn("SELECT", str(fallback_stmt))
+
+    async def test_get_or_create_user_fallback_int_keeps_zero_triplet_heal(self):
+        tg_user = SimpleNamespace(id=56, username="dozer", full_name="Dozer")
+        expected_user = User(
+            id=tg_user.id,
+            username=tg_user.username,
+            full_name=tg_user.full_name,
+            used_requests=0,
+            free_requests=0,
+            paid_requests=0,
+        )
+
+        upsert_result = Mock()
+        upsert_result.scalar_one.return_value = tg_user.id
+        select_result = Mock()
+        select_result.scalar_one.return_value = expected_user
+        heal_result = Mock()
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[upsert_result, select_result, heal_result])
+
+        actual_user = await get_or_create_user(db, tg_user)
+
+        self.assertIs(actual_user, expected_user)
+        self.assertEqual(db.execute.await_count, 3)
+        self.assertEqual(actual_user.free_requests, INITIAL_FREE_REQUESTS)
+
     async def test_get_or_create_user_uses_upsert_and_no_db_get(self):
         tg_user = SimpleNamespace(id=42, username="neo", full_name="Thomas Anderson")
         expected_user = User(

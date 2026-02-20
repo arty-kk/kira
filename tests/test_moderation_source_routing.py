@@ -1,4 +1,5 @@
 import os
+import asyncio
 import types
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -316,6 +317,116 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
 
+
+    async def test_handle_passive_moderation_alert_includes_chat_name_and_generic_ai_reason(self) -> None:
+        fake_redis = _FakeRedis()
+        send_alert_mock = AsyncMock()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATOR_ADMIN_CACHE_TTL_SECONDS=86400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_send_alert_with_actions", send_alert_mock),
+            patch.object(moderation.bot, "get_chat", AsyncMock(return_value=types.SimpleNamespace(title="Main Discussion", username=None, full_name=None))),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-100200,
+                message=None,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+                is_comment_context=False,
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(status, "flagged")
+        self.assertTrue(send_alert_mock.await_count >= 1)
+        sent_text = send_alert_mock.await_args.kwargs["text"]
+        self.assertIn("Main Discussion", sent_text)
+        self.assertIn("AI moderation policy violation", sent_text)
+
+
+    async def test_handle_passive_moderation_uses_payload_chat_title_without_lookup(self) -> None:
+        fake_redis = _FakeRedis()
+        send_alert_mock = AsyncMock()
+        get_chat_mock = AsyncMock(return_value=types.SimpleNamespace(title="ShouldNotBeUsed", username=None, full_name=None))
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATOR_ADMIN_CACHE_TTL_SECONDS=86400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_send_alert_with_actions", send_alert_mock),
+            patch.object(moderation.bot, "get_chat", get_chat_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-100200,
+                message=None,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+                is_comment_context=False,
+                chat_title="Team Chat",
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(status, "flagged")
+        sent_text = send_alert_mock.await_args.kwargs["text"]
+        self.assertIn("Team Chat", sent_text)
+        get_chat_mock.assert_not_awaited()
+
+
+
+    async def test_handle_passive_moderation_toxic_skips_admin_alert_delivery(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
     async def test_handle_passive_moderation_returns_error_and_records_error_state_on_exception(self) -> None:
         fake_redis = _FakeRedis()
         analytics_mock = AsyncMock()
@@ -351,6 +462,31 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cleanup_user_history_and_mute_uses_ban_revoke_then_unban_and_restrict(self) -> None:
+        with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=True)) as ban_mock,
+            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+        ):
+            await moderation._cleanup_user_history_and_mute(-1001, 42)
+
+        ban_mock.assert_awaited_once_with(-1001, 42, revoke=True)
+        unban_mock.assert_awaited_once_with(-1001, 42)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
+
+    async def test_cleanup_user_history_and_mute_rebans_if_unban_succeeded_and_restrict_failed(self) -> None:
+        with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(side_effect=[True, True])) as ban_mock,
+            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=False)) as restrict_mock,
+        ):
+            await moderation._cleanup_user_history_and_mute(-1001, 42)
+
+        self.assertEqual(ban_mock.await_count, 2)
+        ban_mock.assert_any_await(-1001, 42, revoke=True)
+        unban_mock.assert_awaited_once_with(-1001, 42)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
+
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
         class _Forbidden(Exception):
             pass

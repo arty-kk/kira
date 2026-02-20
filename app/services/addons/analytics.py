@@ -329,10 +329,51 @@ def _fmt_kv_label(key: str, val: Optional[int | float]) -> str:
         val = int(val)
     return f"<b>{html.escape(key)}:</b> {val}"
 
-def _render_html(chat_id: int, date_human: str, snap: Dict) -> str:
+
+def _chat_title_cache_key(chat_id: int) -> str:
+    return f"chat_title:{chat_id}"
+
+
+async def _resolve_chat_title(chat_id: int) -> str:
+    redis = get_redis()
+    key = _chat_title_cache_key(chat_id)
+    try:
+        cached = await redis.get(key)
+        if cached:
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            cached_text = str(cached).strip()
+            if cached_text:
+                return cached_text
+    except Exception:
+        pass
+
+    resolved = ""
+    try:
+        chat = await get_bot().get_chat(chat_id)
+        title = (getattr(chat, "title", None) or "").strip()
+        username = (getattr(chat, "username", None) or "").strip().lstrip("@")
+        resolved = title or (f"@{username}" if username else "")
+    except Exception:
+        resolved = ""
+
+    if resolved:
+        try:
+            await redis.set(
+                key,
+                resolved,
+                ex=int(getattr(settings, "MODERATOR_ADMIN_CACHE_TTL_SECONDS", 86400)),
+            )
+        except Exception:
+            pass
+    return resolved
+
+def _render_html(chat_id: int, date_human: str, snap: Dict, *, chat_title: str = "") -> str:
     lines: List[str] = []
 
     lines.append(f"📊 <b>Daily Chat Report</b> ▫️ {html.escape(date_human)} UTC")
+    if chat_title:
+        lines.append(f"<i>Chat:</i> <b>{html.escape(chat_title)}</b>")
     lines.append(f"<i>Chat ID:</i> <code>{chat_id}</code>")
     lines.append("")
 
@@ -451,7 +492,8 @@ async def _llm_insights(markdown_metrics: str) -> Optional[str]:
 
 async def generate_and_send_report_for_chat(chat_id: int, date_obj: datetime.date, admin_ids: List[int]) -> None:
     snap = await _load_day_snapshot(chat_id, date_obj)
-    html_body = _render_html(chat_id, snap["date"], snap)
+    chat_title = await _resolve_chat_title(chat_id)
+    html_body = _render_html(chat_id, snap["date"], snap, chat_title=chat_title)
 
     metrics_text = (
         f"date={snap['date']}, "

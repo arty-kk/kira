@@ -6,6 +6,8 @@ import asyncio
 import time
 import html
 import secrets
+import io
+import base64
 from typing import Any, List
 
 from aiogram import types, F
@@ -25,6 +27,7 @@ from app.services.addons.passive_moderation import (
     contains_any_link_obfuscated,
     check_light,
     check_deep,
+    moderate_with_openai,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import resolve_message_moderation_context
@@ -42,6 +45,70 @@ def get_targets() -> list[int]:
 
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
+
+
+def _chat_title_cache_key(chat_id: int) -> str:
+    return f"chat_title:{chat_id}"
+
+
+def _extract_chat_display_name(chat_obj: Any) -> str:
+    title = (getattr(chat_obj, "title", None) or "").strip()
+    if title:
+        return title
+    username = (getattr(chat_obj, "username", None) or "").strip().lstrip("@")
+    if username:
+        return f"@{username}"
+    full_name = (getattr(chat_obj, "full_name", None) or "").strip()
+    if full_name:
+        return full_name
+    return ""
+
+
+async def _resolve_chat_display_name(
+    chat_id: int,
+    message: types.Message | None,
+    *,
+    fallback_chat_title: str | None = None,
+) -> str:
+    if fallback_chat_title:
+        fallback_name = str(fallback_chat_title).strip()
+        if fallback_name:
+            return fallback_name
+
+    if message is not None:
+        from_message = _extract_chat_display_name(getattr(message, "chat", None))
+        if from_message:
+            return from_message
+
+    cache_key = _chat_title_cache_key(chat_id)
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            name = str(cached).strip()
+            if name:
+                return name
+    except Exception:
+        logger.debug("chat title cache read failed", exc_info=True)
+
+    resolved = ""
+    try:
+        chat = await bot.get_chat(chat_id)
+        resolved = _extract_chat_display_name(chat)
+    except Exception:
+        logger.debug("chat title lookup failed for chat_id=%s", chat_id, exc_info=True)
+
+    if resolved:
+        try:
+            await redis_client.set(
+                cache_key,
+                resolved,
+                ex=int(getattr(settings, "MODERATOR_ADMIN_CACHE_TTL_SECONDS", 86400)),
+            )
+        except Exception:
+            logger.debug("chat title cache write failed", exc_info=True)
+    return resolved
 
 async def _get_linked_channel_id(chat_id: int) -> int | None:
 
@@ -207,6 +274,7 @@ async def handle_passive_moderation(
     user_id: int | None = None,
     message_id: int | None = None,
     is_comment_context: bool | None = None,
+    chat_title: str | None = None,
 ) -> str:
 
     try:
@@ -285,8 +353,16 @@ async def handle_passive_moderation(
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
             light_status = "light_timeout_risk"
+        chat_display_name = await _resolve_chat_display_name(
+            chat_id,
+            message,
+            fallback_chat_title=chat_title,
+        )
+        safe_chat_name = html.escape(chat_display_name) if chat_display_name else ""
+
         status = "clean"
         reason_text = ""
+        ai_flag_signal = False
         if light_status != "clean":
             reason_map = {
                 "flood": "Frequent messages (flood/spam)",
@@ -294,19 +370,21 @@ async def handle_passive_moderation(
                 "spam_mentions": "Too many mentions in one message",
                 "promo": "Promotional content",
                 "link_violation": "Disallowed link (policy)",
-                "toxic": "Toxic or abusive content",
+                "toxic": "AI moderation policy violation",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
             status = "flagged"
+            ai_flag_signal = light_status == "toxic"
 
             raw_snippet = (text or "")[:200]
             snippet = html.escape(raw_snippet) + ("…" if len(text) > 200 else "")
             body = f"Text: {snippet}" if snippet else "Text: (empty)"
             if image_b64:
                 body += "\n📷 Image: attached"
+            chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
             alert_text = (
-                f"🚨 <b>Passive Moderation Alert (chat ID: <code>{chat_id}</code>)</b>\n"
+                f"🚨 <b>Passive Moderation Alert ({chat_scope}chat ID: <code>{chat_id}</code>)</b>\n"
                 f"User: <a href=\"tg://user?id={_uid}\">{getattr(getattr(message,'from_user',None),'full_name',str(_uid))}</a> "
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"
@@ -319,7 +397,8 @@ async def handle_passive_moderation(
                     f"\n<a href=\"https://t.me/c/{public_chat_id}/{_mid}\">Link to message</a>"
                 )
 
-            if allow_alert:
+            notify_ai_flags = bool(getattr(settings, "MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS", False))
+            if allow_alert and (notify_ai_flags or not ai_flag_signal):
                 asyncio.create_task(_send_alert_with_actions(
                     targets,
                     text=alert_text,
@@ -368,10 +447,12 @@ async def handle_passive_moderation(
 
         if blocked:
             status = "blocked"
+            ai_flag_signal = True
             raw_snippet = (text or "")[:200]
             snippet = html.escape(raw_snippet) + ("…" if len(text) > 200 else "")
+            chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
             alert_text = (
-                f"🚨 <b>Deep Moderation Alert (chat ID: <code>{chat_id}</code>)</b>\n"
+                f"🚨 <b>Deep Moderation Alert ({chat_scope}chat ID: <code>{chat_id}</code>)</b>\n"
                 f"User: <a href=\"tg://user?id={_uid}\">{getattr(getattr(message,'from_user',None),'full_name',str(_uid))}</a> "
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"
@@ -394,7 +475,8 @@ async def handle_passive_moderation(
                 logger.exception("Failed to set deep-throttle key; allowing deep alert by default")
                 allow_deep_alert = True
 
-            if allow_deep_alert:
+            notify_ai_flags = bool(getattr(settings, "MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS", False))
+            if allow_deep_alert and (notify_ai_flags or not ai_flag_signal):
                 asyncio.create_task(_send_alert_with_actions(
                     targets,
                     text=alert_text,
@@ -409,6 +491,12 @@ async def handle_passive_moderation(
                         await _delete_message_safe(chat_id, _mid)
             except Exception:
                 logger.debug("blocked: delete failed", exc_info=True)
+
+        if ai_flag_signal and _mid and status != "blocked":
+            try:
+                await _delete_message_safe(chat_id, _mid)
+            except Exception:
+                logger.debug("ai-flagged: delete failed", exc_info=True)
 
         try:
             ttl = int(getattr(settings, "MOD_FLAG_TTL_SECONDS", 86_400))
@@ -491,6 +579,97 @@ async def _ban_user_safe(chat_id: int, user_id: int, revoke: bool = True) -> boo
     except Exception:
         logger.debug("ban_chat_member failed", exc_info=True)
         return False
+
+
+async def _unban_user_safe(chat_id: int, user_id: int) -> bool:
+    try:
+        await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+        return True
+    except Exception:
+        logger.debug("unban_chat_member failed", exc_info=True)
+        return False
+
+
+async def _restrict_user_write_safe(chat_id: int, user_id: int) -> bool:
+    try:
+        perms = types.ChatPermissions(
+            can_send_messages=False,
+            can_send_audios=False,
+            can_send_documents=False,
+            can_send_photos=False,
+            can_send_videos=False,
+            can_send_video_notes=False,
+            can_send_voice_notes=False,
+            can_send_polls=False,
+            can_send_other_messages=False,
+            can_add_web_page_previews=False,
+            can_change_info=False,
+            can_invite_users=False,
+            can_pin_messages=False,
+            can_manage_topics=False,
+        )
+        await bot.restrict_chat_member(chat_id, user_id, permissions=perms)
+        return True
+    except Exception:
+        logger.debug("restrict_chat_member failed", exc_info=True)
+        return False
+
+
+def _profile_nsfw_cache_key(user_id: int) -> str:
+    return f"mod:profile_nsfw:{int(user_id)}"
+
+
+def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
+    return f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"
+
+
+async def _is_profile_nsfw(user_id: int) -> bool:
+    if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
+        return False
+
+    key = _profile_nsfw_cache_key(user_id)
+    try:
+        cached = await redis_client.get(key)
+        if cached is not None:
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            return str(cached).strip() == "1"
+    except Exception:
+        logger.debug("profile nsfw cache read failed", exc_info=True)
+
+    flagged = False
+    try:
+        photos = await bot.get_user_profile_photos(user_id=int(user_id), limit=1)
+        photo_set = getattr(photos, "photos", None) or []
+        if photo_set and photo_set[0]:
+            best_photo = photo_set[0][-1]
+            tg_file = await bot.get_file(best_photo.file_id)
+            raw = io.BytesIO()
+            await bot.download(tg_file, raw)
+            image_b64 = base64.b64encode(raw.getvalue()).decode("utf-8")
+            flagged = bool(await moderate_with_openai("", image_b64=image_b64, image_mime="image/jpeg"))
+    except Exception:
+        logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
+        flagged = False
+
+    try:
+        ttl = int(max(60, int(getattr(settings, "MODERATION_PROFILE_NSFW_CACHE_SECONDS", 86_400))))
+        await redis_client.set(key, "1" if flagged else "0", ex=ttl)
+    except Exception:
+        logger.debug("profile nsfw cache write failed", exc_info=True)
+
+    return flagged
+
+
+async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
+    banned = await _ban_user_safe(chat_id, user_id, revoke=True)
+    unbanned = False
+    if banned:
+        unbanned = await _unban_user_safe(chat_id, user_id)
+    restricted = await _restrict_user_write_safe(chat_id, user_id)
+    if not restricted and (not banned or unbanned):
+        await _ban_user_safe(chat_id, user_id, revoke=True)
+
 
 def _now() -> int:
     return int(time.time())
@@ -718,6 +897,23 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     if not u or is_admin:
         return False
+
+    if bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
+        try:
+            blocked_key = _profile_nsfw_blocked_chat_key(chat_id, int(u.id))
+            if await redis_client.exists(blocked_key):
+                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("profile_nsfw_blocked"), user_id=u.id)
+                await _delete_and_handle("profile_nsfw_blocked")
+                await _restrict_user_write_safe(chat_id, int(u.id))
+                return True
+            if await _is_profile_nsfw(int(u.id)):
+                await _flag(chat_id, message.message_id, action="restrict", reason=_ctx_reason("profile_nsfw"), user_id=u.id)
+                await _delete_and_handle("profile_nsfw")
+                await redis_client.set(blocked_key, 1)
+                await _cleanup_user_history_and_mute(chat_id, int(u.id))
+                return True
+        except Exception:
+            logger.debug("profile nsfw enforcement failed", exc_info=True)
 
     if getattr(message, "sticker", None):
         if not settings.MODERATION_ALLOW_STICKERS:

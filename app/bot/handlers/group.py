@@ -586,6 +586,7 @@ def _dispatch_passive_moderation(
             "image_mime": payload.get("image_mime"),
             "source": "channel" if is_channel else "user",
             "is_comment_context": is_comment_context,
+            "chat_title": getattr(message.chat, "title", None),
         },
         context="group.dispatch",
     )
@@ -1154,6 +1155,7 @@ async def _handle_group_image_message_common(
         "is_comment_context": is_comment_context,
         "channel_id": channel.id if channel else None,
         "channel_title": getattr(channel, "title", None) if channel else None,
+        "chat_title": getattr(message.chat, "title", None),
         "entities": ents,
         "caption": model_caption,
         "caption_log": log_caption,
