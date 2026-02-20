@@ -342,9 +342,11 @@ def _resolve_autoreply_trigger(
 ) -> str | None:
     if is_channel:
         return "channel_post"
+    if is_battle_cmd_to_us:
+        return "mention"
     if mentions_other:
         return None
-    if mentioned or is_battle_cmd_to_us:
+    if mentioned:
         return "mention"
     if autoreply_on_topic and has_content_signal:
         return "check_on_topic"

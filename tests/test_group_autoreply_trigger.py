@@ -67,7 +67,7 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
                     is_battle_cmd_to_us=True,
                     autoreply_on_topic=True,
                 ),
-                None,
+                "mention",
             ),
             (
                 "mentions_other_blocks",
