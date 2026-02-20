@@ -118,6 +118,7 @@ class FakeBot:
     def __init__(self):
         self.sent = []
         self.edited = []
+        self.deleted = []
 
     async def get_chat_member(self, _chat_id, uid):
         user = SimpleNamespace(id=uid, username=f"u{uid}", full_name=f"User {uid}")
@@ -129,6 +130,9 @@ class FakeBot:
 
     async def edit_message_text(self, **kwargs):
         self.edited.append(kwargs)
+
+    async def delete_message(self, chat_id, message_id):
+        self.deleted.append((chat_id, message_id))
 
 
 class _FakeTelegramBadRequest(Exception):
@@ -362,9 +366,33 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         await mod.check_battle_timeout(gid, expected_phase_version=1)
         await mod.check_battle_timeout(gid, expected_phase_version=1)
 
-        self.assertEqual(len(bot.sent), 1)
+        self.assertEqual(bot.sent, [])
         self.assertNotIn(f"game:{gid}", redis.hashes)
         self.assertNotIn("active_game:999", redis.kv)
+
+    async def test_timeout_deletes_created_battle_message_without_cancel_notice(self):
+        mod = _load_group_battle_module()
+        redis = FakeRedis()
+        bot = FakeBot()
+        mod.get_redis = lambda: redis
+        mod.bot = bot
+
+        gid = "g-delete-msg"
+        redis.hashes[f"game:{gid}"] = {
+            "state": "CREATED",
+            "version": "1",
+            "phase_version": "1",
+            "chat_id": "999",
+            "player1_id": "1",
+            "player2_id": "2",
+            "msg_id": "55",
+        }
+        redis.kv["active_game:999"] = gid
+
+        await mod.check_battle_timeout(gid, expected_phase_version=1)
+
+        self.assertEqual(bot.deleted, [(999, 55)])
+        self.assertEqual(bot.sent, [])
 
 
 if __name__ == "__main__":

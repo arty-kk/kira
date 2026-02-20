@@ -234,11 +234,12 @@ async def check_battle_timeout(gid: str, expected_phase_version: int | None = No
                 ready2 = await redis.get(f"ready:{gid}:{game['player2_id']}")
                 if ready1 and ready2:
                     return
-                await bot.send_message(
-                    chat_id,
-                    "❌ <b>Battle canceled</b>: someone didn’t accept in time.",
-                    parse_mode="HTML",
-                )
+                msg_id_raw = game.get("msg_id")
+                if msg_id_raw:
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=int(msg_id_raw))
+                    except Exception:
+                        logger.debug("Failed to delete stale battle message for %s", gid, exc_info=True)
                 await redis.hincrby(key, "version", 1)
                 await redis.hincrby(key, "phase_version", 1)
                 await _cleanup_data_only(gid)
