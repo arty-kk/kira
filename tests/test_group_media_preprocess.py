@@ -6,6 +6,79 @@ from app.bot.handlers import group
 
 
 class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_group_image_common_does_not_enqueue_on_caption_without_mention(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=776,
+            media_group_id="album-1",
+            caption="just a caption",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+        )
+
+        delay_mock = Mock()
+        reject_mock = Mock()
+        with (
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("just a caption", "just a caption")),
+            patch.object(group, "_is_mention", return_value=False),
+            patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group.preprocess_group_image, "delay", delay_mock),
+            patch.object(group, "reject_image_and_reply", reject_mock),
+        ):
+            await group._handle_group_image_message_common(
+                message,
+                file_id="photo-file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
+        delay_mock.assert_not_called()
+        reject_mock.assert_not_called()
+
+    async def test_group_document_image_common_does_not_enqueue_without_mention(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=775,
+            media_group_id=None,
+            caption="doc caption",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+        )
+
+        delay_mock = Mock()
+        with (
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("doc caption", "doc caption")),
+            patch.object(group, "_is_mention", return_value=False),
+            patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group.preprocess_group_image, "delay", delay_mock),
+        ):
+            await group._handle_group_image_message_common(
+                message,
+                file_id=None,
+                document_id="doc-file-id",
+                mime_type="image/png",
+                suffix=".png",
+                content_type_for_analytics="document",
+            )
+
+        delay_mock.assert_not_called()
+
     async def test_group_image_common_enqueues_preprocess_without_inline_image(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),

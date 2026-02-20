@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 import asyncio
 import time
 import html
@@ -776,7 +777,33 @@ def resolve_moderation_policy(context: str, cfg: Any) -> dict[str, Any]:
 
 
 async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool:
-    
+    if bool(getattr(message, "is_automatic_forward", False)):
+        return False
+
+    trusted_chat_ids = {
+        int(x)
+        for x in (
+            *(getattr(settings, "ALLOWED_GROUP_IDS", []) or []),
+            *(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or []),
+        )
+    }
+    trusted_source_channel_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+    }
+    trusted_scope_ids = trusted_chat_ids | trusted_source_channel_ids
+
+    is_trusted_chat = int(chat_id) in trusted_chat_ids
+    is_trusted_destination = int(chat_id) in trusted_scope_ids
+
+    source_scope_ids: set[int] = set()
+    for field in ("sender_chat", "forward_from_chat"):
+        src = getattr(message, field, None)
+        if src and getattr(src, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
+            with contextlib.suppress(Exception):
+                source_scope_ids.add(int(src.id))
+
+    is_trusted_repost = bool(is_trusted_destination and (source_scope_ids & trusted_scope_ids))
+
     try:
         sc = getattr(message, "sender_chat", None)
         if sc and int(sc.id) == int(message.chat.id) and getattr(sc, "type", None) in (ChatType.GROUP, ChatType.SUPERGROUP):
@@ -812,10 +839,15 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     u = getattr(message, "from_user", None)
     is_admin = False
     try:
-        if settings.MODERATION_ADMIN_EXEMPT and u:
+        if u and is_trusted_chat:
+            is_admin = await _is_admin(chat_id, int(u.id))
+        elif settings.MODERATION_ADMIN_EXEMPT and u:
             is_admin = await _is_admin(chat_id, int(u.id))
     except Exception:
         is_admin = False
+
+    if is_admin:
+        return False
 
     is_forward = bool(
         getattr(message, "is_automatic_forward", False)
@@ -834,6 +866,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         and policy["delete_external_channel_msgs"]
         and not from_linked
         and not is_admin
+        and not is_trusted_repost
     ):
         try:
             uid = int(getattr(getattr(message, "from_user", None), "id", 0) or 0)
@@ -843,7 +876,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             pass
 
     delete_forwards_on = bool(policy["delete_channel_forwards"])
-    if delete_forwards_on and is_forward and not from_linked and not is_admin:
+    if delete_forwards_on and is_forward and not from_linked and not is_admin and not is_trusted_repost:
         src_is_bot = bool(getattr(message, "forward_from", None) and getattr(message.forward_from, "is_bot", False))
         fchat = getattr(message, "forward_from_chat", None)
         try:
