@@ -568,6 +568,8 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                     is_battle_cmd_to_us=case["is_battle_cmd_to_us"],
                     autoreply_on_topic=case["autoreply_on_topic"],
                 )
+                if case["is_channel"]:
+                    expected_text = None
                 expected_voice = group._resolve_autoreply_trigger(
                     is_channel=case["is_channel"],
                     mentioned=case["mentioned"],

@@ -576,6 +576,78 @@ async def _resolve_group_comment_context(message: Message) -> bool:
     return resolve_message_moderation_context(message, from_linked=from_linked) == "comment"
 
 
+def _is_trusted_scope_repost(message: Message) -> bool:
+    """True when a repost is routed between trusted chats/channels scopes."""
+    trusted_chat_ids = {
+        int(x)
+        for x in (
+            *(getattr(settings, "ALLOWED_GROUP_IDS", []) or []),
+            *(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or []),
+        )
+    }
+    trusted_source_channel_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+    }
+    trusted_scope_ids = trusted_chat_ids | trusted_source_channel_ids
+
+    with contextlib.suppress(Exception):
+        chat_id = int(message.chat.id)
+        if chat_id not in trusted_scope_ids:
+            return False
+
+    try:
+        sc = getattr(message, "sender_chat", None)
+        if sc and int(sc.id) == int(message.chat.id) and getattr(sc, "type", None) in (ChatType.GROUP, ChatType.SUPERGROUP):
+            return False
+    except Exception:
+        pass
+
+    source_scope_ids: set[int] = set()
+    for field in ("sender_chat", "forward_from_chat"):
+        src = getattr(message, field, None)
+        if src and getattr(src, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
+            with contextlib.suppress(Exception):
+                source_scope_ids.add(int(src.id))
+
+    if not source_scope_ids:
+        return False
+
+    return bool(source_scope_ids & trusted_scope_ids)
+
+
+async def _log_ignored_repost_to_stm(
+    message: Message,
+    *,
+    content_type: str,
+    text: str,
+    ents: List[dict],
+    is_channel: bool,
+) -> None:
+    cid = int(message.chat.id)
+    model_text, log_text = split_context_text(text, ents, allow_web=False)
+    if not (log_text or "").strip():
+        log_text = f"[ignored trusted repost: {content_type}]"
+        model_text = log_text
+
+    user_id_val = _user_id_val(message, is_channel)
+    await _store_context(
+        cid,
+        message.message_id,
+        log_text,
+        role=("channel" if is_channel else "user"),
+        speaker_id=user_id_val,
+        source=("channel" if is_channel else "user"),
+    )
+    await _push_group_stm_and_recent(
+        cid,
+        trigger="channel_post",
+        is_channel=is_channel,
+        user_id_val=user_id_val,
+        text_for_stm=(model_text or "").strip(),
+        text_for_recent=(log_text or "").strip(),
+    )
+
+
 def _dispatch_passive_moderation(
     message: Message,
     payload: dict,
@@ -806,13 +878,24 @@ async def on_group_message(message: Message) -> None:
 
         is_channel = _is_channel_post(message)
 
-        # channel post path: must be from linked channel; also log
+        # channel post path
         if is_channel:
             raw_text = (message.text or message.caption or "").strip()
             ents = _extract_entities(message)
+            if _is_trusted_scope_repost(message):
+                await _log_ignored_repost_to_stm(
+                    message,
+                    content_type="text",
+                    text=raw_text,
+                    ents=ents,
+                    is_channel=is_channel,
+                )
+                return
+            # must be from linked channel; also log
             ok = await _maybe_log_channel_post(cid, message, raw_text, ents)
             if not ok:
                 return
+            return
 
         # ignore bot users unless channel post
         if message.from_user and message.from_user.is_bot and not is_channel:
@@ -823,6 +906,17 @@ async def on_group_message(message: Message) -> None:
 
         raw_text = (message.text or message.caption or "").strip()
         ents = _extract_entities(message)
+
+        if _is_trusted_scope_repost(message):
+            await _log_ignored_repost_to_stm(
+                message,
+                content_type="text",
+                text=raw_text,
+                ents=ents,
+                is_channel=is_channel,
+            )
+            return
+
         model_text, log_text = split_context_text(raw_text, ents, allow_web=False)
 
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
@@ -995,6 +1089,16 @@ async def on_group_voice(message: Message) -> None:
         mentions_other = _mentions_other_user(message)
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
+        if _is_trusted_scope_repost(message):
+            await _log_ignored_repost_to_stm(
+                message,
+                content_type="voice",
+                text="",
+                ents=[],
+                is_channel=is_channel,
+            )
+            return
+
         if is_channel:
             try:
                 if not await is_from_linked_channel(message):
@@ -1123,6 +1227,17 @@ async def _handle_group_image_message_common(
 
     caption = (message.caption or "").strip()
     ents = _extract_entities(message)
+
+    if _is_trusted_scope_repost(message):
+        await _log_ignored_repost_to_stm(
+            message,
+            content_type=content_type_for_analytics,
+            text=caption,
+            ents=ents,
+            is_channel=is_channel,
+        )
+        return
+
     model_caption, log_caption = split_context_text(caption, ents, allow_web=False)
 
     mentioned = _is_mention(message)
