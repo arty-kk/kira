@@ -35,8 +35,8 @@ BOT_QUEUE_MAX_PAYLOAD_BYTES = int(getattr(settings, "BOT_QUEUE_MAX_PAYLOAD_BYTES
 def _get_lock(key: str) -> asyncio.Lock:
     return _locks.setdefault(key, asyncio.Lock())
 
-TYPING_BASE_DELAY = float(getattr(settings, "TYPING_BASE_DELAY", 1.0))
-TYPING_PER_CHAR   = float(getattr(settings, "TYPING_PER_CHAR", 0.1))
+TYPING_BASE_DELAY = float(getattr(settings, "TYPING_BASE_DELAY", 2.0))
+TYPING_PER_CHAR   = float(getattr(settings, "TYPING_PER_CHAR", 0.075))
 
 def compute_typing_delay(text: str) -> float:
     s = (text or "").strip()
