@@ -581,6 +581,15 @@ async def _ban_user_safe(chat_id: int, user_id: int, revoke: bool = True) -> boo
         return False
 
 
+async def _unban_user_safe(chat_id: int, user_id: int) -> bool:
+    try:
+        await bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+        return True
+    except Exception:
+        logger.debug("unban_chat_member failed", exc_info=True)
+        return False
+
+
 async def _restrict_user_write_safe(chat_id: int, user_id: int) -> bool:
     try:
         perms = types.ChatPermissions(
@@ -650,6 +659,15 @@ async def _is_profile_nsfw(user_id: int) -> bool:
         logger.debug("profile nsfw cache write failed", exc_info=True)
 
     return flagged
+
+
+async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
+    banned = await _ban_user_safe(chat_id, user_id, revoke=True)
+    if banned:
+        await _unban_user_safe(chat_id, user_id)
+    restricted = await _restrict_user_write_safe(chat_id, user_id)
+    if not restricted and not banned:
+        await _ban_user_safe(chat_id, user_id, revoke=True)
 
 
 def _now() -> int:
@@ -891,9 +909,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                 await _flag(chat_id, message.message_id, action="restrict", reason=_ctx_reason("profile_nsfw"), user_id=u.id)
                 await _delete_and_handle("profile_nsfw")
                 await redis_client.set(blocked_key, 1)
-                restricted = await _restrict_user_write_safe(chat_id, int(u.id))
-                if not restricted:
-                    await _ban_user_safe(chat_id, int(u.id), revoke=getattr(settings, "MODERATION_BAN_REVOKE_MESSAGES", True))
+                await _cleanup_user_history_and_mute(chat_id, int(u.id))
                 return True
         except Exception:
             logger.debug("profile nsfw enforcement failed", exc_info=True)

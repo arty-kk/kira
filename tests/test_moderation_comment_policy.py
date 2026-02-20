@@ -236,16 +236,14 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation.redis_client, "set", AsyncMock()) as redis_set_mock,
             patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)),
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
-            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
-            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=False)) as ban_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
         ):
             handled = await moderation.apply_moderation_filters(message.chat.id, message)
 
         self.assertTrue(handled)
         delete_mock.assert_awaited_once()
-        restrict_mock.assert_awaited_once()
-        ban_mock.assert_not_awaited()
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
         self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
         redis_set_mock.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
 
