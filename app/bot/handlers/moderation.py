@@ -61,7 +61,17 @@ def _extract_chat_display_name(chat_obj: Any) -> str:
     return ""
 
 
-async def _resolve_chat_display_name(chat_id: int, message: types.Message | None) -> str:
+async def _resolve_chat_display_name(
+    chat_id: int,
+    message: types.Message | None,
+    *,
+    fallback_chat_title: str | None = None,
+) -> str:
+    if fallback_chat_title:
+        fallback_name = str(fallback_chat_title).strip()
+        if fallback_name:
+            return fallback_name
+
     if message is not None:
         from_message = _extract_chat_display_name(getattr(message, "chat", None))
         if from_message:
@@ -261,6 +271,7 @@ async def handle_passive_moderation(
     user_id: int | None = None,
     message_id: int | None = None,
     is_comment_context: bool | None = None,
+    chat_title: str | None = None,
 ) -> str:
 
     try:
@@ -339,7 +350,11 @@ async def handle_passive_moderation(
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
             light_status = "light_timeout_risk"
-        chat_display_name = await _resolve_chat_display_name(chat_id, message)
+        chat_display_name = await _resolve_chat_display_name(
+            chat_id,
+            message,
+            fallback_chat_title=chat_title,
+        )
         safe_chat_name = html.escape(chat_display_name) if chat_display_name else ""
 
         status = "clean"
