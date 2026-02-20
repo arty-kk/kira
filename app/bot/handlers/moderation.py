@@ -43,6 +43,60 @@ def get_targets() -> list[int]:
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
 
+
+def _chat_title_cache_key(chat_id: int) -> str:
+    return f"chat_title:{chat_id}"
+
+
+def _extract_chat_display_name(chat_obj: Any) -> str:
+    title = (getattr(chat_obj, "title", None) or "").strip()
+    if title:
+        return title
+    username = (getattr(chat_obj, "username", None) or "").strip().lstrip("@")
+    if username:
+        return f"@{username}"
+    full_name = (getattr(chat_obj, "full_name", None) or "").strip()
+    if full_name:
+        return full_name
+    return ""
+
+
+async def _resolve_chat_display_name(chat_id: int, message: types.Message | None) -> str:
+    if message is not None:
+        from_message = _extract_chat_display_name(getattr(message, "chat", None))
+        if from_message:
+            return from_message
+
+    cache_key = _chat_title_cache_key(chat_id)
+    try:
+        cached = await redis_client.get(cache_key)
+        if cached:
+            if isinstance(cached, (bytes, bytearray)):
+                cached = cached.decode("utf-8", "ignore")
+            name = str(cached).strip()
+            if name:
+                return name
+    except Exception:
+        logger.debug("chat title cache read failed", exc_info=True)
+
+    resolved = ""
+    try:
+        chat = await bot.get_chat(chat_id)
+        resolved = _extract_chat_display_name(chat)
+    except Exception:
+        logger.debug("chat title lookup failed for chat_id=%s", chat_id, exc_info=True)
+
+    if resolved:
+        try:
+            await redis_client.set(
+                cache_key,
+                resolved,
+                ex=int(getattr(settings, "MODERATOR_ADMIN_CACHE_TTL_SECONDS", 86400)),
+            )
+        except Exception:
+            logger.debug("chat title cache write failed", exc_info=True)
+    return resolved
+
 async def _get_linked_channel_id(chat_id: int) -> int | None:
 
     key = _linked_channel_cache_key(chat_id)
@@ -285,6 +339,9 @@ async def handle_passive_moderation(
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
             light_status = "light_timeout_risk"
+        chat_display_name = await _resolve_chat_display_name(chat_id, message)
+        safe_chat_name = html.escape(chat_display_name) if chat_display_name else ""
+
         status = "clean"
         reason_text = ""
         if light_status != "clean":
@@ -294,7 +351,7 @@ async def handle_passive_moderation(
                 "spam_mentions": "Too many mentions in one message",
                 "promo": "Promotional content",
                 "link_violation": "Disallowed link (policy)",
-                "toxic": "Toxic or abusive content",
+                "toxic": "AI moderation policy violation",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
@@ -305,8 +362,9 @@ async def handle_passive_moderation(
             body = f"Text: {snippet}" if snippet else "Text: (empty)"
             if image_b64:
                 body += "\n📷 Image: attached"
+            chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
             alert_text = (
-                f"🚨 <b>Passive Moderation Alert (chat ID: <code>{chat_id}</code>)</b>\n"
+                f"🚨 <b>Passive Moderation Alert ({chat_scope}chat ID: <code>{chat_id}</code>)</b>\n"
                 f"User: <a href=\"tg://user?id={_uid}\">{getattr(getattr(message,'from_user',None),'full_name',str(_uid))}</a> "
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"
@@ -370,8 +428,9 @@ async def handle_passive_moderation(
             status = "blocked"
             raw_snippet = (text or "")[:200]
             snippet = html.escape(raw_snippet) + ("…" if len(text) > 200 else "")
+            chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
             alert_text = (
-                f"🚨 <b>Deep Moderation Alert (chat ID: <code>{chat_id}</code>)</b>\n"
+                f"🚨 <b>Deep Moderation Alert ({chat_scope}chat ID: <code>{chat_id}</code>)</b>\n"
                 f"User: <a href=\"tg://user?id={_uid}\">{getattr(getattr(message,'from_user',None),'full_name',str(_uid))}</a> "
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"

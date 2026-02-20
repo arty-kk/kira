@@ -47,7 +47,15 @@ async def get_or_create_user(db: AsyncSession, tg_user: "TelegramUser") -> User:
         )
         .returning(User)
     )
-    user = (await db.execute(stmt)).scalar_one()
+    returned_user = (await db.execute(stmt)).scalar_one()
+    if isinstance(returned_user, User):
+        user = returned_user
+    else:
+        user = (
+            await db.execute(
+                select(User).where(User.id == int(tg_user.id))
+            )
+        ).scalar_one()
 
     if (
         int(getattr(user, "used_requests", 0) or 0) == 0
