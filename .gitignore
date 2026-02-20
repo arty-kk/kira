@@ -10,3 +10,4 @@ pytest_cache/
 .pytest_cache/
 .certs/
 certs/
+openssl-ip.cnf
