@@ -12,7 +12,7 @@ from .api_kb_proc import get_relevant_for_owner
 logger = logging.getLogger(__name__)
 
 _CLEAN = re.compile(r"[^\w\s]")
-_MIN_CONTENT_CHARS = int(getattr(settings, "RELEVANCE_MIN_CONTENT_CHARS", 5))
+_MIN_CONTENT_CHARS = int(getattr(settings, "RELEVANCE_MIN_CONTENT_CHARS", 3))
 
 
 async def is_relevant(
@@ -24,6 +24,9 @@ async def is_relevant(
     persona_owner_id: Optional[int] = None,
     knowledge_owner_id: Optional[int] = None,
     strict_autoreply_gate: bool = False,
+    query_embedding: Optional[List[float]] = None,
+    embedding_model: Optional[str] = None,
+    query_embedding_reuse_counter: Optional[List[int]] = None,
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     clean = _CLEAN.sub(" ", text).lower().strip()
@@ -45,11 +48,15 @@ async def is_relevant(
     owner_id_for_scoped_paths = owner_id_int if owner_id_int > 0 else None
 
     try:
+        if query_embedding is not None and query_embedding_reuse_counter is not None:
+            query_embedding_reuse_counter[0] += 1
         tag_hits = await find_tag_hits(
             text,
             model=model,
             limit=topk * 10,
             owner_id=owner_id_for_scoped_paths,
+            query_embedding=query_embedding,
+            embedding_model=embedding_model,
         )
     except Exception:
         logger.exception("gate: keyword pre-check failed")
@@ -95,7 +102,14 @@ async def is_relevant(
     emb_hits: List[Tuple[float, str, str]] = []
     if strict_autoreply_gate or not tag_hits:
         try:
-            emb_hits = await get_relevant(text, model_name=model)
+            if query_embedding is not None and query_embedding_reuse_counter is not None:
+                query_embedding_reuse_counter[0] += 1
+            emb_hits = await get_relevant(
+                text,
+                model_name=model,
+                query_embedding=query_embedding,
+                embedding_model=embedding_model,
+            )
         except Exception:
             logger.exception("gate: get_relevant (system KB) failed")
             emb_hits = []

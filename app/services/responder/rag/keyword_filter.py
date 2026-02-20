@@ -469,6 +469,8 @@ async def find_tag_hits(
     model: Optional[str] = None,
     limit: Optional[int] = None,
     owner_id: Optional[int] = None,
+    query_embedding: Optional[List[float]] = None,
+    embedding_model: Optional[str] = None,
 ) -> List[Tuple[float, str, str]]:
 
     t = _norm_ws(text)
@@ -544,7 +546,20 @@ async def find_tag_hits(
         emb_model = idx.get("model") or (model or settings.EMBEDDING_MODEL)
         models_needed.add(emb_model)
 
+    precomputed_qv: Optional[List[float]] = None
+    if query_embedding is not None:
+        try:
+            precomputed_qv = _l2_normalize([float(x) for x in query_embedding])
+        except Exception:
+            precomputed_qv = None
+
     for emb_model in models_needed:
+        if precomputed_qv is not None:
+            if embedding_model and emb_model != embedding_model:
+                qv_by_model[emb_model] = (await _embed_texts([t], model=emb_model))[0]
+            else:
+                qv_by_model[emb_model] = precomputed_qv
+            continue
         qv_by_model[emb_model] = (await _embed_texts([t], model=emb_model))[0]
 
     scores_by_id: Dict[str, float] = {}
