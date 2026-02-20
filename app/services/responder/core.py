@@ -8,6 +8,9 @@ import json
 import re
 import unicodedata
 import hashlib
+import numpy as np
+
+from dataclasses import dataclass
 
 from typing import Dict, List, Any
 from aiohttp import ClientError
@@ -47,6 +50,7 @@ from app.services.addons.analytics import (
     record_assistant_reply, record_latency, record_timeout
 )
 from .rag import _KB_ENTRIES, _init_kb, is_relevant
+from .rag.knowledge_proc import _get_query_embedding
 from .context_select import (
     compose_mtm_snippet,
     select_ltm_snippet,
@@ -56,6 +60,16 @@ from .context_select import (
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class RagQueryContext:
+    query: str
+    query_embedding: List[float] | None = None
+    embedding_model: str | None = None
+    query_embedding_source: str = "module_local"
+    query_embedding_reuse_count: int = 0
+
 
 MAX_TOKENS = 1000
 MAX_TEMPERATURE = 0.8
@@ -1318,7 +1332,23 @@ async def respond_to_user(
         )
     on_topic_flag = False
     on_topic_hits = None
+    rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
+        reuse_counter = [0]
+        try:
+            emb_model = settings.EMBEDDING_MODEL
+            qraw = await _get_query_embedding(emb_model, query_to_model)
+            if qraw is not None:
+                qvec = np.asarray(qraw, dtype=np.float32)
+                qvec = np.nan_to_num(qvec, nan=0.0, posinf=0.0, neginf=0.0)
+                norm = float(np.linalg.norm(qvec))
+                if np.isfinite(norm) and norm >= 1e-12:
+                    rag_query_context.query_embedding = (qvec / norm).astype(np.float32, copy=False).tolist()
+                    rag_query_context.embedding_model = emb_model
+                    rag_query_context.query_embedding_source = "precomputed_per_request"
+        except Exception:
+            logger.exception("RAG query embedding precompute failed for chat_id=%s", chat_id, exc_info=True)
+
         try:
             on_topic_flag, on_topic_hits = await is_relevant(
                 query_to_model,
@@ -1328,9 +1358,20 @@ async def respond_to_user(
                 persona_owner_id=persona_owner_id,
                 knowledge_owner_id=knowledge_owner_id,
                 strict_autoreply_gate=(trigger == "check_on_topic"),
+                query_embedding=rag_query_context.query_embedding,
+                embedding_model=rag_query_context.embedding_model,
+                query_embedding_reuse_counter=reuse_counter,
             )
+            rag_query_context.query_embedding_reuse_count = int(reuse_counter[0])
         except Exception:
             logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
+        logger.info(
+            "RAG query embedding context",
+            extra={
+                "query_embedding_source": rag_query_context.query_embedding_source,
+                "query_embedding_reuse_count": rag_query_context.query_embedding_reuse_count,
+            },
+        )
         try:
             await record_context(chat_id, checked=True, on_topic=bool(on_topic_flag))
         except Exception:
