@@ -663,10 +663,11 @@ async def _is_profile_nsfw(user_id: int) -> bool:
 
 async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
     banned = await _ban_user_safe(chat_id, user_id, revoke=True)
+    unbanned = False
     if banned:
-        await _unban_user_safe(chat_id, user_id)
+        unbanned = await _unban_user_safe(chat_id, user_id)
     restricted = await _restrict_user_write_safe(chat_id, user_id)
-    if not restricted and not banned:
+    if not restricted and (not banned or unbanned):
         await _ban_user_safe(chat_id, user_id, revoke=True)
 
 

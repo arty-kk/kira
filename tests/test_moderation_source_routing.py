@@ -474,6 +474,19 @@ class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
         unban_mock.assert_awaited_once_with(-1001, 42)
         restrict_mock.assert_awaited_once_with(-1001, 42)
 
+    async def test_cleanup_user_history_and_mute_rebans_if_unban_succeeded_and_restrict_failed(self) -> None:
+        with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(side_effect=[True, True])) as ban_mock,
+            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=False)) as restrict_mock,
+        ):
+            await moderation._cleanup_user_history_and_mute(-1001, 42)
+
+        self.assertEqual(ban_mock.await_count, 2)
+        ban_mock.assert_any_await(-1001, 42, revoke=True)
+        unban_mock.assert_awaited_once_with(-1001, 42)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
+
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
         class _Forbidden(Exception):
             pass
