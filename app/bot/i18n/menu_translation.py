@@ -45,6 +45,7 @@ _EN: Dict[str, str] = {
         "⚠️ Cannot process image: {reason}\n"
         "Please send exactly one image (≤ 5 MB) in a single message."
     ),
+    "errors.image_generic_group": "⚠️ Cannot process image: {reason}",
     "errors.doc_unsupported": "⚠️ Unsupported file. Please send an image or a JSON knowledge base file.",
     "group.battle.self": "🤔 You can't challenge yourself.",
     "group.battle.opponent_opted_out": "🚫 That user has opted out of Battles.",
@@ -308,6 +309,7 @@ _RU: Dict[str, str] = {
         "⚠️ Не удалось обработать изображение: {reason}\n"
         "Пожалуйста, отправьте ровно одно изображение (≤ 5 МБ) одним сообщением."
     ),
+    "errors.image_generic_group": "⚠️ Не удалось обработать изображение: {reason}",
     "errors.doc_unsupported": "⚠️ Неподдерживаемый файл. Пришлите изображение или JSON-файл базы знаний.",
     "group.battle.self": "🤔 Нельзя вызвать на баттл самого себя.",
     "group.battle.opponent_opted_out": "🚫 Этот пользователь отключил участие в баттлах.",

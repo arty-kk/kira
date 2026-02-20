@@ -575,6 +575,134 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(voice_trigger, expected_voice)
                 self.assertEqual(image_trigger, expected_image)
 
+    async def test_album_without_trigger_skips_reject_and_enqueue(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=17,
+            media_group_id="album-1",
+            caption="",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    group,
+                    "settings",
+                    types.SimpleNamespace(GROUP_AUTOREPLY_ON_TOPIC=True),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    group, "apply_moderation_filters", AsyncMock(return_value=False)
+                )
+            )
+            stack.enter_context(
+                patch.object(group, "_reply_gate_requires_mention", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(group, "_is_channel_post", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(group, "_extract_entities", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(group, "split_context_text", return_value=("", ""))
+            )
+            stack.enter_context(
+                patch.object(group, "_is_mention", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(group, "_mentions_other_user", return_value=False)
+            )
+            reject_mock = stack.enter_context(patch.object(group, "reject_image_and_reply"))
+            delay_mock = stack.enter_context(
+                patch.object(group.preprocess_group_image, "delay")
+            )
+
+            await group._handle_group_image_message_common(
+                message,
+                file_id="photo-file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
+        reject_mock.assert_not_called()
+        delay_mock.assert_not_called()
+
+    async def test_album_with_mention_rejects_and_skips_enqueue(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=18,
+            media_group_id="album-2",
+            caption="",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    group,
+                    "settings",
+                    types.SimpleNamespace(GROUP_AUTOREPLY_ON_TOPIC=False),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    group, "apply_moderation_filters", AsyncMock(return_value=False)
+                )
+            )
+            stack.enter_context(
+                patch.object(group, "_reply_gate_requires_mention", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(group, "_is_channel_post", return_value=False)
+            )
+            stack.enter_context(
+                patch.object(group, "_extract_entities", return_value=[])
+            )
+            stack.enter_context(
+                patch.object(group, "split_context_text", return_value=("", ""))
+            )
+            stack.enter_context(
+                patch.object(group, "_is_mention", return_value=True)
+            )
+            stack.enter_context(
+                patch.object(group, "_mentions_other_user", return_value=False)
+            )
+            reject_mock = stack.enter_context(patch.object(group, "reject_image_and_reply"))
+            delay_mock = stack.enter_context(
+                patch.object(group.preprocess_group_image, "delay")
+            )
+
+            await group._handle_group_image_message_common(
+                message,
+                file_id="photo-file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
+        reject_mock.assert_called_once_with(
+            123, "albums are not supported", reply_to=18
+        )
+        delay_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

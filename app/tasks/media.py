@@ -64,7 +64,7 @@ async def _download_file_to_tmp(*, file_id: str, suffix: str, timeout_s: float) 
         tg_file = await asyncio.wait_for(bot.get_file(file_id), timeout=timeout_s)
         await asyncio.wait_for(bot.download(tg_file, tmp_path), timeout=timeout_s)
         if os.path.getsize(tmp_path) > MEDIA_MAX_INPUT_BYTES:
-            raise ValueError("файл слишком большой")
+            raise ValueError("входной файл слишком большой для обработки")
         return tmp_path
     except asyncio.TimeoutError as exc:
         raise ValueError("превышено время загрузки") from exc
@@ -155,7 +155,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             timeout=MEDIA_PREPROCESS_TIMEOUT_SEC,
         )
         if len(safe_jpeg) > MAX_IMAGE_BYTES:
-            raise ValueError("изображение слишком большое после обработки")
+            raise ValueError("не удалось ужать до 5MB")
 
         store_key = f"media:preprocessed:{chat_id}:{message_id}"
         store_payload = {

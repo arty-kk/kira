@@ -315,6 +315,20 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("is_channel_post", moderation_payload)
         self.assertTrue(moderation_payload["is_comment_context"])
 
+    async def test_localized_group_image_error_does_not_include_misleading_5mb_hint(self) -> None:
+        send_mock = AsyncMock()
+        with (
+            patch.object(group, "t", AsyncMock(side_effect=Exception("no i18n"))),
+            patch.object(group, "send_message_safe", send_mock),
+        ):
+            await group.localized_group_image_error(123, "unsupported image format", 777)
+
+        sent_text = send_mock.await_args.args[2]
+        self.assertIn("unsupported image format", sent_text)
+        self.assertNotIn("≤ 5 MB", sent_text)
+        self.assertNotIn("send exactly one image", sent_text.lower())
+
+
 class GroupCommentContextTests(unittest.TestCase):
     def test_is_comment_context_detects_linked_chat_message(self) -> None:
         message = types.SimpleNamespace(
