@@ -62,7 +62,7 @@ from app.emo_engine.persona.constants.user_prefs import (
 )
 from app.services.addons.analytics import record_user_message
 from app.services.addons.personal_ping import register_private_activity
-from app.services.user.user_service import compute_remaining, get_or_create_user, reserve_request
+from app.services.user.user_service import compute_remaining, get_or_create_user, refund_reservation_by_id, reserve_request
 from app.tasks.welcome import send_private_ai_welcome_task
 
 logger = logging.getLogger(__name__)
@@ -969,6 +969,29 @@ async def _handle_image_payload(
     buffer_message_for_response(payload)
 
 
+async def _refund_reservation_best_effort(
+    *,
+    chat_id: int,
+    user_id: int,
+    reservation_id: int,
+    reason: str,
+) -> None:
+    if reservation_id <= 0:
+        return
+    try:
+        await refund_reservation_by_id(reservation_id)
+    except Exception:
+        logger.exception(
+            "Compensation refund failed",
+            extra={
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "reservation_id": reservation_id,
+                "reason": reason,
+            },
+        )
+
+
 def _analytics_best_effort(message: Message, content_type: str, has_link: bool) -> None:
     try:
         asyncio.create_task(record_user_message(
@@ -1006,6 +1029,7 @@ async def on_private_photo(message: Message) -> None:
     if not res:
         return
     _, allow_web, billing_tier, reservation_id = res
+    enqueued = False
 
     tmp_path: str | None = None
     try:
@@ -1024,14 +1048,36 @@ async def on_private_photo(message: Message) -> None:
             return
 
         await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier, reservation_id)
+        enqueued = True
 
     except ValueError as ve:
         logger.warning("Image validation failed: %s", ve)
         reject_multi_or_oversize_and_reply(chat_id, str(ve), user_id)
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="photo:value_error_except",
+            )
     except Exception:
         logger.exception("Image processing failed")
         reject_multi_or_oversize_and_reply(chat_id, "internal error", user_id)
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="photo:exception_except",
+            )
     finally:
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="photo:finally_not_enqueued",
+            )
         if tmp_path and os.path.exists(tmp_path):
             with suppress(Exception):
                 os.remove(tmp_path)
@@ -1243,6 +1289,7 @@ async def on_private_document(message: Message) -> None:
     if not res:
         return
     _, allow_web, billing_tier, reservation_id = res
+    enqueued = False
 
     tmp_path: str | None = None
     try:
@@ -1262,14 +1309,36 @@ async def on_private_document(message: Message) -> None:
             return
 
         await _handle_image_payload(message, caption, safe_jpeg, allow_web, billing_tier, reservation_id)
+        enqueued = True
 
     except ValueError as ve:
         logger.warning("Document image validation failed: %s", ve)
         reject_multi_or_oversize_and_reply(chat_id, str(ve), user_id)
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="document:value_error_except",
+            )
     except Exception:
         logger.exception("Document image processing failed")
         reject_multi_or_oversize_and_reply(chat_id, "internal error", user_id)
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="document:exception_except",
+            )
     finally:
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="document:finally_not_enqueued",
+            )
         if tmp_path and os.path.exists(tmp_path):
             with suppress(Exception):
                 os.remove(tmp_path)
@@ -1319,30 +1388,49 @@ async def on_private_voice(message: Message) -> None:
     if not res:
         return
     _, allow_web, billing_tier, reservation_id = res
+    enqueued = False
+    try:
+        await _store_reply_target_best_effort(chat_id, message)
 
-    await _store_reply_target_best_effort(chat_id, message)
-    
-    reply_to_mid = (message.reply_to_message and message.reply_to_message.message_id)
-    tg_reply_to = message.message_id if reply_to_mid else 0
+        reply_to_mid = (message.reply_to_message and message.reply_to_message.message_id)
+        tg_reply_to = message.message_id if reply_to_mid else 0
 
-    payload = {
-        "chat_id": chat_id,
-        "text": None,
-        "user_id": user_id,
-        "reply_to": reply_to_mid,
-        "tg_reply_to": tg_reply_to,
-        "reservation_id": reservation_id,
-        "is_group": False,
-        "voice_in": True,
-        "voice_file_id": voice_file_id,
-        "msg_id": message.message_id,
-        "trigger": "pm",
-        "allow_web": allow_web,
-        "billing_tier": billing_tier,
-        "entities": [],
-        "soft_reply_context": True,
-    }
-    buffer_message_for_response(payload)
+        payload = {
+            "chat_id": chat_id,
+            "text": None,
+            "user_id": user_id,
+            "reply_to": reply_to_mid,
+            "tg_reply_to": tg_reply_to,
+            "reservation_id": reservation_id,
+            "is_group": False,
+            "voice_in": True,
+            "voice_file_id": voice_file_id,
+            "msg_id": message.message_id,
+            "trigger": "pm",
+            "allow_web": allow_web,
+            "billing_tier": billing_tier,
+            "entities": [],
+            "soft_reply_context": True,
+        }
+        buffer_message_for_response(payload)
+        enqueued = True
+    except Exception:
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="voice:exception_except",
+            )
+        raise
+    finally:
+        if not enqueued and reservation_id > 0:
+            await _refund_reservation_best_effort(
+                chat_id=chat_id,
+                user_id=user_id,
+                reservation_id=reservation_id,
+                reason="voice:finally_not_enqueued",
+            )
 
 
 # ---------------------------

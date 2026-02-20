@@ -47,7 +47,24 @@ async def get_or_create_user(db: AsyncSession, tg_user: "TelegramUser") -> User:
         )
         .returning(User)
     )
-    return (await db.execute(stmt)).scalar_one()
+    user = (await db.execute(stmt)).scalar_one()
+
+    if (
+        int(getattr(user, "used_requests", 0) or 0) == 0
+        and int(getattr(user, "free_requests", 0) or 0) == 0
+        and int(getattr(user, "paid_requests", 0) or 0) == 0
+    ):
+        await db.execute(
+            update(User)
+            .where(User.id == user.id)
+            .where(User.used_requests == 0)
+            .where(User.free_requests == 0)
+            .where(User.paid_requests == 0)
+            .values(free_requests=INITIAL_FREE_REQUESTS)
+        )
+        user.free_requests = INITIAL_FREE_REQUESTS
+
+    return user
 
 @dataclass(frozen=True)
 class ConsumeResult:

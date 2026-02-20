@@ -146,6 +146,8 @@ class Settings:
     RESPONSE_FREE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_FREE_MODEL", "gpt-4.1-mini"))
     RESPONSE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_MODEL", "gpt-4.1"))
     RESPONSE_GROUP_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_GROUP_MODEL", "gpt-4.1-mini"))
+    WELCOME_MODEL: str = field(default_factory=lambda: _get_env("WELCOME_MODEL", "gpt-4.1-mini"))
+    PING_MODEL: str = field(default_factory=lambda: _get_env("PING_MODEL", "gpt-4.1-mini"))
     RESPONSE_REASONING_EFFORT: str = field(default_factory=lambda: _get_env("RESPONSE_REASONING_EFFORT", "low", conv=str))
     RESPONSE_VERBOSITY: str = field(default_factory=lambda: _get_env("RESPONSE_VERBOSITY", "medium", conv=str))
     POST_MODEL: str = field(default_factory=lambda: _get_env("POST_MODEL", "gpt-4.1"))
