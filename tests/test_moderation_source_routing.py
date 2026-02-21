@@ -74,7 +74,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         resp = object()
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)) as call_mock,
-            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"confidence":0.97,"answer":"да"}'),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"is_sexualized":true,"is_suggestive":false,"risk_level":"high","confidence":0.97,"answer":"yes"}'),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
@@ -86,7 +86,51 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         resp = object()
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
-            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"confidence":0.51,"answer":"нет"}'),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"is_sexualized":false,"is_suggestive":false,"risk_level":"medium","confidence":0.51,"answer":"no"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertFalse(flagged)
+
+    async def test_classify_profile_nsfw_fast_accepts_high_risk_sexualized_without_nude(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":false,"is_sexualized":true,"is_suggestive":true,"risk_level":"high","confidence":0.82,"answer":"no"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertTrue(flagged)
+
+    async def test_classify_profile_nsfw_fast_rejects_suggestive_medium_risk(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":false,"is_sexualized":false,"is_suggestive":true,"risk_level":"medium","confidence":0.75,"answer":"no"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertFalse(flagged)
+
+    async def test_classify_profile_nsfw_fast_keeps_nude_yes_even_when_risk_level_missing(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"is_sexualized":false,"is_suggestive":false,"confidence":0.91,"answer":"yes"}'),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertTrue(flagged)
+
+    async def test_classify_profile_nsfw_fast_defaults_to_false_on_incomplete_json(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)),
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":false,"is_sexualized":true,"is_suggestive":true,"confidence":0.95,"answer":"yes"}'),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
