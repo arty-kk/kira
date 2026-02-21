@@ -167,6 +167,7 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
             "file_id": "abc",
             "caption": "cap",
             "caption_log": "cap",
+            "trusted_repost": True,
         }
         with (
             patch.object(media, "consts") as consts_mock,
@@ -186,6 +187,7 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         moderation_payload = passive_delay.call_args.args[0]
         self.assertNotIn("image_b64", moderation_payload)
         self.assertNotIn("image_mime", moderation_payload)
+        self.assertTrue(moderation_payload["trusted_repost"])
 
 
 

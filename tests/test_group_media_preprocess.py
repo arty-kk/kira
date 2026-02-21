@@ -385,6 +385,8 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("is_channel_post", moderation_payload)
         self.assertIn("is_comment_context", moderation_payload)
         self.assertFalse(moderation_payload["is_comment_context"])
+        self.assertIn("trusted_repost", moderation_payload)
+        self.assertFalse(moderation_payload["trusted_repost"])
 
     def test_dispatch_passive_moderation_channel_source_kept(self) -> None:
         message = types.SimpleNamespace(
@@ -404,12 +406,14 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
                 is_channel=True,
                 user_id_val=99,
                 is_comment_context=True,
+                trusted_repost=True,
             )
 
         moderation_payload = delay_mock.call_args.args[0]
         self.assertEqual(moderation_payload["source"], "channel")
         self.assertNotIn("is_channel_post", moderation_payload)
         self.assertTrue(moderation_payload["is_comment_context"])
+        self.assertTrue(moderation_payload["trusted_repost"])
 
     async def test_localized_group_image_error_does_not_include_misleading_5mb_hint(self) -> None:
         send_mock = AsyncMock()
@@ -449,7 +453,7 @@ class GroupCommentContextTests(unittest.TestCase):
 
 
 class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
-    async def test_on_group_message_trusted_chat_repost_logs_stm_without_reply(self) -> None:
+    async def test_on_group_message_trusted_chat_repost_logs_stm_without_passive(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=990,
@@ -477,6 +481,7 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "split_context_text", return_value=("trusted repost text", "trusted repost text")),
             patch.object(group, "_store_context", AsyncMock()) as store_ctx,
             patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group, "buffer_message_for_response") as buffer_mock,
         ):
             await group.on_group_message(message)
@@ -484,6 +489,7 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
         buffer_mock.assert_not_called()
         store_ctx.assert_awaited_once()
         push_stm.assert_awaited_once()
+        dispatch_mock.assert_not_called()
 
 
     async def test_on_group_message_sender_chat_same_chat_is_not_treated_as_trusted_repost(self) -> None:
@@ -534,7 +540,7 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
         ignored_log.assert_not_awaited()
         buffer_mock.assert_called_once()
 
-    async def test_on_group_message_trusted_channel_post_logs_stm_without_reply(self) -> None:
+    async def test_on_group_message_trusted_channel_post_logs_stm_without_passive(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=992,
@@ -557,21 +563,22 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "record_activity", AsyncMock()),
             patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
             patch.object(group, "_is_channel_post", return_value=True),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
             patch.object(group, "_extract_entities", return_value=[]),
             patch.object(group, "split_context_text", return_value=("trusted channel post", "trusted channel post")),
             patch.object(group, "_maybe_log_channel_post", AsyncMock(return_value=True)) as channel_log,
-            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
-            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "_log_ignored_repost_to_stm", AsyncMock()) as ignored_log,
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group, "buffer_message_for_response") as buffer_mock,
         ):
             await group.on_group_message(message)
 
         buffer_mock.assert_not_called()
         channel_log.assert_not_awaited()
-        store_ctx.assert_awaited_once()
-        push_stm.assert_awaited_once()
+        ignored_log.assert_awaited_once()
+        dispatch_mock.assert_not_called()
 
-    async def test_on_group_voice_trusted_channel_repost_logs_stm_without_reply(self) -> None:
+    async def test_on_group_voice_trusted_channel_repost_logs_stm_without_passive(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=991,
@@ -597,16 +604,67 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_reply_gate_requires_mention", return_value=False),
             patch.object(group, "_is_channel_post", return_value=True),
             patch.object(group, "is_from_linked_channel", AsyncMock(return_value=True)),
-            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
-            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group, "_log_ignored_repost_to_stm", AsyncMock()) as ignored_log,
+            patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)),
+            patch.object(group.redis_client, "sadd", AsyncMock()),
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group, "buffer_message_for_response") as buffer_mock,
         ):
             await group.on_group_voice(message)
 
         buffer_mock.assert_not_called()
+        ignored_log.assert_awaited_once()
+        dispatch_mock.assert_not_called()
+
+
+    async def test_on_group_image_trusted_repost_logs_stm_without_enqueue(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, title="chat"),
+            message_id=994,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            caption="trusted image repost",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            sender_chat=types.SimpleNamespace(id=-10011, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[-10011], GROUP_AUTOREPLY_ON_TOPIC=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=True),
+            patch.object(group, "is_from_linked_channel", AsyncMock(return_value=True)),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("trusted image repost", "trusted image repost")),
+            patch.object(group, "_is_mention", return_value=False),
+            patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group, "is_single_media", return_value=True),
+            patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)),
+            patch.object(group, "_user_id_val", return_value=42),
+            patch.object(group, "_replied_to_our_bot", return_value=False),
+            patch.object(group, "_channel_obj", return_value=None),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)),
+            patch.object(group, "_analytics_best_effort"),
+            patch.object(group.redis_client, "sadd", AsyncMock()),
+            patch.object(group, "_store_context", AsyncMock()) as store_ctx,
+            patch.object(group, "_push_group_stm_and_recent", AsyncMock()) as push_stm,
+            patch.object(group.preprocess_group_image, "delay") as preprocess_mock,
+        ):
+            await group._handle_group_image_message_common(
+                message,
+                file_id="file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
         store_ctx.assert_awaited_once()
         push_stm.assert_awaited_once()
-
+        preprocess_mock.assert_not_called()
 
 
 if __name__ == "__main__":

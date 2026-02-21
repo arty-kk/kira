@@ -200,6 +200,78 @@ async def _is_admin(chat_id: int, user_id: int) -> bool:
         except Exception:
             return False
 
+
+
+def _trusted_scope_ids() -> tuple[set[int], set[int], set[int]]:
+    trusted_chat_ids = {
+        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
+    }
+    trusted_comment_target_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+    }
+    trusted_source_channel_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+    }
+    trusted_scope_ids = trusted_chat_ids | trusted_comment_target_ids | trusted_source_channel_ids
+    return trusted_chat_ids, trusted_source_channel_ids, trusted_scope_ids
+
+
+async def _is_fully_trusted_actor_or_action(
+    *,
+    chat_id: int,
+    message: types.Message | None,
+    source: str,
+    user_id: int | None = None,
+    from_linked: bool = False,
+) -> bool:
+    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
+
+    is_trusted_destination = int(chat_id) in trusted_scope_ids
+    if message is not None:
+        with contextlib.suppress(Exception):
+            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
+            if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
+                is_trusted_destination = True
+
+    normalized_source = (source or "user").strip().lower()
+
+    is_trusted_sender_chat = False
+    source_scope_ids: set[int] = set()
+    if message is not None:
+        sender_chat = getattr(message, "sender_chat", None)
+        if sender_chat and getattr(sender_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
+            with contextlib.suppress(Exception):
+                sender_chat_id = int(sender_chat.id)
+                source_scope_ids.add(sender_chat_id)
+                if sender_chat_id in trusted_scope_ids:
+                    is_trusted_sender_chat = True
+
+        forward_from_chat = getattr(message, "forward_from_chat", None)
+        if forward_from_chat and getattr(forward_from_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
+            with contextlib.suppress(Exception):
+                source_scope_ids.add(int(forward_from_chat.id))
+
+    if is_trusted_destination and source_scope_ids & trusted_scope_ids:
+        return True
+
+    if from_linked:
+        return True
+
+    if is_trusted_destination and is_trusted_sender_chat:
+        return True
+
+    if normalized_source in {"channel", "bot"} and is_trusted_destination:
+        return True
+
+    uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0) or 0)
+    if uid and is_trusted_destination:
+        with contextlib.suppress(Exception):
+            if await _is_admin(chat_id, uid):
+                return True
+
+    return False
+
+
 def _ban_markup(target_chat_id: int, offender_id: int, msg_id: int | None = None) -> types.InlineKeyboardMarkup:
     payload = f"mod:ban:{int(target_chat_id)}:{int(offender_id)}"
     if msg_id is not None:
@@ -278,9 +350,10 @@ async def handle_passive_moderation(
     chat_title: str | None = None,
 ) -> str:
 
+    from_linked = False
     try:
-        if message and await is_from_linked_channel(message):
-            return "clean"
+        if message:
+            from_linked = await is_from_linked_channel(message)
 
         if settings.MODERATION_ADMIN_EXEMPT:
             uid_for_admin = (int(getattr(getattr(message, "from_user", None), "id", 0)) if message else (int(user_id) if user_id else 0))
@@ -305,6 +378,26 @@ async def handle_passive_moderation(
         logger.warning("Unknown passive moderation source=%r; fallback to 'user'", source)
         normalized_source = "user"
 
+    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
+
+    is_trusted_destination = int(chat_id) in trusted_scope_ids
+    if message is not None:
+        with contextlib.suppress(Exception):
+            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
+            if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
+                is_trusted_destination = True
+
+    is_trusted_source = bool(normalized_source == "user" or is_trusted_destination or from_linked)
+    is_fully_trusted = await _is_fully_trusted_actor_or_action(
+        chat_id=chat_id,
+        message=message,
+        source=normalized_source,
+        user_id=user_id,
+        from_linked=from_linked,
+    )
+    if is_fully_trusted:
+        return "clean"
+
     _uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
     _mid = int(getattr(message, "message_id", message_id or 0))
     light_throttle = f"mod_alert:light:{chat_id}:{_uid}"
@@ -325,7 +418,7 @@ async def handle_passive_moderation(
     if is_comment_context is not None:
         moderation_context = "comment" if bool(is_comment_context) else "group"
     elif message is not None:
-        moderation_context = resolve_message_moderation_context(message, from_linked=False)
+        moderation_context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
     else:
         moderation_context = "group"
     light_policy = resolve_moderation_policy(moderation_context, settings)
@@ -345,6 +438,7 @@ async def handle_passive_moderation(
                     text,
                     all_entities,
                     source=normalized_source,
+                    allow_ai_for_source=is_trusted_source,
                     policy=light_policy,
                     image_b64=image_b64,
                     image_mime=image_mime,
@@ -440,6 +534,7 @@ async def handle_passive_moderation(
                         _uid,
                         text,
                         source=normalized_source,
+                        allow_ai_for_source=is_trusted_source,
                         image_b64=image_b64,
                         image_mime=image_mime,
                     ),
@@ -740,6 +835,85 @@ async def moderation_on_join(message: types.Message) -> None:
     if settings.MODERATION_DELETE_SERVICE_JOINS:
         await _delete_message_safe(chat_id, message.message_id)
 
+
+@dp.message_reaction(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
+async def moderation_on_reaction(event: types.MessageReactionUpdated) -> None:
+    if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
+        return
+
+    try:
+        chat_id = int(event.chat.id)
+    except Exception:
+        return
+
+    allowed_chat_ids = {
+        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
+    }
+    comment_target_chat_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+    }
+    comment_source_channel_ids = {
+        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+    }
+    comment_enabled = bool(getattr(settings, "COMMENT_MODERATION_ENABLED", False))
+
+    is_trusted_destination = chat_id in allowed_chat_ids
+    if not is_trusted_destination and comment_enabled:
+        linked_chat_id = None
+        with contextlib.suppress(Exception):
+            linked_chat_id = int(getattr(event.chat, "linked_chat_id", 0) or 0)
+        is_trusted_destination = bool(
+            chat_id in comment_target_chat_ids
+            or (linked_chat_id and linked_chat_id in comment_source_channel_ids)
+        )
+
+    if not is_trusted_destination:
+        return
+
+    user = getattr(event, "user", None)
+    if not user:
+        return
+
+    uid = int(getattr(user, "id", 0) or 0)
+    if not uid or bool(getattr(user, "is_bot", False)):
+        return
+
+    if await _is_fully_trusted_actor_or_action(
+        chat_id=chat_id,
+        message=None,
+        source="user",
+        user_id=uid,
+        from_linked=False,
+    ):
+        return
+
+    blocked_key = _profile_nsfw_blocked_chat_key(chat_id, uid)
+    try:
+        if await redis_client.exists(blocked_key):
+            return
+    except Exception:
+        logger.debug("reaction blocked-key check failed", exc_info=True)
+
+    try:
+        if not await _is_profile_nsfw(uid):
+            return
+    except Exception:
+        logger.debug("reaction profile nsfw check failed", exc_info=True)
+        return
+
+    try:
+        await redis_client.set(blocked_key, 1)
+    except Exception:
+        logger.debug("reaction blocked-key write failed", exc_info=True)
+
+    await _flag_inline_without_message(
+        chat_id,
+        action="restrict",
+        reason="profile_nsfw_reaction|context=group",
+        user_id=uid,
+    )
+    await _cleanup_user_history_and_mute(chat_id, uid)
+
 @dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]), F.left_chat_member)
 async def moderation_on_left(message: types.Message) -> None:
     if settings.MODERATION_DELETE_SERVICE_LEAVES:
@@ -783,13 +957,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if bool(getattr(message, "is_automatic_forward", False)):
         return False
 
-    trusted_chat_ids = {
-        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
-    }
-    trusted_source_channel_ids = {
-        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
-    }
-    trusted_scope_ids = trusted_chat_ids | trusted_source_channel_ids
+    trusted_chat_ids, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
 
     is_trusted_chat = int(chat_id) in trusted_chat_ids
     is_trusted_destination = int(chat_id) in trusted_scope_ids
@@ -828,6 +996,15 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         from_linked = await is_from_linked_channel(message)
     except Exception:
         from_linked = False
+
+    if await _is_fully_trusted_actor_or_action(
+        chat_id=chat_id,
+        message=message,
+        source=("channel" if is_sender_chat_entity else "user"),
+        user_id=int(getattr(getattr(message, "from_user", None), "id", 0) or 0),
+        from_linked=from_linked,
+    ):
+        return False
 
     context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
     policy = resolve_moderation_policy(context, settings)

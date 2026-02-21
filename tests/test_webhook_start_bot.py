@@ -335,6 +335,8 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(_FakeBot.last_instance.last_set_webhook_kwargs)
         self.assertIn("drop_pending_updates", _FakeBot.last_instance.last_set_webhook_kwargs)
         self.assertTrue(_FakeBot.last_instance.last_set_webhook_kwargs["drop_pending_updates"])
+        self.assertIn("allowed_updates", _FakeBot.last_instance.last_set_webhook_kwargs)
+        self.assertIn("message_reaction", _FakeBot.last_instance.last_set_webhook_kwargs["allowed_updates"])
 
 
     async def test_start_bot_respects_drop_pending_updates_setting(self):

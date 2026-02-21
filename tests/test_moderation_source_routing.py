@@ -4,6 +4,8 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from aiogram.enums import ChatType
+
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "12345:abcde")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://u:p@localhost/db")
@@ -16,7 +18,7 @@ from app.services.addons import passive_moderation
 
 
 class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_check_light_channel_skips_user_only_heuristics(self) -> None:
+    async def test_check_light_channel_trusted_runs_ai_and_keeps_flood_user_only(self) -> None:
         with (
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=True, MODERATION_SPAM_LINK_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=True)) as flooding_mock,
@@ -26,11 +28,11 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as toxic_mock,
         ):
-            status = await passive_moderation.check_light(1, 2, "hello", [], source="channel")
+            status = await passive_moderation.check_light(1, 2, "hello", [], source="channel", allow_ai_for_source=True)
 
-        self.assertEqual(status, "clean")
+        self.assertEqual(status, "toxic")
         flooding_mock.assert_not_awaited()
-        toxic_mock.assert_not_awaited()
+        toxic_mock.assert_awaited_once()
 
 
     async def test_check_light_user_keeps_flood_behavior(self) -> None:
@@ -43,31 +45,166 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "flood")
         flooding_mock.assert_awaited_once()
 
-    async def test_check_deep_channel_skips_history_and_ai(self) -> None:
+    async def test_check_deep_channel_trusted_runs_ai_without_history(self) -> None:
         with (
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=True, MODERATION_SPAM_LINK_THRESHOLD=5)),
             patch.object(passive_moderation, "load_context", AsyncMock(return_value=[{"role": "user", "content": "x"}])) as load_mock,
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as ai_mock,
         ):
-            blocked = await passive_moderation.check_deep(1, 2, "hello", source="channel")
+            blocked = await passive_moderation.check_deep(1, 2, "hello", source="channel", allow_ai_for_source=True)
 
-        self.assertFalse(blocked)
+        self.assertTrue(blocked)
         load_mock.assert_not_awaited()
-        ai_mock.assert_not_awaited()
+        ai_mock.assert_awaited_once_with("hello", image_b64=None, image_mime=None)
 
-
-
-    async def test_check_deep_bot_skips_history_and_ai(self) -> None:
+    async def test_check_deep_bot_trusted_runs_ai_without_history(self) -> None:
         with (
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=True, MODERATION_SPAM_LINK_THRESHOLD=5)),
             patch.object(passive_moderation, "load_context", AsyncMock(return_value=[{"role": "user", "content": "x"}])) as load_mock,
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as ai_mock,
         ):
-            blocked = await passive_moderation.check_deep(1, 2, "hello", source="bot")
+            blocked = await passive_moderation.check_deep(1, 2, "hello", source="bot", allow_ai_for_source=True)
 
-        self.assertFalse(blocked)
+        self.assertTrue(blocked)
         load_mock.assert_not_awaited()
-        ai_mock.assert_not_awaited()
+        ai_mock.assert_awaited_once_with("hello", image_b64=None, image_mime=None)
+
+
+    async def test_handle_passive_moderation_linked_channel_full_trust_skips_ai(self) -> None:
+        fake_redis = _FakeRedis()
+
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            from_user=None,
+            message_id=88,
+            entities=[],
+            caption_entities=[],
+        )
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(
+                MODERATION_ADMIN_EXEMPT=False,
+                MOD_ALERT_THROTTLE_SECONDS=60,
+                MOD_LIGHT_TIMEOUT=2.0,
+                MOD_DEEP_TIMEOUT=5.0,
+                MOD_DEEP_TEXT_THRESHOLD=10,
+                ALLOWED_GROUP_IDS=[],
+                COMMENT_SOURCE_CHANNEL_IDS=[],
+            )),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=True)),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)) as check_deep_mock,
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-1001,
+                message=message,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="channel",
+                user_id=42,
+                message_id=88,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+
+    async def test_handle_passive_moderation_trusted_admin_repost_from_untrusted_source_is_exempt(self) -> None:
+        fake_redis = _FakeRedis()
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-10055, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            from_user=types.SimpleNamespace(id=777),
+            sender_chat=None,
+            forward_from_chat=types.SimpleNamespace(id=-100999, type=ChatType.CHANNEL),
+            message_id=99,
+            entities=[],
+            caption_entities=[],
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(
+                MODERATION_ADMIN_EXEMPT=False,
+                MOD_ALERT_THROTTLE_SECONDS=60,
+                MOD_LIGHT_TIMEOUT=2.0,
+                MOD_DEEP_TIMEOUT=5.0,
+                MOD_DEEP_TEXT_THRESHOLD=10,
+                ALLOWED_GROUP_IDS=[-10055],
+                COMMENT_SOURCE_CHANNEL_IDS=[],
+            )),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=True)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=True)) as check_deep_mock,
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-10055,
+                message=message,
+                text="forwarded text",
+                entities=[],
+                source="user",
+                user_id=777,
+                message_id=99,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+
+    async def test_handle_passive_moderation_comment_target_admin_is_exempt(self) -> None:
+        fake_redis = _FakeRedis()
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100777, type=ChatType.SUPERGROUP, linked_chat_id=-10042),
+            from_user=types.SimpleNamespace(id=555),
+            sender_chat=None,
+            forward_from_chat=None,
+            message_id=17,
+            entities=[],
+            caption_entities=[],
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(
+                MODERATION_ADMIN_EXEMPT=False,
+                MOD_ALERT_THROTTLE_SECONDS=60,
+                MOD_LIGHT_TIMEOUT=2.0,
+                MOD_DEEP_TIMEOUT=5.0,
+                MOD_DEEP_TEXT_THRESHOLD=10,
+                ALLOWED_GROUP_IDS=[],
+                COMMENT_TARGET_CHAT_IDS=[-100777],
+                COMMENT_SOURCE_CHANNEL_IDS=[-10042],
+            )),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=True)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=True)) as check_deep_mock,
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-100777,
+                message=message,
+                text="comment",
+                entities=[],
+                source="user",
+                user_id=555,
+                message_id=17,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_classify_profile_nsfw_fast_accepts_strict_yes_json(self) -> None:

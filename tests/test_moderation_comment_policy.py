@@ -352,6 +352,124 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "link_violation")
 
+
+class ModerationReactionProfileTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reaction_triggers_profile_moderation_for_untrusted_user_in_trusted_chat(self) -> None:
+        event = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP),
+            user=types.SimpleNamespace(id=42, is_bot=False),
+            actor_chat=None,
+            message_id=55,
+        )
+
+        with (
+            patch.object(
+                moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MODERATION_PROFILE_NSFW_ENFORCE=True,
+                    ALLOWED_GROUP_IDS=[-1001],
+                    COMMENT_TARGET_CHAT_IDS=[],
+                    COMMENT_SOURCE_CHANNEL_IDS=[],
+                ),
+            ),
+            patch.object(moderation, "_is_fully_trusted_actor_or_action", AsyncMock(return_value=False)),
+            patch.object(moderation.redis_client, "exists", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)),
+            patch.object(moderation.redis_client, "set", AsyncMock()) as redis_set_mock,
+            patch.object(moderation, "_flag_inline_without_message", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+        ):
+            await moderation.moderation_on_reaction(event)
+
+        redis_set_mock.assert_awaited_once_with("mod:profile_nsfw_blocked:-1001:42", 1)
+        flag_mock.assert_awaited_once()
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
+
+    async def test_reaction_ignored_for_untrusted_chat(self) -> None:
+        event = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-2002, type=ChatType.SUPERGROUP),
+            user=types.SimpleNamespace(id=42, is_bot=False),
+            actor_chat=None,
+            message_id=56,
+        )
+
+        with (
+            patch.object(
+                moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MODERATION_PROFILE_NSFW_ENFORCE=True,
+                    ALLOWED_GROUP_IDS=[-1001],
+                    COMMENT_TARGET_CHAT_IDS=[],
+                    COMMENT_SOURCE_CHANNEL_IDS=[],
+                ),
+            ),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+        ):
+            await moderation.moderation_on_reaction(event)
+
+        nsfw_mock.assert_not_awaited()
+        cleanup_mock.assert_not_awaited()
+
+    async def test_reaction_comment_linked_chat_is_trusted_when_comment_moderation_enabled(self) -> None:
+        event = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-2002, type=ChatType.SUPERGROUP, linked_chat_id=-10077),
+            user=types.SimpleNamespace(id=42, is_bot=False),
+            actor_chat=None,
+            message_id=57,
+        )
+
+        with (
+            patch.object(
+                moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MODERATION_PROFILE_NSFW_ENFORCE=True,
+                    COMMENT_MODERATION_ENABLED=True,
+                    ALLOWED_GROUP_IDS=[],
+                    COMMENT_TARGET_CHAT_IDS=[],
+                    COMMENT_SOURCE_CHANNEL_IDS=[-10077],
+                ),
+            ),
+            patch.object(moderation, "_is_fully_trusted_actor_or_action", AsyncMock(return_value=False)),
+            patch.object(moderation.redis_client, "exists", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)),
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+        ):
+            await moderation.moderation_on_reaction(event)
+
+        cleanup_mock.assert_awaited_once_with(-2002, 42)
+
+    async def test_reaction_comment_target_ignored_when_comment_moderation_disabled(self) -> None:
+        event = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-3003, type=ChatType.SUPERGROUP, linked_chat_id=-10088),
+            user=types.SimpleNamespace(id=42, is_bot=False),
+            actor_chat=None,
+            message_id=58,
+        )
+
+        with (
+            patch.object(
+                moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MODERATION_PROFILE_NSFW_ENFORCE=True,
+                    COMMENT_MODERATION_ENABLED=False,
+                    ALLOWED_GROUP_IDS=[],
+                    COMMENT_TARGET_CHAT_IDS=[-3003],
+                    COMMENT_SOURCE_CHANNEL_IDS=[-10088],
+                ),
+            ),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+        ):
+            await moderation.moderation_on_reaction(event)
+
+        nsfw_mock.assert_not_awaited()
+        cleanup_mock.assert_not_awaited()
+
     def test_url_is_unwanted_allows_whitelisted_non_telegram_domain(self) -> None:
         with patch.object(
             passive_moderation,
