@@ -69,10 +69,76 @@ def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool
 @dataclass
 class RagQueryContext:
     query: str
+    rag_query_source: str = "resolved"
     query_embedding: List[float] | None = None
     embedding_model: str | None = None
     query_embedding_source: str = "module_local"
     query_embedding_reuse_count: int = 0
+
+
+async def _compute_on_topic_relevance(
+    *,
+    chat_id: int,
+    query_to_model: str,
+    trigger: str | None,
+    persona_owner_id: int | None,
+    knowledge_owner_id: int | None,
+    precomputed_rag_hits: List[Any] | None,
+    query_embedding: List[float] | None,
+    embedding_model: str | None,
+    rag_precheck_source: str | None,
+    rag_query_source: str = "resolved",
+) -> tuple[bool, List[Any] | None, RagQueryContext]:
+    on_topic_flag = False
+    on_topic_hits = None
+    rag_query_context = RagQueryContext(query=query_to_model, rag_query_source=rag_query_source)
+    if query_embedding:
+        rag_query_context.query_embedding = query_embedding
+        rag_query_context.embedding_model = embedding_model or settings.EMBEDDING_MODEL
+        rag_query_context.query_embedding_source = rag_precheck_source or "external_precomputed"
+    if precomputed_rag_hits is not None:
+        on_topic_hits = precomputed_rag_hits
+        on_topic_flag = bool(precomputed_rag_hits)
+
+    reuse_counter = [0]
+    if rag_query_context.query_embedding is None:
+        try:
+            emb_model = settings.EMBEDDING_MODEL
+            qraw = await _get_query_embedding(emb_model, query_to_model)
+            if qraw is not None:
+                qvec = np.asarray(qraw, dtype=np.float32)
+                qvec = np.nan_to_num(qvec, nan=0.0, posinf=0.0, neginf=0.0)
+                norm = float(np.linalg.norm(qvec))
+                if np.isfinite(norm) and norm >= 1e-12:
+                    rag_query_context.query_embedding = (qvec / norm).astype(np.float32, copy=False).tolist()
+                    rag_query_context.embedding_model = emb_model
+                    rag_query_context.query_embedding_source = "precomputed_per_request"
+        except Exception:
+            logger.exception("RAG query embedding precompute failed for chat_id=%s", chat_id, exc_info=True)
+
+    should_run_relevance = not (
+        precomputed_rag_hits is not None
+        and trigger == "check_on_topic"
+    )
+    if should_run_relevance:
+        try:
+            on_topic_flag, on_topic_hits = await is_relevant(
+                query_to_model,
+                model=settings.EMBEDDING_MODEL,
+                threshold=settings.RELEVANCE_THRESHOLD,
+                return_hits=True,
+                persona_owner_id=persona_owner_id,
+                knowledge_owner_id=knowledge_owner_id,
+                strict_autoreply_gate=(trigger == "check_on_topic"),
+                query_embedding=rag_query_context.query_embedding,
+                embedding_model=rag_query_context.embedding_model,
+                query_embedding_reuse_counter=reuse_counter,
+            )
+            rag_query_context.query_embedding_reuse_count = int(reuse_counter[0])
+        except Exception:
+            logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
+
+    return on_topic_flag, on_topic_hits, rag_query_context
 
 
 MAX_TOKENS = 1000
@@ -787,6 +853,10 @@ async def respond_to_user(
     skip_user_push: bool = False,
     skip_assistant_push: bool = False,
     skip_persona_interaction: bool = False,
+    precomputed_rag_hits: List[Any] | None = None,
+    query_embedding: List[float] | None = None,
+    embedding_model: str | None = None,
+    rag_precheck_source: str | None = None,
 ) -> str:
 
     redis = get_redis()
@@ -1359,6 +1429,10 @@ async def respond_to_user(
         channel_desc = f'the "{safe_ch}" channel' if safe_ch else "the linked channel"
         ctx_sys_blocks.append(RESPONDER_FORWARDED_CHANNEL_POST_TEMPLATE.format(channel_desc=channel_desc))
 
+    rag_query_raw = query
+    rag_query_for_relevance = rag_query_raw
+    rag_query_source = "raw"
+
     query_to_model = safe_resolved
     reply = None
     ltm_frags_t = None
@@ -1374,40 +1448,22 @@ async def respond_to_user(
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
-        reuse_counter = [0]
-        try:
-            emb_model = settings.EMBEDDING_MODEL
-            qraw = await _get_query_embedding(emb_model, query_to_model)
-            if qraw is not None:
-                qvec = np.asarray(qraw, dtype=np.float32)
-                qvec = np.nan_to_num(qvec, nan=0.0, posinf=0.0, neginf=0.0)
-                norm = float(np.linalg.norm(qvec))
-                if np.isfinite(norm) and norm >= 1e-12:
-                    rag_query_context.query_embedding = (qvec / norm).astype(np.float32, copy=False).tolist()
-                    rag_query_context.embedding_model = emb_model
-                    rag_query_context.query_embedding_source = "precomputed_per_request"
-        except Exception:
-            logger.exception("RAG query embedding precompute failed for chat_id=%s", chat_id, exc_info=True)
-
-        try:
-            on_topic_flag, on_topic_hits = await is_relevant(
-                query_to_model,
-                model=settings.EMBEDDING_MODEL,
-                threshold=settings.RELEVANCE_THRESHOLD,
-                return_hits=True,
-                persona_owner_id=persona_owner_id,
-                knowledge_owner_id=knowledge_owner_id,
-                strict_autoreply_gate=(trigger == "check_on_topic"),
-                query_embedding=rag_query_context.query_embedding,
-                embedding_model=rag_query_context.embedding_model,
-                query_embedding_reuse_counter=reuse_counter,
-            )
-            rag_query_context.query_embedding_reuse_count = int(reuse_counter[0])
-        except Exception:
-            logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
+        on_topic_flag, on_topic_hits, rag_query_context = await _compute_on_topic_relevance(
+            chat_id=chat_id,
+            query_to_model=rag_query_for_relevance,
+            trigger=trigger,
+            persona_owner_id=persona_owner_id,
+            knowledge_owner_id=knowledge_owner_id,
+            precomputed_rag_hits=precomputed_rag_hits,
+            query_embedding=query_embedding,
+            embedding_model=embedding_model,
+            rag_precheck_source=rag_precheck_source,
+            rag_query_source=rag_query_source,
+        )
         logger.info(
             "RAG query embedding context",
             extra={
+                "rag_query_source": rag_query_context.rag_query_source,
                 "query_embedding_source": rag_query_context.query_embedding_source,
                 "query_embedding_reuse_count": rag_query_context.query_embedding_reuse_count,
             },

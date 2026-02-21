@@ -20,6 +20,9 @@ def _load_queue_worker():
     fake_openai_client = types.ModuleType("app.clients.openai_client")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
+    fake_responder_rag = types.ModuleType("app.services.responder.rag")
+    fake_responder_keyword = types.ModuleType("app.services.responder.rag.keyword_filter")
+    fake_responder_knowledge = types.ModuleType("app.services.responder.rag.knowledge_proc")
     fake_addons = types.ModuleType("app.services.addons")
     fake_voice = types.ModuleType("app.services.addons.voice_generator")
     fake_mod = types.ModuleType("app.services.addons.passive_moderation")
@@ -69,6 +72,7 @@ def _load_queue_worker():
         OPENAI_MAX_CONCURRENT_REQUESTS=4,
         QUEUE_KEY="q:in",
         RESPOND_TIMEOUT=5,
+        EMBEDDING_MODEL="text-embedding-3-large",
     )
 
     fake_bot_debouncer.compute_typing_delay = lambda *_args, **_kwargs: 0.0
@@ -82,6 +86,15 @@ def _load_queue_worker():
         return "ok"
 
     fake_responder.respond_to_user = _respond_ok
+
+    async def _no_hits(*_args, **_kwargs):
+        return []
+
+    async def _query_embedding(*_args, **_kwargs):
+        return None
+
+    fake_responder_keyword.find_tag_hits = _no_hits
+    fake_responder_knowledge._get_query_embedding = _query_embedding
 
     async def _noop_async(*_args, **_kwargs):
         return None
@@ -119,6 +132,9 @@ def _load_queue_worker():
         "app.clients.openai_client": fake_openai_client,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
+        "app.services.responder.rag": fake_responder_rag,
+        "app.services.responder.rag.keyword_filter": fake_responder_keyword,
+        "app.services.responder.rag.knowledge_proc": fake_responder_knowledge,
         "app.services.addons": fake_addons,
         "app.services.addons.voice_generator": fake_voice,
         "app.services.addons.passive_moderation": fake_mod,
@@ -809,6 +825,71 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
+
+    async def test_check_on_topic_without_tag_hits_finishes_without_responder(self):
+        queue_worker.REDIS_QUEUE = _FakeQueueRedis()
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = False
+
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value="clean"), set=AsyncMock())
+        queue_worker.get_redis = lambda: redis_stub
+
+        mark_done = AsyncMock(return_value=1)
+        refund_reservation = AsyncMock(return_value=None)
+        respond_mock = AsyncMock(return_value="reply")
+
+        job = {
+            "chat_id": -10077,
+            "user_id": 77,
+            "text": "hello team",
+            "msg_id": 301,
+            "reply_to": 301,
+            "is_group": True,
+            "is_channel_post": False,
+            "trigger": "check_on_topic",
+            "reservation_id": 700,
+            "knowledge_owner_id": 900,
+        }
+
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=[])),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=[0.1, 0.2])),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        respond_mock.assert_not_awaited()
+        mark_done.assert_awaited()
+        refund_reservation.assert_awaited_once_with(700)
+
+    async def test_check_on_topic_with_tag_hits_passes_precomputed_payload(self):
+        queue_worker.REDIS_QUEUE = _FakeQueueRedis()
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = False
+
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value="clean"), set=AsyncMock())
+        queue_worker.get_redis = lambda: redis_stub
+
+        respond_mock = AsyncMock(return_value="reply")
+        tag_hits = [(0.88, "id1", "chunk")]
+        query_embedding = [0.11, 0.22]
+
+        job = {
+            "chat_id": -10078,
+            "user_id": 78,
+            "text": "hello team",
+            "msg_id": 302,
+            "reply_to": 302,
+            "is_group": True,
+            "is_channel_post": False,
+            "trigger": "check_on_topic",
+            "reservation_id": 701,
+            "knowledge_owner_id": 901,
+        }
+
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=tag_hits)),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=query_embedding)),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=9003))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        respond_mock.assert_awaited_once()
+        self.assertEqual(respond_mock.await_args.kwargs.get("precomputed_rag_hits"), tag_hits)
+        self.assertEqual(respond_mock.await_args.kwargs.get("query_embedding"), query_embedding)
+        self.assertEqual(respond_mock.await_args.kwargs.get("embedding_model"), queue_worker.settings.EMBEDDING_MODEL)
 
 
 if __name__ == "__main__":

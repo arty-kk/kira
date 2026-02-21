@@ -343,47 +343,33 @@ try:
                 for s, v in zip(chunk, vecs):
                     kw_emb[s] = [float(x) for x in v]
 
-    ids_tags: List[str] = []
-    texts_tags: List[str] = []
-    kws_per_item: List[List[str]] = []
-    rows_tags: List[List[float]] = []
+    tag_rows: List[List[float]] = []
+    tag_item_ids: List[str] = []
+    tag_item_texts: List[str] = []
+    tag_texts: List[str] = []
 
-    dim_kw = None
     skipped_items = 0
     for eid, kws in kw_by_id.items():
-        vec_sum = None
-        cnt = 0
+        used = 0
+        text = texts_by_id.get(eid, "")
         for s in kws:
             v = kw_emb.get(s)
             if v is None:
                 continue
-            if vec_sum is None:
-                vec_sum = [float(x) for x in v]
-                dim_kw = len(vec_sum) if dim_kw is None else dim_kw
-            else:
-                if len(v) != dim_kw:
-                    continue
-                for i in range(dim_kw):
-                    vec_sum[i] += v[i]
-            cnt += 1
-        if not vec_sum or cnt == 0:
+            vv = np.asarray(v, dtype=np.float32)
+            nrm = float(np.linalg.norm(vv))
+            if not np.isfinite(nrm) or nrm == 0.0:
+                continue
+            vv = vv / nrm
+            tag_rows.append(vv.tolist())
+            tag_item_ids.append(eid)
+            tag_item_texts.append(text)
+            tag_texts.append(s)
+            used += 1
+        if used == 0:
             skipped_items += 1
-            continue
-        inv = 1.0 / float(cnt)
-        for i in range(len(vec_sum)):
-            vec_sum[i] *= inv
-        vv = np.asarray(vec_sum, dtype=np.float32)
-        nrm = float(np.linalg.norm(vv))
-        if not np.isfinite(nrm) or nrm == 0.0:
-            skipped_items += 1
-            continue
-        vv = vv / nrm
-        rows_tags.append(vv.tolist())
-        ids_tags.append(eid)
-        texts_tags.append(texts_by_id.get(eid, ""))
-        kws_per_item.append(kws)
 
-    if not rows_tags:
+    if not tag_rows:
         logger.warning("No tag vectors produced — skipping TAGS NPZ/JSON.")
     else:
         file_model = OUT_PATH.stem
@@ -391,25 +377,25 @@ try:
             file_model = file_model[len("knowledge_embedded_"):]
         TAGS_JSON = OUT_PATH.parent / f"tags_embedded_{file_model}.json"
         tag_entries = []
-        for eid, txt, kws, vec in zip(ids_tags, texts_tags, kws_per_item, rows_tags):
-            tag_entries.append({"id": eid, "text": txt, "keywords": kws, "vec": vec})
+        for eid, txt, tag, vec in zip(tag_item_ids, tag_item_texts, tag_texts, tag_rows):
+            tag_entries.append({"id": eid, "text": txt, "tag": tag, "vec": vec})
         tmp_tags_json = TAGS_JSON.with_suffix(TAGS_JSON.suffix + ".tmp")
         with open(tmp_tags_json, "w", encoding="utf-8") as f:
             json.dump(tag_entries, f, ensure_ascii=False, indent=2)
         tmp_tags_json.replace(TAGS_JSON)
-        logger.info("✅ Saved tag vectors JSON: %s (items=%d, skipped=%d)", TAGS_JSON, len(tag_entries), skipped_items)
+        logger.info("✅ Saved tag vectors JSON: %s (rows=%d, skipped_items=%d)", TAGS_JSON, len(tag_entries), skipped_items)
 
-        E_tags = np.asarray(rows_tags, dtype=np.float32)
+        TE_tags = np.asarray(tag_rows, dtype=np.float32)
         TAGS_NPZ = OUT_PATH.parent / f"tags_embedded_{file_model}.npz"
         np.savez_compressed(
             TAGS_NPZ,
-            E=E_tags,
-            ids=np.asarray(ids_tags, dtype=object),
-            texts=np.asarray(texts_tags, dtype=object),
-            kws=np.asarray(kws_per_item, dtype=object),
-            meta=np.asarray({"model": file_model, "api_model": MODEL, "dim": E_tags.shape[1], "created": int(time.time())}, dtype=object),
+            TE=TE_tags,
+            tag_item_ids=np.asarray(tag_item_ids, dtype=object),
+            tag_item_texts=np.asarray(tag_item_texts, dtype=object),
+            tag_texts=np.asarray(tag_texts, dtype=object),
+            meta=np.asarray({"model": file_model, "api_model": MODEL, "dim": TE_tags.shape[1], "format_version": 2, "created": int(time.time())}, dtype=object),
         )
-        logger.info("✅ TAGS NPZ saved: %s (E=%s)", TAGS_NPZ, E_tags.shape)
+        logger.info("✅ TAGS NPZ saved: %s (TE=%s)", TAGS_NPZ, TE_tags.shape)
 
 except Exception:
     logger.exception("Failed to build/save TAG embeddings snapshot")

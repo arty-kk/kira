@@ -260,15 +260,79 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
         return None
     try:
         with np.load(p, allow_pickle=True) as z:
-            E = z["E"].astype(np.float32, copy=False)
-            ids = list(z["ids"].tolist())
-            texts = list(z["texts"].tolist())
+            files = set(z.files)
             meta = None
             if "meta" in z.files:
                 try:
                     meta = z["meta"].tolist()
                 except Exception:
                     meta = None
+            # format v2 (per-tag): TE[M,D], tag_item_ids[M], tag_item_texts[M], optional tag_texts[M]
+            if {"TE", "tag_item_ids", "tag_item_texts"}.issubset(files):
+                E = z["TE"].astype(np.float32, copy=False)
+                ids = list(z["tag_item_ids"].tolist())
+                texts = list(z["tag_item_texts"].tolist())
+                tag_texts = (
+                    list(z["tag_texts"].tolist())
+                    if "tag_texts" in files
+                    else ["" for _ in range(len(ids))]
+                )
+                if E.ndim != 2:
+                    logger.error("tags NPZ TE ndim mismatch: %s", E.shape)
+                    return None
+                if len(ids) != E.shape[0] or len(texts) != E.shape[0]:
+                    logger.error(
+                        "tags NPZ v2 size mismatch: ids/texts vs TE: %d/%d vs %d",
+                        len(ids),
+                        len(texts),
+                        E.shape[0],
+                    )
+                    return None
+                E = np.nan_to_num(E, nan=0.0, posinf=0.0, neginf=0.0).astype(
+                    np.float32, copy=False
+                )
+                norms = np.linalg.norm(E, axis=1, keepdims=True)
+                norms[norms == 0.0] = 1.0
+                E = E / norms
+
+                tag_vecs_by_id: Dict[str, List[List[float]]] = {}
+                tags_by_id: Dict[str, List[str]] = {}
+                texts_by_id: Dict[str, str] = {}
+                for k, raw_id in enumerate(ids):
+                    eid = str(raw_id)
+                    tag_vecs_by_id.setdefault(eid, []).append(E[k].tolist())
+                    tags_by_id.setdefault(eid, []).append(str(tag_texts[k] or ""))
+                    if eid not in texts_by_id:
+                        texts_by_id[eid] = str(texts[k] or "")
+
+                if isinstance(meta, dict):
+                    dim_file = int(meta.get("dim", E.shape[1]))
+                    if dim_file != int(E.shape[1]):
+                        logger.error(
+                            "tags NPZ v2 dim mismatch meta=%s vs TE=%s",
+                            dim_file,
+                            E.shape[1],
+                        )
+                        return None
+                logger.info(
+                    "keyword_filter: precomputed TAGS v2 loaded from %s (rows=%d, items=%d, D=%d)",
+                    p,
+                    E.shape[0],
+                    len(tag_vecs_by_id),
+                    E.shape[1],
+                )
+                return {
+                    "ready": True,
+                    "tag_vecs": tag_vecs_by_id,
+                    "tags": tags_by_id,
+                    "texts": texts_by_id,
+                }
+
+            # backward-compat v1: E[N,D], ids[N], texts[N]
+            E = z["E"].astype(np.float32, copy=False)
+            ids = list(z["ids"].tolist())
+            texts = list(z["texts"].tolist())
+
         if E.ndim != 2:
             logger.error("tags NPZ E ndim mismatch: %s", E.shape)
             return None
@@ -286,8 +350,8 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
         norms = np.linalg.norm(E, axis=1, keepdims=True)
         norms[norms == 0.0] = 1.0
         E = E / norms
-        vecs_by_id: Dict[str, List[float]] = {
-            str(i): E[k].tolist() for k, i in enumerate(ids)
+        tag_vecs_by_id: Dict[str, List[List[float]]] = {
+            str(i): [E[k].tolist()] for k, i in enumerate(ids)
         }
         texts_by_id: Dict[str, str] = {str(i): texts[k] for k, i in enumerate(ids)}
         if isinstance(meta, dict):
@@ -305,7 +369,7 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
             E.shape[0],
             E.shape[1],
         )
-        return {"ready": True, "vecs": vecs_by_id, "texts": texts_by_id}
+        return {"ready": True, "tag_vecs": tag_vecs_by_id, "texts": texts_by_id}
     except Exception:
         logger.exception(
             "keyword_filter: failed to load precomputed TAGS from %s", p
@@ -342,7 +406,7 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     base_dir = Path(__file__).resolve().parent
     filename = settings.KNOWLEDGE_ON_FILE
     if not filename:
-        _INDICES[key] = {"ready": True, "vecs": {}, "texts": {}, "model": emb_model}
+        _INDICES[key] = {"ready": True, "tag_vecs": {}, "texts": {}, "model": emb_model}
         return _INDICES[key]
 
     items = _read_json_list(base_dir / filename)
@@ -369,41 +433,37 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     if all_kws:
         await _embed_texts(all_kws, model=emb_model)
 
-    vecs_by_id: Dict[str, List[float]] = {}
+    tag_vecs_by_id: Dict[str, List[List[float]]] = {}
+    tags_by_id: Dict[str, List[str]] = {}
     for eid, kws in kw_by_id.items():
         if not kws:
             continue
-        acc: Optional[List[float]] = None
-        cnt = 0
+        item_vecs: List[List[float]] = []
+        item_tags: List[str] = []
         for k in kws:
             cache_key = _cache_key(api_model, k)
             v = _EMB_CACHE.get(cache_key)
             if v is None:
                 continue
             _EMB_CACHE.move_to_end(cache_key)
-            if acc is None:
-                acc = [x for x in v]
-            else:
-                for i in range(len(acc)):
-                    acc[i] += v[i]
-            cnt += 1
-        if acc is None or cnt == 0:
+            item_vecs.append([float(x) for x in v])
+            item_tags.append(k)
+        if not item_vecs:
             continue
-        inv = 1.0 / float(cnt)
-        for i in range(len(acc)):
-            acc[i] *= inv
-        vecs_by_id[eid] = _l2_normalize(acc)
+        tag_vecs_by_id[eid] = item_vecs
+        tags_by_id[eid] = item_tags
 
     _INDICES[key] = {
         "ready": True,
-        "vecs": vecs_by_id,
+        "tag_vecs": tag_vecs_by_id,
+        "tags": tags_by_id,
         "texts": texts_by_id,
         "model": emb_model,
     }
     logger.info(
         "keyword_filter: built index key=%s items=%d (fallback path)",
         key,
-        len(vecs_by_id),
+        len(tag_vecs_by_id),
     )
     return _INDICES[key]
 
@@ -425,7 +485,7 @@ async def _ensure_owner_index(owner_id: int, model: Optional[str]) -> Dict[str, 
     # Если для owner нет NPZ, кешируем пустой индекс, чтобы не ходить на диск каждый раз.
     idx: Dict[str, Any] = {
         "ready": True,
-        "vecs": {},
+        "tag_vecs": {},
         "texts": {},
         "model": model_file_name,
     }
@@ -491,26 +551,29 @@ async def find_tag_hits(
         owner_idx = await _ensure_owner_index(owner_id_int, model)
         indices.append(("owner", owner_id_int, owner_idx))
 
-    union_vecs_by_id: Dict[str, List[float]] = {}
     union_texts_by_id: Dict[str, str] = {}
+    union_tag_vecs_by_id: Dict[str, List[List[float]]] = {}
 
     for scope, oid, idx in indices:
-        vecs_by_id = idx.get("vecs") or {}
+        tag_vecs_by_id = idx.get("tag_vecs") or {}
+        if not tag_vecs_by_id:
+            legacy_vecs = idx.get("vecs") or {}
+            tag_vecs_by_id = {k: [v] for k, v in legacy_vecs.items()}
         texts_by_id = idx.get("texts") or {}
-        if not vecs_by_id:
+        if not tag_vecs_by_id:
             continue
 
-        for eid, ev in vecs_by_id.items():
+        for eid, item_vecs in tag_vecs_by_id.items():
             if scope == "owner" and oid is not None:
                 rid = f"{oid}:{eid}"
             else:
                 rid = eid
-            if rid not in union_vecs_by_id:
-                union_vecs_by_id[rid] = ev
+            if rid not in union_tag_vecs_by_id:
+                union_tag_vecs_by_id[rid] = item_vecs
             if rid not in union_texts_by_id:
                 union_texts_by_id[rid] = texts_by_id.get(eid, "")
 
-    if not union_vecs_by_id:
+    if not union_tag_vecs_by_id:
         return []
 
     try:
@@ -540,8 +603,10 @@ async def find_tag_hits(
     qv_by_model: Dict[str, List[float]] = {}
     models_needed: set[str] = set()
     for _, _, idx in indices:
-        vecs_by_id = idx.get("vecs") or {}
-        if not vecs_by_id:
+        tag_vecs_by_id = idx.get("tag_vecs") or {}
+        if not tag_vecs_by_id:
+            tag_vecs_by_id = {k: [v] for k, v in (idx.get("vecs") or {}).items()}
+        if not tag_vecs_by_id:
             continue
         emb_model = idx.get("model") or (model or settings.EMBEDDING_MODEL)
         models_needed.add(emb_model)
@@ -564,14 +629,19 @@ async def find_tag_hits(
 
     scores_by_id: Dict[str, float] = {}
     rid_model: Dict[str, str] = {}
+    best_tag_vec_by_id: Dict[str, List[float]] = {}
+    best_tag_name_by_id: Dict[str, str] = {}
 
     for scope, oid, idx in indices:
-        vecs_by_id = idx.get("vecs") or {}
-        if not vecs_by_id:
+        tag_vecs_by_id = idx.get("tag_vecs") or {}
+        if not tag_vecs_by_id:
+            tag_vecs_by_id = {k: [v] for k, v in (idx.get("vecs") or {}).items()}
+        if not tag_vecs_by_id:
             continue
         emb_model = idx.get("model") or (model or settings.EMBEDDING_MODEL)
         qv = qv_by_model[emb_model]
-        for eid, ev in vecs_by_id.items():
+        tags_by_id = idx.get("tags") or {}
+        for eid, item_vecs in tag_vecs_by_id.items():
             if scope == "owner" and oid is not None:
                 rid = f"{oid}:{eid}"
             else:
@@ -579,11 +649,23 @@ async def find_tag_hits(
             if rid in rid_model and rid_model[rid] != emb_model:
                 continue
             rid_model[rid] = emb_model
-            s = _cosine(qv, ev)
-            if s >= kw_thr:
-                prev = scores_by_id.get(rid)
-                if prev is None or s > prev:
-                    scores_by_id[rid] = float(s)
+            best_s: Optional[float] = None
+            best_vec: Optional[List[float]] = None
+            best_tag_name = ""
+            tag_names = tags_by_id.get(eid) or ["" for _ in item_vecs]
+            for i, ev in enumerate(item_vecs):
+                s = _cosine(qv, ev)
+                if best_s is None or s > best_s:
+                    best_s = float(s)
+                    best_vec = ev
+                    best_tag_name = str(tag_names[i]) if i < len(tag_names) else ""
+            if best_s is None or best_vec is None or best_s < kw_thr:
+                continue
+            prev = scores_by_id.get(rid)
+            if prev is None or best_s > prev:
+                scores_by_id[rid] = best_s
+                best_tag_vec_by_id[rid] = best_vec
+                best_tag_name_by_id[rid] = best_tag_name
 
     if not scores_by_id:
         logger.info(
@@ -606,7 +688,7 @@ async def find_tag_hits(
 
     cand_ids = sorted(scores_by_id.keys(), key=lambda i: scores_by_id[i], reverse=True)
     picked_ids = _mmr_select_ids(
-        cand_ids, union_vecs_by_id, scores_by_id, top_k=top_k, lam=lam
+        cand_ids, best_tag_vec_by_id, scores_by_id, top_k=top_k, lam=lam
     )
 
     results: List[Tuple[float, str, str]] = [
@@ -620,4 +702,9 @@ async def find_tag_hits(
         owner_id_int,
         len(results),
     )
+    if results:
+        logger.debug(
+            "keyword_filter: best tags selected=%s",
+            {rid: best_tag_name_by_id.get(rid, "") for _, rid, _ in results},
+        )
     return results
