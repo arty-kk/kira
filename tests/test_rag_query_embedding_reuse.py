@@ -70,6 +70,28 @@ class RagQueryEmbeddingReuseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls["count"], 1)
         self.assertEqual(reuse_counter[0], 2)
 
+
+    async def test_precomputed_query_embedding_is_centered_like_runtime_embedding(self) -> None:
+        model = "test-rag-centered"
+        entries = [
+            {"id": "left", "text": "left", "emb": [2.0, 0.0]},
+            {"id": "right", "text": "right", "emb": [4.0, 0.0]},
+        ]
+        knowledge_proc._KB_ENTRIES[model] = entries
+        knowledge_proc._KB_STATE[model] = knowledge_proc._build_state(entries)
+
+        raw_query = [5.0, 0.0]
+
+        hits = await knowledge_proc.get_relevant(
+            "irrelevant",
+            model_name=model,
+            query_embedding=raw_query,
+            embedding_model=model,
+        )
+
+        self.assertTrue(hits)
+        self.assertEqual(hits[0][1], "right")
+
     async def test_backward_compatible_local_query_embedding_path(self) -> None:
         query = "alpha question"
         calls = {"count": 0}

@@ -179,6 +179,14 @@ def _is_effectively_empty(s: str) -> bool:
     return txt == ""
 
 
+async def _chat_has_active_generation(chat_id: int) -> bool:
+    try:
+        busy = await consts.redis_queue.get(f"chatbusy:{int(chat_id)}")
+    except Exception:
+        return False
+    return bool(busy)
+
+
 def _extract_entities(message: types.Message) -> List[dict]:
     raw_ents = (message.entities or []) + (message.caption_entities or [])
     out: List[dict] = []
@@ -949,6 +957,14 @@ async def on_group_message(message: Message) -> None:
             )
 
         if not trigger:
+            return
+
+        if trigger == "check_on_topic" and await _chat_has_active_generation(cid):
+            logger.debug(
+                "group check_on_topic skipped while chat is busy: chat=%s msg_id=%s",
+                cid,
+                message.message_id,
+            )
             return
 
         if trigger in ("mention", "check_on_topic") and not is_channel:

@@ -500,6 +500,41 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
             return None
         return delay_mock.call_args.args[0]["trigger"]
 
+
+    async def test_check_on_topic_is_skipped_while_chatbusy(self) -> None:
+        with patch.object(
+            group,
+            "_chat_has_active_generation",
+            AsyncMock(return_value=True),
+        ):
+            trigger = await self._trigger_from_text(
+                is_channel=False,
+                mentioned=False,
+                mentions_other=False,
+                has_content_signal=True,
+                is_battle_cmd_to_us=False,
+                autoreply_on_topic=True,
+            )
+
+        self.assertIsNone(trigger)
+
+    async def test_mention_still_enqueues_while_chatbusy(self) -> None:
+        with patch.object(
+            group,
+            "_chat_has_active_generation",
+            AsyncMock(return_value=True),
+        ):
+            trigger = await self._trigger_from_text(
+                is_channel=False,
+                mentioned=True,
+                mentions_other=False,
+                has_content_signal=True,
+                is_battle_cmd_to_us=False,
+                autoreply_on_topic=True,
+            )
+
+        self.assertEqual(trigger, "mention")
+
     async def test_handlers_match_resolver_for_shared_inputs(self) -> None:
         cases = [
             dict(
