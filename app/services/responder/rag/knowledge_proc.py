@@ -290,13 +290,13 @@ async def get_relevant(
     ids: List[str] = state["ids"]
     texts: List[str] = state["texts"]
 
-    qemb: Optional[np.ndarray] = None
+    qraw: Optional[np.ndarray] = None
     if query_embedding is not None:
         try:
-            qemb = np.asarray(query_embedding, dtype=np.float32)
-            qemb = np.ascontiguousarray(np.nan_to_num(qemb, nan=0.0, posinf=0.0, neginf=0.0), dtype=np.float32)
-            if qemb.ndim != 1:
-                logger.warning("knowledge_proc.get_relevant: invalid precomputed query embedding ndim=%s", qemb.ndim)
+            qraw = np.asarray(query_embedding, dtype=np.float32)
+            qraw = np.ascontiguousarray(np.nan_to_num(qraw, nan=0.0, posinf=0.0, neginf=0.0), dtype=np.float32)
+            if qraw.ndim != 1:
+                logger.warning("knowledge_proc.get_relevant: invalid precomputed query embedding ndim=%s", qraw.ndim)
                 return []
         except Exception:
             logger.exception("knowledge_proc.get_relevant: invalid precomputed query embedding")
@@ -307,15 +307,15 @@ async def get_relevant(
         if qraw is None:
             return []
 
-        diff = (qraw - mean_vec).astype(np.float32, copy=False)
+    diff = (qraw - mean_vec).astype(np.float32, copy=False)
+    n = float(np.linalg.norm(diff))
+    if not np.isfinite(n) or n < 1e-12:
+        diff = qraw.astype(np.float32, copy=False)
         n = float(np.linalg.norm(diff))
         if not np.isfinite(n) or n < 1e-12:
-            diff = qraw.astype(np.float32, copy=False)
-            n = float(np.linalg.norm(diff))
-            if not np.isfinite(n) or n < 1e-12:
-                return []
-        qemb = diff / n
-        qemb = np.nan_to_num(qemb, nan=0.0, posinf=0.0, neginf=0.0)
+            return []
+    qemb = diff / n
+    qemb = np.nan_to_num(qemb, nan=0.0, posinf=0.0, neginf=0.0)
 
     if E.ndim != 2 or qemb.ndim != 1 or E.shape[1] != qemb.shape[0]:
         logger.error("Shape mismatch: E=%s, q=%s", E.shape, qemb.shape)

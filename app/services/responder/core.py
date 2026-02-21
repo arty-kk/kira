@@ -254,6 +254,37 @@ def _history_tail_for_coref(history: List[Dict], max_messages: int = 10) -> List
 
     return out[-max_messages:]
 
+
+
+def _group_coref_source_from_tail(
+    g_tail: List[str] | None,
+    *,
+    user_id: int,
+) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    g_re = re.compile(r"^\[(\d+)\]\s*\(([^)]+)\)\s*\[u:(\d+)\]\s*(.*)$")
+    for ln in g_tail or []:
+        m = g_re.match((ln or "").strip())
+        if not m:
+            continue
+        role_raw = (m.group(2) or "").strip().lower()
+        txt = (m.group(4) or "").strip()
+        if not txt:
+            continue
+        try:
+            speaker_id = int(m.group(3) or 0)
+        except Exception:
+            speaker_id = 0
+
+        if role_raw == "assistant":
+            out.append({"role": "assistant", "content": txt})
+            continue
+
+        if role_raw == "user" and speaker_id == int(user_id):
+            out.append({"role": "user", "content": txt})
+
+    return out
+
 def _scoped_memory_uid(base_uid: int, profile_id: str | int) -> int:
     raw = f"{base_uid}:{profile_id}".encode("utf-8")
     digest = hashlib.sha256(raw).digest()
@@ -1211,16 +1242,12 @@ async def respond_to_user(
                             cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
                             max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
                         )
-                        g_re = re.compile(r"^\[(\d+)\]\s*\(([^)]+)\)\s*\[u:(\d+)\]\s*(.*)$")
-                        for ln in g_tail or []:
-                            m = g_re.match(ln.strip())
-                            if not m:
-                                continue
-                            r = (m.group(2) or "").strip().lower()
-                            txt = (m.group(4) or "").strip()
-                            if not txt:
-                                continue
-                            _coref_src.append({"role": ("assistant" if r == "assistant" else "user"), "content": txt})
+                        _coref_src.extend(
+                            _group_coref_source_from_tail(
+                                g_tail,
+                                user_id=user_id,
+                            )
+                        )
                     except Exception as e:
                         logger.debug("group coref context failed chat=%s: %r", chat_id, e)
 
@@ -1232,7 +1259,16 @@ async def respond_to_user(
                     max_messages=int(getattr(settings, "COREF_CONTEXT_MAX_MESSAGES", 10) or 10),
                 )
                 resolved = await resolve_coref(query, coref_hist)
-                if getattr(settings, "LLM_AUDIT", False) and resolved != query:
+                if resolved != query:
+                    logger.info(
+                        "COREF_REWRITE: chat=%s user=%s trigger=%s from=%r to=%r",
+                        chat_id,
+                        user_id,
+                        trigger,
+                        query[:200],
+                        resolved[:200],
+                    )
+                elif getattr(settings, "LLM_AUDIT", False):
                     logger.info("[TRACE] coref: %r -> %r", query[:200], resolved[:200])
             except Exception as e:
                 logger.warning("resolve_coref failed: %s", e)

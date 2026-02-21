@@ -1334,14 +1334,6 @@ async def handle_job(raw, processing_key: str) -> None:
             )
 
             typing_task: Optional[asyncio.Task] = None
-            if allow_typing_before_send:
-                typing_task = asyncio.create_task(
-                    _typing_during_generation(
-                        chat_id=chat_id,
-                        initial_delay=3,
-                        max_total=RESPOND_TIMEOUT,
-                    )
-                )
 
             if (not isinstance(text, str) or not text.strip()) and voice_file_id:
                 text = await _transcribe_voice_file_id(
@@ -1446,7 +1438,17 @@ async def handle_job(raw, processing_key: str) -> None:
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     return
 
+            if allow_typing_before_send:
+                typing_task = asyncio.create_task(
+                    _typing_during_generation(
+                        chat_id=chat_id,
+                        initial_delay=3,
+                        max_total=RESPOND_TIMEOUT,
+                    )
+                )
+
             soft_reply_context = bool(job.get("soft_reply_context"))
+            knowledge_owner_id = job.get("knowledge_owner_id")
             
             resp_task = asyncio.create_task(
                 respond_to_user(
@@ -1465,6 +1467,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     expect_voice_out=expect_voice_out_flag,
                     billing_tier=billing_tier,
                     persona_owner_id=(chat_id if (is_group or is_channel) else None),
+                    knowledge_owner_id=knowledge_owner_id,
                     memory_uid=None,
                     soft_reply_context=soft_reply_context,
                 )
