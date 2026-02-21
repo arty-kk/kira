@@ -152,6 +152,7 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
                 drop_pending_updates=settings.WEBHOOK_DROP_PENDING_UPDATES,
                 allowed_updates=[
                     "message",
+                    "message_reaction",
                     "callback_query",
                     "chat_member",
                     "my_chat_member",

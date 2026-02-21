@@ -617,6 +617,7 @@ async def check_light(
     text: str,
     entities: List[dict] | None = None,
     source: Literal["user", "bot", "channel"] = "user",
+    allow_ai_for_source: bool | None = None,
     policy: dict[str, Any] | None = None,
     *,
     image_b64: Optional[str] = None,
@@ -660,8 +661,8 @@ async def check_light(
         return "promo_profile_cta"
 
     # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
-    # Keep toxicity checks user-scoped to avoid applying user-specific heuristics to channel/bot sources.
-    if source == "user" and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
+    ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
+    if ai_allowed and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"
 
     return "clean"
@@ -672,6 +673,7 @@ async def check_deep(
     user_id: int,
     text: str,
     source: Literal["user", "bot", "channel"] = "user",
+    allow_ai_for_source: bool | None = None,
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
@@ -680,15 +682,17 @@ async def check_deep(
     if not settings.ENABLE_AI_MODERATION:
         return False
 
-    # Deep context moderation is user-only; channel/bot sources skip history-based checks.
-    if source != "user":
+    ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
+    if not ai_allowed:
         return False
 
-    try:
-        history = await load_context(chat_id, user_id)
-    except Exception:
-        logger.exception("check_deep: load_context error for chat %s", chat_id)
-        history = []
+    history = []
+    if source == "user":
+        try:
+            history = await load_context(chat_id, user_id)
+        except Exception:
+            logger.exception("check_deep: load_context error for chat %s", chat_id)
+            history = []
 
     def _as_resp_msg(m):
         if not isinstance(m, dict):
@@ -715,7 +719,10 @@ async def check_deep(
         except Exception:
             continue
     ctx = "\n".join(ctx_parts)
-    combined = (ctx + "\n\nNEW MESSAGE:\n" + (text or "")).strip()
+    if source == "user":
+        combined = (ctx + "\n\nNEW MESSAGE:\n" + (text or "")).strip()
+    else:
+        combined = (text or "").strip()
 
     try:
         return await moderate_with_openai(combined, image_b64=image_b64, image_mime=image_mime)

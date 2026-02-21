@@ -660,6 +660,7 @@ def _dispatch_passive_moderation(
     is_channel: bool,
     user_id_val: int,
     is_comment_context: bool,
+    trusted_repost: bool = False,
 ) -> None:
 
     moderation_payload = prepare_moderation_payload(
@@ -673,6 +674,7 @@ def _dispatch_passive_moderation(
             "image_mime": payload.get("image_mime"),
             "source": "channel" if is_channel else "user",
             "is_comment_context": is_comment_context,
+            "trusted_repost": bool(trusted_repost),
             "chat_title": getattr(message.chat, "title", None),
         },
         context="group.dispatch",
@@ -882,10 +884,12 @@ async def on_group_message(message: Message) -> None:
         is_channel = _is_channel_post(message)
 
         # channel post path
+        trusted_repost = _is_trusted_scope_repost(message)
+        trusted_repost_logged = False
         if is_channel:
             raw_text = (message.text or message.caption or "").strip()
             ents = _extract_entities(message)
-            if _is_trusted_scope_repost(message):
+            if trusted_repost:
                 await _log_ignored_repost_to_stm(
                     message,
                     content_type="text",
@@ -893,12 +897,13 @@ async def on_group_message(message: Message) -> None:
                     ents=ents,
                     is_channel=is_channel,
                 )
+                trusted_repost_logged = True
+            else:
+                # must be from linked channel; also log
+                ok = await _maybe_log_channel_post(cid, message, raw_text, ents)
+                if not ok:
+                    return
                 return
-            # must be from linked channel; also log
-            ok = await _maybe_log_channel_post(cid, message, raw_text, ents)
-            if not ok:
-                return
-            return
 
         # ignore bot users unless channel post
         if message.from_user and message.from_user.is_bot and not is_channel:
@@ -910,14 +915,15 @@ async def on_group_message(message: Message) -> None:
         raw_text = (message.text or message.caption or "").strip()
         ents = _extract_entities(message)
 
-        if _is_trusted_scope_repost(message):
-            await _log_ignored_repost_to_stm(
-                message,
-                content_type="text",
-                text=raw_text,
-                ents=ents,
-                is_channel=is_channel,
-            )
+        if trusted_repost:
+            if not trusted_repost_logged:
+                await _log_ignored_repost_to_stm(
+                    message,
+                    content_type="text",
+                    text=raw_text,
+                    ents=ents,
+                    is_channel=is_channel,
+                )
             return
 
         model_text, log_text = split_context_text(raw_text, ents, allow_web=False)
@@ -947,6 +953,7 @@ async def on_group_message(message: Message) -> None:
             is_battle_cmd_to_us=is_battle_cmd_to_us,
             autoreply_on_topic=AUTOREPLY_ON_TOPIC,
         )
+        should_moderate_passive = True
 
         if trigger == "check_on_topic":
             logger.info(
@@ -957,6 +964,34 @@ async def on_group_message(message: Message) -> None:
             )
 
         if not trigger:
+            if not should_moderate_passive:
+                return
+
+            user_id_val = _user_id_val(message, is_channel)
+            is_comment_context = await _resolve_group_comment_context(message)
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
             return
 
         if trigger == "check_on_topic" and await _chat_has_active_generation(cid):
@@ -1049,6 +1084,7 @@ async def on_group_message(message: Message) -> None:
             is_channel=is_channel,
             user_id_val=user_id_val,
             is_comment_context=is_comment_context,
+            trusted_repost=False,
         )
 
     except RedisError as e:
@@ -1100,7 +1136,8 @@ async def on_group_voice(message: Message) -> None:
         mentions_other = _mentions_other_user(message)
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
-        if _is_trusted_scope_repost(message):
+        trusted_repost = _is_trusted_scope_repost(message)
+        if trusted_repost:
             await _log_ignored_repost_to_stm(
                 message,
                 content_type="voice",
@@ -1194,6 +1231,7 @@ async def on_group_voice(message: Message) -> None:
             is_channel=is_channel,
             user_id_val=user_id_val,
             is_comment_context=is_comment_context,
+            trusted_repost=False,
         )
 
     except RedisError as e:
@@ -1239,7 +1277,8 @@ async def _handle_group_image_message_common(
     caption = (message.caption or "").strip()
     ents = _extract_entities(message)
 
-    if _is_trusted_scope_repost(message):
+    trusted_repost = _is_trusted_scope_repost(message)
+    if trusted_repost:
         await _log_ignored_repost_to_stm(
             message,
             content_type=content_type_for_analytics,
