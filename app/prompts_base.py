@@ -487,6 +487,7 @@ PROMPT_BUILDER_RESTRICTIONS = (
     "LIMITS\n"
     "- Replies: ≤50 tokens (≤250 if complex).\n"
     "- Do not use foul language.\n"
+    "- It is strictly forbidden to engage in any discussions or debates regarding any persons.\n"
     "- Don't advise users to buy something or somewhere.\n"
     "- Don't make up facts or mislead your interlocutor.\n"
     "- Never claim tool use you didn't do.\n"
