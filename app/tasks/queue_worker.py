@@ -1424,16 +1424,13 @@ async def handle_job(raw, processing_key: str) -> None:
 
                 if (mod_status not in {"clean", "error"}) or read_failed:
                     logger.warning(
-                        "MODERATION_SIGNAL_MISSING_TERMINAL_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s",
+                        "MODERATION_SIGNAL_MISSING_CONTINUE: chat_id=%s msg_id=%s status=%s read_failed=%s",
                         chat_id,
                         msg_id,
                         mod_status,
                         read_failed,
                     )
-                    with suppress(Exception):
-                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
-                    await _refund_reservation()
-                    return
+                    mod_status = ""
 
             if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
                 if _is_effectively_empty(text or ""):
