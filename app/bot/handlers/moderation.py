@@ -781,11 +781,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         return False
 
     trusted_chat_ids = {
-        int(x)
-        for x in (
-            *(getattr(settings, "ALLOWED_GROUP_IDS", []) or []),
-            *(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or []),
-        )
+        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
     }
     trusted_source_channel_ids = {
         int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
@@ -794,6 +790,20 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     is_trusted_chat = int(chat_id) in trusted_chat_ids
     is_trusted_destination = int(chat_id) in trusted_scope_ids
+    with contextlib.suppress(Exception):
+        linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
+        if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
+            is_trusted_destination = True
+
+    sender_chat = getattr(message, "sender_chat", None)
+    is_sender_chat_entity = bool(
+        sender_chat and getattr(sender_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP)
+    )
+    sender_chat_id = None
+    with contextlib.suppress(Exception):
+        if sender_chat:
+            sender_chat_id = int(sender_chat.id)
+    is_trusted_sender_chat = bool(is_sender_chat_entity and sender_chat_id in trusted_scope_ids)
 
     source_scope_ids: set[int] = set()
     for field in ("sender_chat", "forward_from_chat"):
@@ -839,7 +849,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     u = getattr(message, "from_user", None)
     is_admin = False
     try:
-        if u and is_trusted_chat:
+        if u and is_trusted_destination:
             is_admin = await _is_admin(chat_id, int(u.id))
         elif settings.MODERATION_ADMIN_EXEMPT and u:
             is_admin = await _is_admin(chat_id, int(u.id))
@@ -847,6 +857,9 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         is_admin = False
 
     if is_admin:
+        return False
+
+    if is_trusted_sender_chat:
         return False
 
     is_forward = bool(

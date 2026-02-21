@@ -112,18 +112,13 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
     if not bool(getattr(settings, "COMMENT_MODERATION_ENABLED", False)):
         return False
 
-    try:
-        chat_id = int(message.chat.id)
-    except Exception:
-        return False
-
-    target_ids = set(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
-    if target_ids and chat_id in target_ids:
-        return True
-
     source_ids = set(getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
     if not source_ids:
         return False
+
+    linked_chat_id = None
+    with contextlib.suppress(Exception):
+        linked_chat_id = getattr(message.chat, "linked_chat_id", None)
 
     candidate_source_ids: set[int] = set()
     sender_chat = getattr(message, "sender_chat", None)
@@ -136,11 +131,9 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
         with contextlib.suppress(Exception):
             candidate_source_ids.add(int(forward_from_chat.id))
 
-    if getattr(message, "is_automatic_forward", False):
-        linked_chat_id = getattr(message.chat, "linked_chat_id", None)
-        with contextlib.suppress(Exception):
-            if linked_chat_id is not None:
-                candidate_source_ids.add(int(linked_chat_id))
+    with contextlib.suppress(Exception):
+        if linked_chat_id is not None:
+            candidate_source_ids.add(int(linked_chat_id))
 
     if candidate_source_ids & source_ids:
         return True
