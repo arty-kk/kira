@@ -43,7 +43,7 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
                     is_battle_cmd_to_us=False,
                     autoreply_on_topic=True,
                 ),
-                None,
+                "mention",
             ),
             (
                 "battle_to_us",

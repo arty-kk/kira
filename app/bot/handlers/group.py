@@ -38,6 +38,8 @@ from app.tasks.media import preprocess_group_image
 from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 
 logger = logging.getLogger(__name__)
+
+_TRUSTED_DISCUSSION_CHAT_IDS: set[int] = set()
 bot = get_bot()
 
 if not getattr(consts, "BOT_USERNAME", None):
@@ -112,6 +114,15 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
     if not bool(getattr(settings, "COMMENT_MODERATION_ENABLED", False)):
         return False
 
+    target_ids = set(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+    with contextlib.suppress(Exception):
+        if int(message.chat.id) in target_ids:
+            return True
+
+    with contextlib.suppress(Exception):
+        if int(message.chat.id) in _TRUSTED_DISCUSSION_CHAT_IDS:
+            return True
+
     source_ids = set(getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
     if not source_ids:
         return False
@@ -136,6 +147,8 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
             candidate_source_ids.add(int(linked_chat_id))
 
     if candidate_source_ids & source_ids:
+        with contextlib.suppress(Exception):
+            _TRUSTED_DISCUSSION_CHAT_IDS.add(int(message.chat.id))
         return True
 
     return False
@@ -345,10 +358,10 @@ def _resolve_autoreply_trigger(
         return "channel_post"
     if is_battle_cmd_to_us:
         return "mention"
-    if mentions_other:
-        return None
     if mentioned:
         return "mention"
+    if mentions_other:
+        return None
     if autoreply_on_topic and has_content_signal:
         return "check_on_topic"
     return None
