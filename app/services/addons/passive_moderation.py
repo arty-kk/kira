@@ -88,6 +88,46 @@ def contains_telegram_obfuscated(text: str) -> bool:
     pat = re.compile(rf"(?<![a-z0-9])(?:{tg_domain}|{tg_proto})(?![a-z0-9])", re.IGNORECASE)
     return bool(pat.search(s))
 
+def _normalize_for_cta_detection(text: str) -> str:
+    s = unicodedata.normalize("NFKC", text or "")
+    s = _strip_zero_width(s).lower().replace("ё", "е")
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+_PROFILE_CTA_PATTERNS = [
+    re.compile(r"\b(?:смотри|глянь|загляни|чекаи|чекни|посмотри)\s+(?:у\s+меня\s+)?(?:в\s+)?(?:профил(?:е|ь)|био)\b", re.IGNORECASE),
+    re.compile(r"\b(?:ссылка\s+)?(?:у\s+меня\s+)?(?:в\s+)?(?:профил(?:е|ь)|био)\b", re.IGNORECASE),
+    re.compile(r"\bу\s+меня\s+(?:в\s+)?(?:профил(?:е|ь)|био|канале|чате)\b", re.IGNORECASE),
+    re.compile(r"\b(?:в|на)\s+моем\s+(?:канале|чате|профил(?:е|ь)|био)\b", re.IGNORECASE),
+    re.compile(r"\b(?:пиши|напиши)\s+мне\b", re.IGNORECASE),
+]
+
+_COMBAT_PROMO_CTA_PATTERNS = [
+    re.compile(r"\b(?:контент|истории|опыт|много\s+контента)\s+(?:с|про|из)?\s*(?:фронт|передк[ае]|сво|войн[аеы]|штурм)\b", re.IGNORECASE),
+]
+
+_COMBAT_PROMO_CTA_TRIGGER_RE = re.compile(
+    r"\b(?:смотри|глянь|зацени|подписываися|подписывайся|переходи|заходи|пиши|напиши)\b",
+    re.IGNORECASE,
+)
+
+_COMBAT_TOPIC_RE = re.compile(
+    r"\b(?:штурм|фронт|передк[ае]|сво|войн[аеы]|боев(?:ых|ые|ая)|дрон(?:ы|ов)?|боец|ветеран)\b",
+    re.IGNORECASE,
+)
+
+
+def contains_profile_cta_without_url(text: str) -> bool:
+    normalized = _normalize_for_cta_detection(text)
+    if not normalized:
+        return False
+    has_profile_cta = any(p.search(normalized) for p in _PROFILE_CTA_PATTERNS)
+    has_combat_cta = bool(_COMBAT_PROMO_CTA_TRIGGER_RE.search(normalized) and _COMBAT_TOPIC_RE.search(normalized))
+    has_combat_phrase = any(p.search(normalized) for p in _COMBAT_PROMO_CTA_PATTERNS)
+    return bool(has_profile_cta or has_combat_cta or has_combat_phrase)
+
 def sanitize_for_context(
     text: str,
     entities: List[dict] | None = None,
@@ -372,10 +412,20 @@ def _profile_nsfw_schema() -> dict:
         "type": "object",
         "properties": {
             "is_nude_female": {"type": "boolean"},
+            "is_sexualized": {"type": "boolean"},
+            "is_suggestive": {"type": "boolean"},
+            "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
             "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "answer": {"type": "string", "enum": ["да", "нет"]},
+            "answer": {"type": "string", "enum": ["yes", "no"]},
         },
-        "required": ["is_nude_female", "confidence", "answer"],
+        "required": [
+            "is_nude_female",
+            "is_sexualized",
+            "is_suggestive",
+            "risk_level",
+            "confidence",
+            "answer",
+        ],
         "additionalProperties": False,
     }
 
@@ -386,12 +436,18 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         return False
 
     system_prompt = (
-        "Ты модератор, который выявляет контент с голыми девушками, "
-        "чтобы система могла ограничить доступ к такому контенту. "
-        "Отвечай строго в JSON по схеме. "
-        "Если не уверен, выбирай 'нет' и is_nude_female=false."
+        "Ты модератор аватаров. Оцени изображение по нескольким NSFW-сигналам: "
+        "1) явная женская обнаженность; "
+        "2) сексуализированная подача (эротические позы, акценты на интимных зонах); "
+        "3) suggestive-контент (белье/купальник любой расцветки) с сексуализированным контекстом. "
+        "Верни только JSON по схеме. "
+        "При сомнениях выбирай консервативный безопасный вариант: answer='no', risk_level='low', "
+        "is_nude_female=false, is_sexualized=false."
     )
-    user_prompt = "На картинке голая девушка?"
+    user_prompt = (
+        "Analyze the profile image and return JSON only. "
+        "Set is_nude_female/is_sexualized/is_suggestive and final answer (yes|no) with risk_level (low|medium|high)."
+    )
 
     try:
         resp = await asyncio.wait_for(
@@ -436,11 +492,21 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         return False
 
     answer = str(obj.get("answer", "")).strip().lower()
-    if answer not in ("да", "нет"):
+    if answer in ("да", "нет"):
+        answer = "yes" if answer == "да" else "no"
+    if answer not in ("yes", "no"):
         return False
 
-    # Conservative: only an explicit positive boolean + positive answer triggers restrictions.
-    return bool(obj.get("is_nude_female", False)) and answer == "да"
+    is_nude_female = bool(obj.get("is_nude_female", False))
+    if is_nude_female and answer == "yes":
+        return True
+
+    risk_level = str(obj.get("risk_level", "")).strip().lower()
+    if risk_level not in {"low", "medium", "high"}:
+        return False
+
+    is_sexualized = bool(obj.get("is_sexualized", False))
+    return risk_level == "high" and is_sexualized
 
 
 async def moderate_with_openai(
@@ -555,7 +621,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "toxic"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "toxic"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -589,6 +655,9 @@ async def check_light(
     for u in urls:
         if links_blocked and url_is_unwanted(u, policy=policy):
             return "link_violation"
+
+    if not urls and not contains_telegram_obfuscated(text or "") and contains_profile_cta_without_url(text or ""):
+        return "promo_profile_cta"
 
     # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
     # Keep toxicity checks user-scoped to avoid applying user-specific heuristics to channel/bot sources.

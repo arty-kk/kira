@@ -370,6 +370,7 @@ async def handle_passive_moderation(
                 "spam_links": "Too many links in one message",
                 "spam_mentions": "Too many mentions in one message",
                 "promo": "Promotional content",
+                "promo_profile_cta": "Promotional CTA to profile/bio/channel",
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "AI moderation policy violation",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
@@ -426,7 +427,9 @@ async def handle_passive_moderation(
 
         risk = base_risk
         if moderation_context == "comment":
-            risk = bool(base_risk and light_status != "clean")
+            risk = bool((base_risk and light_status != "clean") or (light_status == "promo_profile_cta"))
+        elif moderation_context == "group" and light_status == "promo_profile_cta":
+            risk = True
 
         blocked = False
         if risk:

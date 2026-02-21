@@ -105,6 +105,8 @@ RESPOND_TIMEOUT = int(getattr(settings, "RESPOND_TIMEOUT", 150))
 JOB_PROCESSING_TTL = max(int(getattr(settings, "JOB_PROCESSING_TTL", 0)), RESPOND_TIMEOUT + 30)
 TTS_REPLY_TO_VOICE_IN_GROUPS = bool(getattr(
     settings, "TTS_REPLY_TO_VOICE_IN_GROUPS", os.environ.get("TTS_REPLY_TO_VOICE_IN_GROUPS", "0") not in ("0","false","False")))
+MODERATION_STATUS_WAIT_SEC = float(getattr(settings, "MODERATION_STATUS_WAIT_SEC", 1.2))
+MODERATION_STATUS_POLL_SEC = float(getattr(settings, "MODERATION_STATUS_POLL_SEC", 0.1))
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
@@ -462,6 +464,7 @@ async def _send_chatty_reply(
     msg_id: Optional[int],
     merged_ids: Optional[list[int]] = None,
     user_id: Optional[int] = None,
+    is_group: bool = False,
     enable_typing: bool = True,
 ) -> None:
 
@@ -508,6 +511,7 @@ async def _send_chatty_reply(
                 msg_id=msg_id,
                 merged_ids=merged_ids,
                 user_id=user_id,
+                is_group=is_group,
                 skip_dedupe=False,
             )
             delivered_first = True
@@ -529,6 +533,7 @@ async def _send_chatty_reply(
                 msg_id=msg_id,
                 merged_ids=merged_ids,
                 user_id=user_id,
+                is_group=is_group,
                 skip_dedupe=True,
             )
         except ReplyTerminalError:
@@ -843,6 +848,7 @@ async def _send_reply(
     msg_id: Optional[int],
     merged_ids: Optional[list[int]] = None,
     user_id: Optional[int] = None,
+    is_group: bool = False,
     skip_dedupe: bool = False,
 ) -> None:
    
@@ -879,6 +885,14 @@ async def _send_reply(
         async def _send_with_retries(pm: Optional[str], kw: dict, raw_text_for_plain: str) -> TgMessage | None:
             attempts = 3
             removed_reply = False
+            pm_chat = False
+            if is_group:
+                pm_chat = False
+            else:
+                try:
+                    pm_chat = user_id is not None and int(chat_id) == int(user_id)
+                except (TypeError, ValueError):
+                    pm_chat = False
             for i in range(attempts):
                 try:
                     if pm:
@@ -894,11 +908,23 @@ async def _send_reply(
                     await asyncio.sleep(_jitter(delay, 0.25))
                     continue
                 except TelegramBadRequest as e:
-                    if "reply" in str(e).lower() and "reply_to_message_id" in kw and not removed_reply:
-                        kw = dict(kw)
-                        kw.pop("reply_to_message_id", None)
-                        removed_reply = True
-                        continue
+                    err_text = str(e).lower()
+                    is_reply_error = "reply" in err_text and "reply_to_message_id" in kw
+                    if is_reply_error:
+                        if not pm_chat:
+                            logger.warning(
+                                "REPLY_TERMINAL_GROUP_REPLY_TARGET: chat_id=%s reply_to=%s msg_id=%s error=%s",
+                                chat_id,
+                                kw.get("reply_to_message_id"),
+                                msg_id,
+                                e,
+                            )
+                            raise ReplyTerminalError("group reply target invalid") from e
+                        if not removed_reply:
+                            kw = dict(kw)
+                            kw.pop("reply_to_message_id", None)
+                            removed_reply = True
+                            continue
                     if pm:
                         logger.warning("HTML send failed: %s — falling back to plain", e)
                         return None
@@ -1362,6 +1388,59 @@ async def handle_job(raw, processing_key: str) -> None:
                 except Exception:
                     pass
 
+            mod_status = ""
+            if is_group and trigger in ("mention", "check_on_topic", "channel_post"):
+                known_statuses = {"clean", "blocked", "flagged", "error"}
+                read_failed = False
+                deadline = time.monotonic() + max(0.0, float(MODERATION_STATUS_WAIT_SEC))
+                while True:
+                    try:
+                        mod_status_raw = await redis.hget(f"mod:msg:{chat_id}:{msg_id}", "status")
+                        if isinstance(mod_status_raw, (bytes, bytearray)):
+                            mod_status_raw = mod_status_raw.decode("utf-8", "ignore")
+                        mod_status = str(mod_status_raw).strip().lower() if mod_status_raw is not None else ""
+                    except Exception as exc:
+                        logger.warning(
+                            "MODERATION_STATUS_READ_ERROR: chat_id=%s msg_id=%s error=%s",
+                            chat_id,
+                            msg_id,
+                            exc,
+                        )
+                        read_failed = True
+                        break
+
+                    if mod_status in known_statuses:
+                        break
+
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(max(0.02, float(MODERATION_STATUS_POLL_SEC)))
+
+                if mod_status in {"blocked", "flagged"}:
+                    logger.info(
+                        "MODERATION_TERMINAL_SKIP: chat_id=%s msg_id=%s status=%s",
+                        chat_id,
+                        msg_id,
+                        mod_status,
+                    )
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
+                if (mod_status not in {"clean", "error"}) or read_failed:
+                    logger.warning(
+                        "MODERATION_SIGNAL_MISSING_TERMINAL_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s",
+                        chat_id,
+                        msg_id,
+                        mod_status,
+                        read_failed,
+                    )
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
             if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
                 if _is_effectively_empty(text or ""):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
@@ -1482,6 +1561,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             msg_id=msg_id,
                             merged_ids=merged_ids,
                             user_id=user_id,
+                            is_group=is_group,
                             enable_typing=allow_typing_before_send,
                         )
                     else:
@@ -1497,6 +1577,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             msg_id=msg_id,
                             merged_ids=merged_ids,
                             user_id=user_id,
+                            is_group=is_group,
                         )
 
 
@@ -1568,7 +1649,15 @@ async def handle_job(raw, processing_key: str) -> None:
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                 return
             try:
-                await _send_reply(chat_id, reply_text, send_reply_target, msg_id, merged_ids, user_id=user_id)
+                await _send_reply(
+                    chat_id=chat_id,
+                    text=reply_text,
+                    reply_to=send_reply_target,
+                    msg_id=msg_id,
+                    merged_ids=merged_ids,
+                    user_id=user_id,
+                    is_group=is_group,
+                )
                 with suppress(Exception):
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                 await _confirm_reservation()
