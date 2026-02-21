@@ -426,7 +426,7 @@ async def handle_passive_moderation(
         )
 
         risk = base_risk
-        if moderation_context == "comment":
+        if moderation_context in {"comment", "group"}:
             risk = bool((base_risk and light_status != "clean") or (light_status == "promo_profile_cta"))
 
         blocked = False

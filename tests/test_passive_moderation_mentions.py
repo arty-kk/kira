@@ -283,6 +283,36 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         deep_mock.assert_awaited_once()
 
+    async def test_group_context_promo_profile_cta_forces_deep_check(self) -> None:
+        fake_redis = _FakeRedisHandler()
+        deep_mock = AsyncMock(return_value=False)
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=0.5, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="promo_profile_cta")),
+            patch.object(moderation, "check_deep", deep_mock),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_resolve_chat_display_name", AsyncMock(return_value="")),
+        ):
+            await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="смотри в профиле",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=81,
+                is_comment_context=False,
+            )
+
+        deep_mock.assert_awaited_once()
+
     async def test_comment_context_clean_without_base_risk_skips_deep_check(self) -> None:
         fake_redis = _FakeRedisHandler()
         deep_mock = AsyncMock(return_value=False)
