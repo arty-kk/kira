@@ -93,6 +93,22 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(flagged)
 
+    async def test_classify_profile_nsfw_fast_runs_when_ai_moderation_disabled(self) -> None:
+        resp = object()
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=resp)) as call_mock,
+            patch.object(passive_moderation, "_get_output_text", return_value='{"is_nude_female":true,"confidence":0.97,"answer":"да"}'),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano", ENABLE_AI_MODERATION=False),
+            ),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertTrue(flagged)
+        call_mock.assert_awaited_once()
+
 
 class _FakePipe:
     def __init__(self, set_calls):

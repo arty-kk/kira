@@ -326,7 +326,7 @@ class Settings:
     # ─── Group Moderation Settings ────────────────────────────────
     ENABLE_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_MODERATION", "true", conv=_parse_bool))
     MODERATION_TIMEOUT: int = field(default_factory=lambda: _get_env("MODERATION_TIMEOUT", "30", conv=int))
-    ENABLE_AI_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_AI_MODERATION", "true", conv=_parse_bool))
+    ENABLE_AI_MODERATION: bool = field(default_factory=lambda: _get_env("ENABLE_AI_MODERATION", "false", conv=_parse_bool))
     MODERATION_SANITIZE_CONTEXT_FOR_MODEL: bool = field(
         default_factory=lambda: _get_env(
             "MODERATION_SANITIZE_CONTEXT_FOR_MODEL",
