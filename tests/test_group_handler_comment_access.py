@@ -25,7 +25,7 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(group, "settings", cfg):
             self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
 
-    async def test_comment_target_chat_is_allowed_independently(self) -> None:
+    async def test_comment_target_chat_alone_is_not_enough(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=200, type=ChatType.SUPERGROUP),
             sender_chat=None,
@@ -40,7 +40,7 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
             COMMENT_SOURCE_CHANNEL_IDS=[],
         )
         with patch.object(group, "settings", cfg):
-            self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
+            self.assertFalse(await group._is_message_allowed_for_group_handlers(message))
 
     async def test_comment_source_channel_is_allowed(self) -> None:
         message = types.SimpleNamespace(
@@ -55,6 +55,24 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
             COMMENT_MODERATION_ENABLED=True,
             COMMENT_TARGET_CHAT_IDS=[],
             COMMENT_SOURCE_CHANNEL_IDS=[-100555],
+        )
+        with patch.object(group, "settings", cfg):
+            self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
+
+    async def test_comment_source_channel_is_allowed_via_linked_chat_for_user_message(self) -> None:
+        linked_channel_id = -100888
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=301, type=ChatType.SUPERGROUP, linked_chat_id=linked_channel_id),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        cfg = types.SimpleNamespace(
+            ALLOWED_GROUP_IDS=[],
+            COMMENT_MODERATION_ENABLED=True,
+            COMMENT_TARGET_CHAT_IDS=[],
+            COMMENT_SOURCE_CHANNEL_IDS=[linked_channel_id],
         )
         with patch.object(group, "settings", cfg):
             self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
