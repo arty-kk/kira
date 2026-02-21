@@ -29,6 +29,10 @@ class BotQueueJob(BaseModel):
     allow_web: bool = False
     billing_tier: Optional[str] = None
     entities: list[Any] = Field(default_factory=list)
+    precomputed_rag_hits: Optional[list[Any]] = None
+    query_embedding: Optional[list[float]] = None
+    embedding_model: Optional[str] = None
+    rag_precheck_source: Optional[str] = None
 
     model_config = {"extra": "allow"}
 

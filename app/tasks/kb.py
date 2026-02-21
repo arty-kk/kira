@@ -390,17 +390,21 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             for ts, vec in zip(tag_strings, tag_embs):
                 tag_emb_map[ts] = [float(x) for x in vec]
 
-        tags_vecs: List[List[float]] = []
-        tags_ids: List[str] = []
-        tags_texts: List[str] = []
+        tag_rows: List[List[float]] = []
+        tag_item_ids: List[str] = []
+        tag_item_texts: List[str] = []
+        tag_texts: List[str] = []
 
         for e in entries:
             tags = e.get("tags") or []
             if not isinstance(tags, list):
                 continue
 
-            acc: List[float] | None = None
-            cnt = 0
+            eid = str(e.get("id", "") or "")
+            if not eid:
+                continue
+            text = str(e.get("text", "") or "")
+
             for t in tags:
                 if not isinstance(t, str):
                     continue
@@ -410,47 +414,26 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                 v = tag_emb_map.get(ts)
                 if v is None:
                     continue
-                if acc is None:
-                    acc = list(v)
-                else:
-                    if len(acc) != len(v):
-                        acc = None
-                        cnt = 0
-                        break
-                    for i in range(len(acc)):
-                        acc[i] += v[i]
-                cnt += 1
+                norm = float(np.linalg.norm(v))
+                if not np.isfinite(norm) or norm <= 0.0:
+                    continue
+                vv = [float(x / norm) for x in v]
+                tag_rows.append(vv)
+                tag_item_ids.append(eid)
+                tag_item_texts.append(text)
+                tag_texts.append(ts)
 
-            if acc is None or cnt == 0:
-                continue
-
-            inv = 1.0 / float(cnt)
-            for i in range(len(acc)):
-                acc[i] *= inv
-
-            norm = float(np.linalg.norm(acc))
-            if not np.isfinite(norm) or norm <= 0.0:
-                continue
-            acc = [float(x / norm) for x in acc]
-
-            eid = str(e.get("id", "") or "")
-            if not eid:
-                continue
-            text = str(e.get("text", "") or "")
-
-            tags_vecs.append(acc)
-            tags_ids.append(eid)
-            tags_texts.append(text)
-
-        if tags_vecs:
-            E_tags = np.asarray(tags_vecs, dtype=np.float32)
-            ids_tags = np.asarray(tags_ids, dtype=object)
-            texts_tags = np.asarray(tags_texts, dtype=object)
+        if tag_rows:
+            TE_tags = np.asarray(tag_rows, dtype=np.float32)
+            ids_tags = np.asarray(tag_item_ids, dtype=object)
+            texts_tags = np.asarray(tag_item_texts, dtype=object)
+            tags_names = np.asarray(tag_texts, dtype=object)
             meta_tags = np.asarray(
                 {
                     "model": model,
                     "api_model": model,
-                    "dim": int(E_tags.shape[1]),
+                    "dim": int(TE_tags.shape[1]),
+                    "format_version": 2,
                     "created": int(time.time()),
                 },
                 dtype=object,
@@ -461,20 +444,21 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             with open(tmp_tags, "wb") as f:
                 np.savez_compressed(
                     f,
-                    E=E_tags,
-                    ids=ids_tags,
-                    texts=texts_tags,
+                    TE=TE_tags,
+                    tag_item_ids=ids_tags,
+                    tag_item_texts=texts_tags,
+                    tag_texts=tags_names,
                     meta=meta_tags,
                 )
 
             tmp_tags.replace(out_tags)
 
             logger.info(
-                "kb: TAGS NPZ snapshot saved for api_key_id=%s kb_id=%s -> %s (E=%s)",
+                "kb: TAGS NPZ snapshot saved for api_key_id=%s kb_id=%s -> %s (TE=%s)",
                 api_key_id,
                 kb_id,
                 out_tags,
-                E_tags.shape,
+                TE_tags.shape,
             )
         else:
             logger.info(

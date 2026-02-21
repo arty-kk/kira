@@ -29,6 +29,8 @@ import app.bot.components.constants as consts
 from app.clients.telegram_client import get_bot
 from app.clients import openai_client
 from app.services.responder import respond_to_user
+from app.services.responder.rag.keyword_filter import find_tag_hits
+from app.services.responder.rag.knowledge_proc import _get_query_embedding
 from app.services.addons.voice_generator import (
     maybe_tts_and_send, shutdown_tts,
     will_speak, is_tts_eligible_short
@@ -1449,6 +1451,46 @@ async def handle_job(raw, processing_key: str) -> None:
 
             soft_reply_context = bool(job.get("soft_reply_context"))
             knowledge_owner_id = job.get("knowledge_owner_id")
+            precomputed_rag_hits = None
+            query_embedding = None
+            embedding_model = None
+
+            if is_group and trigger == "check_on_topic":
+                try:
+                    owner_id = int(knowledge_owner_id) if knowledge_owner_id is not None else None
+                except Exception:
+                    owner_id = None
+                if owner_id is not None and owner_id <= 0:
+                    owner_id = None
+
+                try:
+                    embedding_model = settings.EMBEDDING_MODEL
+                    precomputed_rag_hits = await find_tag_hits(
+                        text,
+                        model=embedding_model,
+                        owner_id=owner_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "check_on_topic pre-check failed chat=%s user=%s",
+                        chat_id,
+                        user_id,
+                        exc_info=True,
+                    )
+                    precomputed_rag_hits = []
+
+                if not precomputed_rag_hits:
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
+                try:
+                    qraw = await _get_query_embedding(embedding_model, text)
+                    if qraw is not None:
+                        query_embedding = qraw.tolist() if hasattr(qraw, "tolist") else list(qraw)
+                except Exception:
+                    query_embedding = None
             
             resp_task = asyncio.create_task(
                 respond_to_user(
@@ -1470,6 +1512,10 @@ async def handle_job(raw, processing_key: str) -> None:
                     knowledge_owner_id=knowledge_owner_id,
                     memory_uid=None,
                     soft_reply_context=soft_reply_context,
+                    precomputed_rag_hits=precomputed_rag_hits,
+                    query_embedding=query_embedding,
+                    embedding_model=embedding_model,
+                    rag_precheck_source=("queue_worker_tag_precheck" if precomputed_rag_hits else None),
                 )
             )
 
