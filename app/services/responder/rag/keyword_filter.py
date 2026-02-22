@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 _INDICES: Dict[str, Dict[str, Any]] = {}
+
+# Backward-compat test hook: runtime cache is disabled, keep a clearable container.
+_EMB_CACHE: Dict[Tuple[str, str], List[float]] = {}
 _JSON_TRAILING_COMMAS = re.compile(r',\s*([}\]])')
 
 

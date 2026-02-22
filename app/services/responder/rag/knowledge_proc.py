@@ -24,6 +24,9 @@ _kb_init_lock = asyncio.Lock()
 BASE_DIR = Path(__file__).resolve().parents[4]
 EMBED_DIR = BASE_DIR / "data" / "embeddings"
 
+# Backward-compat test hook: runtime cache is disabled, keep a clearable container.
+_EMB_CACHE: Dict[Tuple[str, str], np.ndarray] = {}
+
 def _npz_path(model: str) -> Path:
     return EMBED_DIR / f"knowledge_embedded_{model}.npz"
 
