@@ -10,7 +10,6 @@ import time
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Sequence
-from collections import OrderedDict
 
 from app.config import settings
 from app.clients.openai_client import _call_openai_with_retry
@@ -25,25 +24,13 @@ _kb_init_lock = asyncio.Lock()
 BASE_DIR = Path(__file__).resolve().parents[4]
 EMBED_DIR = BASE_DIR / "data" / "embeddings"
 
+# Backward-compat test hook: runtime cache is disabled, keep a clearable container.
+_EMB_CACHE: Dict[Tuple[str, str], np.ndarray] = {}
+
 def _npz_path(model: str) -> Path:
     return EMBED_DIR / f"knowledge_embedded_{model}.npz"
 
-_EMB_CACHE: "OrderedDict[Tuple[str, str], np.ndarray]" = OrderedDict()
-_EMB_CACHE_LOCK = asyncio.Lock()
-_EMB_CACHE_MAX = int(getattr(settings, "EMBED_CACHE_SIZE", 2048))
-
-def _cache_key(model: str, text: str) -> Tuple[str, str]:
-    norm = " ".join((text or "").strip().lower().split())
-    return (model, norm)
-
 async def _get_query_embedding(api_model: str, query: str) -> Optional[np.ndarray]:
-    key = _cache_key(api_model, query)
-    async with _EMB_CACHE_LOCK:
-        if key in _EMB_CACHE:
-            vec = _EMB_CACHE.pop(key)
-            _EMB_CACHE[key] = vec
-            return vec
-
     _t0 = time.perf_counter()
     endpoint_name = "embeddings.create"
     
@@ -75,11 +62,6 @@ async def _get_query_embedding(api_model: str, query: str) -> Optional[np.ndarra
             return None
     else:
         qraw = np.asarray(vec, dtype=np.float32)
-
-    async with _EMB_CACHE_LOCK:
-        _EMB_CACHE[key] = qraw
-        if len(_EMB_CACHE) > _EMB_CACHE_MAX:
-            _EMB_CACHE.popitem(last=False)
     return qraw
 
 def _load_precomputed(model: str) -> List[Dict[str, Any]]:
