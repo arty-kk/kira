@@ -1477,6 +1477,13 @@ async def handle_job(raw, processing_key: str) -> None:
                         read_failed,
                     )
                     mod_status = ""
+                else:
+                    logger.info(
+                        "MODERATION_STATUS_READY: chat_id=%s msg_id=%s status=%s",
+                        chat_id,
+                        msg_id,
+                        mod_status,
+                    )
 
             if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
                 if _is_effectively_empty(text or ""):

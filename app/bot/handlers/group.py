@@ -692,6 +692,15 @@ def _dispatch_passive_moderation(
         },
         context="group.dispatch",
     )
+    logger.info(
+        "GROUP_PASSIVE_MODERATION_DISPATCH: chat_id=%s msg_id=%s user_id=%s trigger=%s is_comment_context=%s source=%s",
+        message.chat.id,
+        message.message_id,
+        user_id_val,
+        payload.get("trigger"),
+        is_comment_context,
+        ("channel" if is_channel else "user"),
+    )
     passive_moderate.delay(moderation_payload)
 
 
@@ -890,6 +899,12 @@ async def on_group_message(message: Message) -> None:
         # moderation pre-guard
         try:
             if await apply_moderation_filters(cid, message):
+                logger.info(
+                    "GROUP_PRE_GUARD_BLOCKED: chat_id=%s msg_id=%s user_id=%s",
+                    cid,
+                    message.message_id,
+                    (message.from_user.id if message.from_user else None),
+                )
                 return
         except Exception:
             logger.exception("guard filters failed (continuing)")
@@ -967,6 +982,17 @@ async def on_group_message(message: Message) -> None:
             autoreply_on_topic=AUTOREPLY_ON_TOPIC,
         )
         should_moderate_passive = True
+        is_comment_context = await _resolve_group_comment_context(message)
+        logger.info(
+            "GROUP_TRIGGER_RESOLVED: chat_id=%s msg_id=%s user_id=%s trigger=%s mentions_other=%s is_channel=%s is_comment_context=%s",
+            cid,
+            message.message_id,
+            (message.from_user.id if message.from_user else None),
+            trigger,
+            mentions_other,
+            is_channel,
+            is_comment_context,
+        )
 
         if trigger == "check_on_topic":
             logger.info(
@@ -981,7 +1007,6 @@ async def on_group_message(message: Message) -> None:
                 return
 
             user_id_val = _user_id_val(message, is_channel)
-            is_comment_context = await _resolve_group_comment_context(message)
             payload = {
                 "chat_id": cid,
                 "text": model_text,
@@ -1004,6 +1029,12 @@ async def on_group_message(message: Message) -> None:
                 user_id_val=user_id_val,
                 is_comment_context=is_comment_context,
                 trusted_repost=False,
+            )
+            logger.info(
+                "GROUP_NO_RESPONSE_TRIGGER: chat_id=%s msg_id=%s user_id=%s passive_only=1",
+                cid,
+                message.message_id,
+                user_id_val,
             )
             return
 
@@ -1047,8 +1078,6 @@ async def on_group_message(message: Message) -> None:
         )
 
         channel = _channel_obj(message)
-        is_comment_context = await _resolve_group_comment_context(message)
-
         payload = {
             "chat_id": cid,
             "text": model_text,
@@ -1089,6 +1118,13 @@ async def on_group_message(message: Message) -> None:
         )
 
         buffer_message_for_response(payload)
+        logger.info(
+            "GROUP_RESPONSE_BUFFERED: chat_id=%s msg_id=%s user_id=%s trigger=%s",
+            cid,
+            message.message_id,
+            user_id_val,
+            trigger,
+        )
         _dispatch_passive_moderation(
             message,
             payload,
