@@ -593,7 +593,8 @@ async def handle_passive_moderation(
 
         if ai_flag_signal and _mid and status != "blocked":
             try:
-                await _delete_message_safe(chat_id, _mid)
+                if getattr(settings, "MODERATION_DELETE_FLAGGED", False):
+                    await _delete_message_safe(chat_id, _mid)
             except Exception:
                 logger.debug("ai-flagged: delete failed", exc_info=True)
 

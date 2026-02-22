@@ -409,5 +409,49 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_redis.hset.await_args.kwargs["mapping"]["reason"], "Light moderation timeout (risk fallback)")
 
 
+    async def test_check_deep_without_history_uses_only_current_message(self) -> None:
+        moderate_mock = AsyncMock(return_value=False)
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_DEEP_INCLUDE_HISTORY=False)),
+            patch.object(passive_moderation, "load_context", AsyncMock(return_value=[{"role": "user", "content": "you are awful"}])),
+            patch.object(passive_moderation, "moderate_with_openai", moderate_mock),
+        ):
+            blocked = await passive_moderation.check_deep(
+                chat_id=100,
+                user_id=42,
+                text="hello there",
+                source="user",
+            )
+
+        self.assertFalse(blocked)
+        moderate_mock.assert_awaited_once_with("hello there", image_b64=None, image_mime=None)
+
+    async def test_check_deep_with_history_includes_context_and_new_message(self) -> None:
+        moderate_mock = AsyncMock(return_value=True)
+        history = [
+            {"role": "user", "content": "toxic history"},
+            {"role": "assistant", "content": "ack"},
+        ]
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_DEEP_INCLUDE_HISTORY=True)),
+            patch.object(passive_moderation, "load_context", AsyncMock(return_value=history)),
+            patch.object(passive_moderation, "moderate_with_openai", moderate_mock),
+        ):
+            blocked = await passive_moderation.check_deep(
+                chat_id=100,
+                user_id=42,
+                text="neutral message",
+                source="user",
+            )
+
+        self.assertTrue(blocked)
+        combined_text = moderate_mock.await_args.args[0]
+        self.assertIn("USER: toxic history", combined_text)
+        self.assertIn("ASSISTANT: ack", combined_text)
+        self.assertIn("NEW MESSAGE:\nneutral message", combined_text)
+
+
 if __name__ == "__main__":
     unittest.main()
