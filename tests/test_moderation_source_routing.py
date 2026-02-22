@@ -364,6 +364,108 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set_args, ("mod_alert:light:100:42", 1))
         self.assertEqual(set_kwargs, {"ex": 60, "nx": True})
 
+    async def test_handle_passive_moderation_blocks_previously_flagged_profile_in_worker(self) -> None:
+        fake_redis = _FakeRedis()
+        fake_redis.exists = AsyncMock(return_value=True)
+        check_light_mock = AsyncMock(return_value="clean")
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=False)) as nsfw_mock,
+            patch.object(moderation, "check_light", check_light_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-1001,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "blocked")
+        nsfw_mock.assert_not_awaited()
+        check_light_mock.assert_not_awaited()
+        delete_mock.assert_awaited_once_with(-1001, 77)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
+        self.assertIn("profile_nsfw_blocked", flag_mock.await_args.kwargs["reason"])
+
+    async def test_handle_passive_moderation_trusted_destination_enforces_profile_nsfw(self) -> None:
+        fake_redis = _FakeRedis()
+        fake_redis.exists = AsyncMock(return_value=False)
+        check_light_mock = AsyncMock(return_value="clean")
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, ALLOWED_GROUP_IDS=[-1001], COMMENT_SOURCE_CHANNEL_IDS=[])),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "check_light", check_light_mock),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-1001,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "blocked")
+        nsfw_mock.assert_awaited_once_with(42)
+        check_light_mock.assert_not_awaited()
+        delete_mock.assert_awaited_once_with(-1001, 77)
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
+        fake_redis.set.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
+        self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
+
+    async def test_handle_passive_moderation_profile_nsfw_check_runs_in_worker(self) -> None:
+        fake_redis = _FakeRedis()
+        fake_redis.exists = AsyncMock(return_value=False)
+        check_light_mock = AsyncMock(return_value="clean")
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "check_light", check_light_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-1001,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "blocked")
+        nsfw_mock.assert_awaited_once_with(42)
+        check_light_mock.assert_not_awaited()
+        delete_mock.assert_awaited_once_with(-1001, 77)
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
+        fake_redis.set.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
+        self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
+
     async def test_handle_passive_moderation_passes_channel_source_as_is(self) -> None:
         fake_redis = _FakeRedis()
         check_light_mock = AsyncMock(return_value="clean")
