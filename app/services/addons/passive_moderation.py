@@ -37,6 +37,12 @@ SANITIZE_REPLACE_ANY_LINK = getattr(settings, "SANITIZE_REPLACE_ANY_LINK", "[lin
 SANITIZE_REPLACE_TG_LINK  = getattr(settings, "SANITIZE_REPLACE_TG_LINK", "[tg-link]")
 
 
+def _log_message_ref(text: str) -> tuple[str, int]:
+    raw = (text or "")
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return digest, len(raw)
+
+
 def is_telegram_link(url: str) -> bool:
     try:
         u = url.strip()
@@ -537,6 +543,7 @@ async def moderate_with_openai(
     cache_key = "mod:cache:" + hashlib.sha256(
         (model_tag + "|" + tox_tag + "|" + trimmed + "|" + img_tag).encode("utf-8")
     ).hexdigest()[:48]
+    msg_hash, msg_len = _log_message_ref(trimmed)
 
     redis = get_redis()
     try:
@@ -544,7 +551,15 @@ async def moderate_with_openai(
         if cached is not None:
             if isinstance(cached, (bytes, bytearray)):
                 cached = cached.decode("utf-8", "ignore")
-            return str(cached) == "1"
+            cached_flagged = str(cached) == "1"
+            logger.info(
+                "moderation result (cache): model=%s flagged=%s message_hash=%s message_len=%s",
+                settings.MODERATION_MODEL,
+                cached_flagged,
+                msg_hash,
+                msg_len,
+            )
+            return cached_flagged
     except Exception:
         logger.debug("moderate_with_openai: cache lookup failed")
 
@@ -593,10 +608,24 @@ async def moderate_with_openai(
     except Exception:
         logger.debug("moderate_with_openai: failed to cache result")
 
+    categories_obj = getattr(result, "categories", None)
+    category_scores_obj = getattr(result, "category_scores", None)
+    categories_dump = categories_obj.dict() if hasattr(categories_obj, "dict") else {}
+    category_scores_dump = category_scores_obj.dict() if hasattr(category_scores_obj, "dict") else {}
+    logger.info(
+        "moderation result: model=%s flagged=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
+        settings.MODERATION_MODEL,
+        flagged,
+        msg_hash,
+        msg_len,
+        categories_dump,
+        category_scores_dump,
+    )
+
     if flagged:
         return True
 
-    scores = getattr(result, "category_scores", None)
+    scores = category_scores_obj
     items = scores.dict().items() if hasattr(scores, "dict") else getattr(scores, "items", lambda: [])()
     for category, score in items:
         if isinstance(score, (int, float)) and score >= settings.MODERATION_TOXICITY_THRESHOLD:
@@ -686,8 +715,9 @@ async def check_deep(
     if not ai_allowed:
         return False
 
+    include_history = bool(getattr(settings, "MODERATION_DEEP_INCLUDE_HISTORY", False))
     history = []
-    if source == "user":
+    if source == "user" and include_history:
         try:
             history = await load_context(chat_id, user_id)
         except Exception:
@@ -719,13 +749,25 @@ async def check_deep(
         except Exception:
             continue
     ctx = "\n".join(ctx_parts)
-    if source == "user":
+    if source == "user" and include_history:
         combined = (ctx + "\n\nNEW MESSAGE:\n" + (text or "")).strip()
     else:
         combined = (text or "").strip()
 
     try:
-        return await moderate_with_openai(combined, image_b64=image_b64, image_mime=image_mime)
+        blocked = await moderate_with_openai(combined, image_b64=image_b64, image_mime=image_mime)
+        msg_hash, msg_len = _log_message_ref(combined)
+        logger.info(
+            "check_deep moderation: chat_id=%s user_id=%s source=%s include_history=%s blocked=%s message_hash=%s message_len=%s",
+            chat_id,
+            user_id,
+            source,
+            include_history,
+            blocked,
+            msg_hash,
+            msg_len,
+        )
+        return blocked
     except Exception:
         logger.exception("check_deep: moderate_with_openai failed for chat %s", chat_id)
         return False
