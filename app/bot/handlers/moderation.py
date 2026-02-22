@@ -388,6 +388,15 @@ async def handle_passive_moderation(
                 is_trusted_destination = True
 
     is_trusted_source = bool(normalized_source == "user" or is_trusted_destination or from_linked)
+    logger.info(
+        "PASSIVE_MODERATION_START: chat_id=%s msg_id=%s user_id=%s source=%s is_trusted_destination=%s is_comment_context=%s",
+        chat_id,
+        message_id or getattr(message, "message_id", None),
+        user_id or getattr(getattr(message, "from_user", None), "id", None),
+        normalized_source,
+        is_trusted_destination,
+        is_comment_context,
+    )
     is_fully_trusted = await _is_fully_trusted_actor_or_action(
         chat_id=chat_id,
         message=message,
@@ -402,6 +411,38 @@ async def handle_passive_moderation(
     _mid = int(getattr(message, "message_id", message_id or 0))
     light_throttle = f"mod_alert:light:{chat_id}:{_uid}"
     deep_throttle  = f"mod_alert:deep:{chat_id}:{_uid}"
+
+    if bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)) and _uid > 0:
+        try:
+            blocked_key = _profile_nsfw_blocked_chat_key(chat_id, _uid)
+            if await redis_client.exists(blocked_key):
+                if _mid:
+                    await _flag(chat_id, _mid, action="delete", reason="profile_nsfw_blocked|context=group", user_id=_uid)
+                    await _delete_message_safe(chat_id, _mid)
+                await _restrict_user_write_safe(chat_id, _uid)
+                logger.info(
+                    "PASSIVE_MODERATION_PROFILE_NSFW_BLOCKED_KEY: chat_id=%s msg_id=%s user_id=%s",
+                    chat_id,
+                    _mid,
+                    _uid,
+                )
+                return "blocked"
+
+            if await _is_profile_nsfw(_uid):
+                if _mid:
+                    await _flag(chat_id, _mid, action="restrict", reason="profile_nsfw|context=group", user_id=_uid)
+                    await _delete_message_safe(chat_id, _mid)
+                await redis_client.set(blocked_key, 1)
+                await _cleanup_user_history_and_mute(chat_id, _uid)
+                logger.info(
+                    "PASSIVE_MODERATION_PROFILE_NSFW_DETECTED: chat_id=%s msg_id=%s user_id=%s",
+                    chat_id,
+                    _mid,
+                    _uid,
+                )
+                return "blocked"
+        except Exception:
+            logger.debug("profile nsfw enforcement failed", exc_info=True)
 
     if not (text and text.strip()) and not image_b64:
         return "clean"
@@ -662,6 +703,14 @@ async def handle_passive_moderation(
         )
         return "error"
 
+    logger.info(
+        "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s",
+        chat_id,
+        _mid,
+        _uid,
+        status,
+        reason_text,
+    )
     return status
 
 async def _delete_message_safe(chat_id: int, message_id: int) -> bool:
@@ -1121,23 +1170,6 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     if not u or is_admin:
         return False
-
-    if bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
-        try:
-            blocked_key = _profile_nsfw_blocked_chat_key(chat_id, int(u.id))
-            if await redis_client.exists(blocked_key):
-                await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("profile_nsfw_blocked"), user_id=u.id)
-                await _delete_and_handle("profile_nsfw_blocked")
-                await _restrict_user_write_safe(chat_id, int(u.id))
-                return True
-            if await _is_profile_nsfw(int(u.id)):
-                await _flag(chat_id, message.message_id, action="restrict", reason=_ctx_reason("profile_nsfw"), user_id=u.id)
-                await _delete_and_handle("profile_nsfw")
-                await redis_client.set(blocked_key, 1)
-                await _cleanup_user_history_and_mute(chat_id, int(u.id))
-                return True
-        except Exception:
-            logger.debug("profile nsfw enforcement failed", exc_info=True)
 
     if getattr(message, "sticker", None):
         if not settings.MODERATION_ALLOW_STICKERS:

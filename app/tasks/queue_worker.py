@@ -1423,6 +1423,52 @@ async def handle_job(raw, processing_key: str) -> None:
                     return
 
                 if (mod_status not in {"clean", "error"}) or read_failed:
+                    trusted_group_ids = {
+                        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
+                    }
+                    trusted_comment_target_ids = {
+                        int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+                    }
+                    trusted_source_channel_ids = {
+                        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+                    }
+                    trusted_scope_ids = trusted_group_ids | trusted_comment_target_ids | trusted_source_channel_ids
+                    is_trusted_comment_context = bool(job.get("is_comment_context")) and bool(
+                        getattr(settings, "COMMENT_MODERATION_ENABLED", False)
+                    )
+                    is_trusted_destination = int(chat_id) in trusted_scope_ids or is_trusted_comment_context
+
+                    if is_trusted_destination:
+                        logger.warning(
+                            "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s status=%s read_failed=%s",
+                            chat_id,
+                            msg_id,
+                            mod_status,
+                            read_failed,
+                        )
+                        requeue_guard_key = f"{job_key}:modwait_requeued"
+                        did_set = False
+                        with suppress(Exception):
+                            did_set = await REDIS_QUEUE.set(requeue_guard_key, 1, ex=60, nx=True)
+
+                        if did_set:
+                            with suppress(Exception):
+                                await _delete_if_inflight(REDIS_QUEUE, job_key, value)
+                            try:
+                                async with REDIS_QUEUE.pipeline() as p:
+                                    p.lrem(processing_key, 1, raw)
+                                    p.lpush(queue_key, raw)
+                                    await p.execute()
+                                remove_from_processing = False
+                                return
+                            except Exception as exc:
+                                logger.warning("Failed to requeue trusted moderation-wait job: %s", exc)
+
+                        with suppress(Exception):
+                            await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                        await _refund_reservation()
+                        return
+
                     logger.warning(
                         "MODERATION_SIGNAL_MISSING_CONTINUE: chat_id=%s msg_id=%s status=%s read_failed=%s",
                         chat_id,
@@ -1431,6 +1477,13 @@ async def handle_job(raw, processing_key: str) -> None:
                         read_failed,
                     )
                     mod_status = ""
+                else:
+                    logger.info(
+                        "MODERATION_STATUS_READY: chat_id=%s msg_id=%s status=%s",
+                        chat_id,
+                        msg_id,
+                        mod_status,
+                    )
 
             if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
                 if _is_effectively_empty(text or ""):

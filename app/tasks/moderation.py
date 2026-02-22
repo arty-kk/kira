@@ -179,7 +179,24 @@ def passive_moderate(self, payload: dict) -> str:
         )
 
     try:
-        return _run(_do())
+        logger.info(
+            "PASSIVE_MODERATION_JOB_START: chat_id=%s msg_id=%s user_id=%s source=%s is_comment_context=%s retries=%s",
+            chat_id,
+            message_id,
+            user_id,
+            payload.get("source", "user"),
+            payload.get("is_comment_context"),
+            retries,
+        )
+        result = _run(_do())
+        logger.info(
+            "PASSIVE_MODERATION_JOB_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s",
+            chat_id,
+            message_id,
+            user_id,
+            result,
+        )
+        return result
     except Exception:
         _run_metrics(_metrics_incr(_METRICS_ERROR_COUNT), label="error_count")
         raise
