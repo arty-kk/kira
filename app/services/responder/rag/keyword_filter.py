@@ -7,7 +7,6 @@ import numpy as np
 import asyncio
 import time
 
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 _INDICES: Dict[str, Dict[str, Any]] = {}
-_EMB_CACHE: OrderedDict[Tuple[str, str], List[float]] = OrderedDict()
-_EMB_CACHE_MAX = int(getattr(settings, "EMBED_CACHE_SIZE", 2048))
-
 _JSON_TRAILING_COMMAS = re.compile(r',\s*([}\]])')
 
 
@@ -41,9 +37,6 @@ def _api_model_name(model: Optional[str]) -> str:
     m = model or settings.EMBEDDING_MODEL
     return str(m).replace("-offtopic", "")
 
-
-def _cache_key(api_model: str, text: str) -> Tuple[str, str]:
-    return (api_model, text)
 
 
 def _norm_ws(s: str) -> str:
@@ -157,101 +150,69 @@ def _mmr_select_ids(
 
 async def _embed_texts(texts: List[str], model: Optional[str] = None) -> List[List[float]]:
     api_model = _api_model_name(model)
-    need: List[str] = []
-    seen: set[str] = set()
-    cache_hits = 0
-    cache_misses = 0
-    for t in texts:
-        key = _cache_key(api_model, t)
-        if key in _EMB_CACHE:
-            _EMB_CACHE.move_to_end(key)
-            cache_hits += 1
-            continue
-        cache_misses += 1
-        if t not in seen:
-            need.append(t)
-            seen.add(t)
-    if need:
-        try:
-            bs = settings.EMBED_BATCH_SIZE
-        except Exception:
-            bs = 128
-        if bs <= 0:
-            bs = 128
-        overall_start = time.perf_counter()
-        for i in range(0, len(need), bs):
-            chunk = need[i : i + bs]
-            t0 = time.perf_counter()
-            try:
-                resp = await asyncio.wait_for(
-                    _call_openai_with_retry(
-                        endpoint="embeddings.create", model=api_model, input=chunk
-                    ),
-                    timeout=settings.EMBEDDING_TIMEOUT,
-                )
-                elapsed = time.perf_counter() - t0
-                logger.info(
-                    "keyword_filter: openai embeddings.create ok model=%s batch_index=%d batch_size=%d elapsed=%.3fs",
-                    api_model,
-                    (i // bs),
-                    len(chunk),
-                    elapsed,
-                )
-            except Exception:
-                elapsed = time.perf_counter() - t0
-                logger.exception(
-                    "keyword_filter: openai embeddings.create FAILED model=%s batch_index=%d batch_size=%d elapsed=%.3fs",
-                    api_model,
-                    (i // bs),
-                    len(chunk),
-                    elapsed,
-                )
-                raise
-            data = getattr(resp, "data", None) or (
-                resp.get("data") if isinstance(resp, dict) else None
-            )
-            if not isinstance(data, list) or len(data) != len(chunk):
-                raise RuntimeError("keyword_filter: embeddings response size mismatch")
-            for j, row in enumerate(data):
-                emb = getattr(row, "embedding", None)
-                if emb is None and isinstance(row, dict):
-                    emb = row.get("embedding")
-                if not isinstance(emb, list):
-                    raise RuntimeError("keyword_filter: invalid embedding row")
-                cache_key = _cache_key(api_model, chunk[j])
-                _EMB_CACHE[cache_key] = _l2_normalize([float(x) for x in emb])
-                while len(_EMB_CACHE) > _EMB_CACHE_MAX:
-                    _EMB_CACHE.popitem(last=False)
-        total_elapsed = time.perf_counter() - overall_start
-        logger.info(
-            "keyword_filter: openai embeddings.create total model=%s texts=%d new=%d batches=%d elapsed=%.3fs cache_size=%d cache_limit=%d cache_hits=%d cache_misses=%d",
-            api_model,
-            len(texts),
-            len(need),
-            ((len(need) + bs - 1) // bs),
-            total_elapsed,
-            len(_EMB_CACHE),
-            _EMB_CACHE_MAX,
-            cache_hits,
-            cache_misses,
-        )
-    else:
-        logger.info(
-            "keyword_filter: embeddings cache-only model=%s texts=%d cache_size=%d cache_limit=%d cache_hits=%d cache_misses=%d",
-            api_model,
-            len(texts),
-            len(_EMB_CACHE),
-            _EMB_CACHE_MAX,
-            cache_hits,
-            cache_misses,
-        )
+    if not texts:
+        return []
+
+    try:
+        bs = settings.EMBED_BATCH_SIZE
+    except Exception:
+        bs = 128
+    if bs <= 0:
+        bs = 128
 
     out: List[List[float]] = []
-    for t in texts:
-        key = _cache_key(api_model, t)
-        v = _EMB_CACHE[key]
-        _EMB_CACHE.move_to_end(key)
-        out.append(v)
+    overall_start = time.perf_counter()
+    for i in range(0, len(texts), bs):
+        chunk = texts[i : i + bs]
+        t0 = time.perf_counter()
+        try:
+            resp = await asyncio.wait_for(
+                _call_openai_with_retry(
+                    endpoint="embeddings.create", model=api_model, input=chunk
+                ),
+                timeout=settings.EMBEDDING_TIMEOUT,
+            )
+            elapsed = time.perf_counter() - t0
+            logger.info(
+                "keyword_filter: openai embeddings.create ok model=%s batch_index=%d batch_size=%d elapsed=%.3fs",
+                api_model,
+                (i // bs),
+                len(chunk),
+                elapsed,
+            )
+        except Exception:
+            elapsed = time.perf_counter() - t0
+            logger.exception(
+                "keyword_filter: openai embeddings.create FAILED model=%s batch_index=%d batch_size=%d elapsed=%.3fs",
+                api_model,
+                (i // bs),
+                len(chunk),
+                elapsed,
+            )
+            raise
+
+        data = getattr(resp, "data", None) or (
+            resp.get("data") if isinstance(resp, dict) else None
+        )
+        if not isinstance(data, list) or len(data) != len(chunk):
+            raise RuntimeError("keyword_filter: embeddings response size mismatch")
+
+        for row in data:
+            emb = getattr(row, "embedding", None)
+            if emb is None and isinstance(row, dict):
+                emb = row.get("embedding")
+            if not isinstance(emb, list):
+                raise RuntimeError("keyword_filter: invalid embedding row")
+            out.append(_l2_normalize([float(x) for x in emb]))
+
+    total_elapsed = time.perf_counter() - overall_start
+    logger.info(
+        "keyword_filter: openai embeddings.create total model=%s texts=%d batches=%d elapsed=%.3fs",
+        api_model,
+        len(texts),
+        ((len(texts) + bs - 1) // bs),
+        total_elapsed,
+    )
     return out
 
 
@@ -391,7 +352,6 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     """System-wide TAGS index (from KNOWLEDGE_ON_FILE or global tags_embedded_*.npz)."""
 
     model_file_name = model or settings.EMBEDDING_MODEL
-    api_model = _api_model_name(model_file_name)
     key = f"sys::{model_file_name}"
     if key in _INDICES and _INDICES[key].get("ready"):
         return _INDICES[key]
@@ -424,28 +384,25 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
         kw_by_id[eid] = kws
 
     all_kws: List[str] = []
-    seen_kw: set[str] = set()
     for lst in kw_by_id.values():
-        for s in lst:
-            if _cache_key(api_model, s) not in _EMB_CACHE and s not in seen_kw:
-                all_kws.append(s)
-                seen_kw.add(s)
-    if all_kws:
-        await _embed_texts(all_kws, model=emb_model)
+        all_kws.extend(lst)
+
+    embedded_kws = await _embed_texts(all_kws, model=emb_model) if all_kws else []
+    kw_vec_pairs = list(zip(all_kws, embedded_kws))
 
     tag_vecs_by_id: Dict[str, List[List[float]]] = {}
     tags_by_id: Dict[str, List[str]] = {}
+    cursor = 0
     for eid, kws in kw_by_id.items():
         if not kws:
             continue
         item_vecs: List[List[float]] = []
         item_tags: List[str] = []
-        for k in kws:
-            cache_key = _cache_key(api_model, k)
-            v = _EMB_CACHE.get(cache_key)
-            if v is None:
-                continue
-            _EMB_CACHE.move_to_end(cache_key)
+        for _ in kws:
+            if cursor >= len(kw_vec_pairs):
+                break
+            k, v = kw_vec_pairs[cursor]
+            cursor += 1
             item_vecs.append([float(x) for x in v])
             item_tags.append(k)
         if not item_vecs:
@@ -472,24 +429,17 @@ async def _ensure_owner_index(owner_id: int, model: Optional[str]) -> Dict[str, 
     """Per-API-key TAGS index from api_keys/<owner_id>/tags_embedded_*.npz."""
     owner_id_int = int(owner_id)
     model_file_name = model or settings.EMBEDDING_MODEL
-    key = f"owner::{owner_id_int}::{model_file_name}"
-    if key in _INDICES and _INDICES[key].get("ready"):
-        return _INDICES[key]
-
     pre_idx = _load_precomputed_tags_index_for_owner(owner_id_int, model_file_name)
     if pre_idx:
         pre_idx["model"] = model_file_name
-        _INDICES[key] = pre_idx
-        return _INDICES[key]
+        return pre_idx
 
-    # Если для owner нет NPZ, кешируем пустой индекс, чтобы не ходить на диск каждый раз.
     idx: Dict[str, Any] = {
         "ready": True,
         "tag_vecs": {},
         "texts": {},
         "model": model_file_name,
     }
-    _INDICES[key] = idx
     logger.info(
         "keyword_filter: no per-owner TAGS index for owner_id=%s model=%s",
         owner_id_int,
