@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import secrets
 import time
 from typing import Any
 
@@ -19,6 +20,10 @@ from app.tasks.celery_app import _run
 logger = logging.getLogger(__name__)
 
 MODERATION_TIMEOUT = int(getattr(settings, "MODERATION_TIMEOUT", 30))
+MODERATION_INFLIGHT_TTL = max(
+    int(getattr(settings, "MODERATION_INFLIGHT_TTL", MODERATION_TIMEOUT + 15)),
+    MODERATION_TIMEOUT + 1,
+)
 MODERATION_MAX_IMAGE_BYTES = int(getattr(settings, "CELERY_MODERATION_MAX_IMAGE_BYTES", 5 * 1024 * 1024))
 MODERATION_MAX_PAYLOAD_BYTES = int(getattr(settings, "CELERY_MODERATION_MAX_PAYLOAD_BYTES", 256 * 1024))
 
@@ -28,6 +33,14 @@ _METRICS_LATENCY_COUNT = "metrics:celery:moderation:latency_count"
 _METRICS_LATENCY_TOTAL_MS = "metrics:celery:moderation:latency_total_ms"
 
 _REQUIRED_PAYLOAD_FIELDS = ("chat_id", "user_id", "message_id")
+
+_MODERATION_INFLIGHT_RELEASE_LUA = """
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+else
+  return 0
+end
+"""
 
 
 def prepare_moderation_payload(payload: dict[str, Any], *, context: str) -> dict[str, Any]:
@@ -123,6 +136,25 @@ def _parse_required_int(payload: dict[str, Any], field: str) -> int:
     return parsed
 
 
+def _moderation_inflight_key(chat_id: int, message_id: int) -> str:
+    return f"mod:inflight:{chat_id}:{message_id}"
+
+
+async def _set_moderation_inflight(key: str, token: str) -> bool:
+    try:
+        return bool(await consts.redis_client.set(key, token, ex=MODERATION_INFLIGHT_TTL, nx=True))
+    except Exception:
+        logger.warning("failed to set moderation inflight key=%s", key, exc_info=True)
+        return False
+
+
+async def _clear_moderation_inflight(key: str, token: str) -> None:
+    try:
+        await consts.redis_client.eval(_MODERATION_INFLIGHT_RELEASE_LUA, 1, key, token)
+    except Exception:
+        logger.warning("failed to clear moderation inflight key=%s", key, exc_info=True)
+
+
 @shared_task(
     name="moderation.passive_moderate",
     bind=True,
@@ -178,6 +210,13 @@ def passive_moderate(self, payload: dict) -> str:
             timeout=MODERATION_TIMEOUT,
         )
 
+    inflight_key = _moderation_inflight_key(chat_id, message_id)
+    inflight_token = secrets.token_urlsafe(16)
+    try:
+        _run(_set_moderation_inflight(inflight_key, inflight_token))
+    except Exception:
+        logger.warning("failed to dispatch moderation inflight set key=%s", inflight_key, exc_info=True)
+
     try:
         logger.info(
             "PASSIVE_MODERATION_JOB_START: chat_id=%s msg_id=%s user_id=%s source=%s is_comment_context=%s retries=%s",
@@ -201,6 +240,7 @@ def passive_moderate(self, payload: dict) -> str:
         _run_metrics(_metrics_incr(_METRICS_ERROR_COUNT), label="error_count")
         raise
     finally:
+        _run_metrics(_clear_moderation_inflight(inflight_key, inflight_token), label="inflight_release")
         latency_ms = int((time.monotonic() - started) * 1000)
         _run_metrics(_metrics_latency(latency_ms), label="latency")
         if retries > 0:

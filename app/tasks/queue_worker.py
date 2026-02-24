@@ -111,6 +111,9 @@ MODERATION_STATUS_WAIT_SEC = float(getattr(settings, "MODERATION_STATUS_WAIT_SEC
 MODERATION_STATUS_POLL_SEC = float(getattr(settings, "MODERATION_STATUS_POLL_SEC", 0.1))
 MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 3))
 MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 60))
+MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC = int(
+    getattr(settings, "MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC", MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC)
+)
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
@@ -1470,12 +1473,37 @@ async def handle_job(raw, processing_key: str) -> None:
                         elapsed_sec = max(0, now_ts - first_ts)
                         hit_attempt_limit = MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS > 0 and attempt >= MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS
                         hit_wait_limit = MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC > 0 and elapsed_sec >= MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC
-                        should_requeue = not tracking_failed and not (hit_attempt_limit or hit_wait_limit)
+                        inflight_key = f"mod:inflight:{chat_id}:{msg_id}"
+                        inflight = False
+                        try:
+                            inflight_raw = await redis.get(inflight_key)
+                            if isinstance(inflight_raw, (bytes, bytearray)):
+                                inflight_raw = inflight_raw.decode("utf-8", "ignore")
+                            inflight = inflight_raw is not None and str(inflight_raw).strip() != ""
+                        except Exception as exc:
+                            logger.warning(
+                                "MODERATION_INFLIGHT_READ_ERROR: chat_id=%s msg_id=%s key=%s error=%s",
+                                chat_id,
+                                msg_id,
+                                inflight_key,
+                                exc,
+                            )
+
+                        inflight_wait_cap = max(0, int(MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC))
+                        inflight_wait_limit_hit = inflight_wait_cap > 0 and elapsed_sec >= inflight_wait_cap
+                        force_requeue_for_inflight = (
+                            inflight and (hit_attempt_limit or hit_wait_limit) and not inflight_wait_limit_hit
+                        )
+                        should_requeue = not tracking_failed and (
+                            force_requeue_for_inflight or not (hit_attempt_limit or hit_wait_limit)
+                        )
 
                         if should_requeue:
+                            if force_requeue_for_inflight:
+                                await asyncio.sleep(random.uniform(0.1, 0.3))
 
                             logger.warning(
-                                "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s",
+                                "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s inflight=%s",
                                 chat_id,
                                 msg_id,
                                 job_key,
@@ -1483,6 +1511,7 @@ async def handle_job(raw, processing_key: str) -> None:
                                 elapsed_sec,
                                 mod_status,
                                 read_failed,
+                                inflight,
                             )
                             with suppress(Exception):
                                 await _delete_if_inflight(REDIS_QUEUE, job_key, value)
@@ -1497,7 +1526,7 @@ async def handle_job(raw, processing_key: str) -> None:
                                 logger.warning("Failed to requeue trusted moderation-wait job: %s", exc)
 
                         logger.error(
-                            "MODERATION_SIGNAL_TIMEOUT_TERMINAL: terminal_reason=moderation_signal_timeout chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s",
+                            "MODERATION_SIGNAL_TIMEOUT_TERMINAL: terminal_reason=moderation_signal_timeout chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s inflight=%s attempt_limit_hit=%s wait_limit_hit=%s",
                             chat_id,
                             msg_id,
                             job_key,
@@ -1505,6 +1534,9 @@ async def handle_job(raw, processing_key: str) -> None:
                             elapsed_sec,
                             mod_status,
                             read_failed,
+                            inflight,
+                            hit_attempt_limit,
+                            hit_wait_limit,
                         )
                         with suppress(Exception):
                             await REDIS_QUEUE.delete(attempt_key, first_ts_key)
