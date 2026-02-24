@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,8 +17,6 @@ from .knowledge_proc import _get_query_embedding, _mmr_select, EMBED_DIR
 
 logger = logging.getLogger(__name__)
 
-_API_KB_STATE: Dict[Tuple[int, str], Dict[str, Any]] = {}
-_API_KB_LOCK = asyncio.Lock()
 
 def _owner_dir(owner_id: int) -> Path:
 
@@ -97,7 +94,13 @@ def _load_state_from_npz(owner_id: int, model: str) -> Optional[Dict[str, Any]]:
             E.shape[0],
             E.shape[1],
         )
-        return {"mean": mean, "E": E, "ids": ids, "texts": texts, "_mtime": mtime}
+        return {
+            "mean": mean,
+            "E": E,
+            "ids": ids,
+            "texts": texts,
+            "_mtime": mtime,
+        }
     except Exception:
         logger.exception("API-KB: failed to load NPZ for owner_id=%s model=%s", owner_id, model)
         return None
@@ -137,73 +140,24 @@ async def _ensure_state(owner_id: int, model: str) -> Optional[Dict[str, Any]]:
 
     owner_id = int(owner_id)
     model = (model or "").strip()
-    key = (owner_id, model)
 
-    p = _npz_path(owner_id, model)
-    try:
-        current_mtime = p.stat().st_mtime if p.exists() else None
-    except OSError:
-        current_mtime = None
-
-    st = _API_KB_STATE.get(key)
-    if st and st.get("_mtime") == current_mtime:
+    has_ready = await _has_ready_kb(owner_id, model)
+    if not has_ready:
         logger.info(
-            "API-KB cache_hit: owner_id=%s model=%s mtime=%s",
+            "API-KB load skipped: no ready KB in DB for owner_id=%s model=%s",
             owner_id,
             model,
-            current_mtime,
         )
-        return st
+        return None
 
-    async with _API_KB_LOCK:
-        st = _API_KB_STATE.get(key)
-        if st and st.get("_mtime") == current_mtime:
-            logger.info(
-                "API-KB cache_hit: owner_id=%s model=%s mtime=%s",
-                owner_id,
-                model,
-                current_mtime,
-            )
-            return st
-
-        logger.info(
-            "API-KB db_reload: owner_id=%s model=%s old_mtime=%s new_mtime=%s",
-            owner_id,
-            model,
-            st.get("_mtime") if st else None,
-            current_mtime,
-        )
-
-        has_ready = await _has_ready_kb(owner_id, model)
-        if not has_ready:
-            _API_KB_STATE.pop(key, None)
-            logger.info(
-                "API-KB db_reload: no ready KB in DB for owner_id=%s model=%s; "
-                "cache cleared and NPZ load skipped",
-                owner_id,
-                model,
-            )
-            return None
-
-        st = await asyncio.to_thread(_load_state_from_npz, owner_id, model)
-        _API_KB_STATE[key] = st or {}
-        return st or None
+    st = await asyncio.to_thread(_load_state_from_npz, owner_id, model)
+    return st or None
 
 
 def invalidate_api_kb_cache(owner_id: Optional[int] = None) -> None:
 
-    if owner_id is None:
-        _API_KB_STATE.clear()
-        logger.info("API-KB cache: full invalidation")
-        return
-
-    owner_id = int(owner_id)
-    removed = 0
-    for k in list(_API_KB_STATE.keys()):
-        if k[0] == owner_id:
-            _API_KB_STATE.pop(k, None)
-            removed += 1
-    logger.info("API-KB cache: invalidated owner_id=%s entries=%d", owner_id, removed)
+    _ = owner_id
+    logger.info("API-KB cache invalidation requested, but runtime cache is disabled")
 
 
 async def get_relevant_for_owner(

@@ -58,7 +58,7 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
             result = await media._preprocess(payload)
 
         self.assertEqual(result, "ok")
-        self.assertIn("media:preprocessed:10:20", fake_redis.values)
+        self.assertFalse(any(str(k).startswith("media:preprocessed:") for k in fake_redis.values))
         self.assertEqual(len(fake_redis.queue), 1)
         queued = json.loads(fake_redis.queue[0][1])
         self.assertEqual(queued["chat_id"], 10)

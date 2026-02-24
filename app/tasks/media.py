@@ -27,7 +27,6 @@ from app.core.media_utils import MAX_IMAGE_BYTES, sanitize_and_compress, strict_
 logger = logging.getLogger(__name__)
 
 MEDIA_PREPROCESS_TIMEOUT_SEC = float(getattr(settings, "MEDIA_PREPROCESS_TIMEOUT_SEC", 20.0))
-MEDIA_PREPROCESSED_TTL_SEC = int(getattr(settings, "MEDIA_PREPROCESSED_TTL_SEC", 300))
 MEDIA_MAX_INPUT_BYTES = int(getattr(settings, "MEDIA_MAX_INPUT_BYTES", 30 * 1024 * 1024))
 BOT_QUEUE_MAX_PAYLOAD_BYTES = int(getattr(settings, "BOT_QUEUE_MAX_PAYLOAD_BYTES", 64 * 1024))
 
@@ -157,18 +156,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
         if len(safe_jpeg) > MAX_IMAGE_BYTES:
             raise ValueError("не удалось ужать до 5MB")
 
-        store_key = f"media:preprocessed:{chat_id}:{message_id}"
-        store_payload = {
-            "jpeg_b64": base64.b64encode(safe_jpeg).decode("ascii"),
-            "image_mime": "image/jpeg",
-            "source": {
-                "file_id": payload.get("file_id"),
-                "document_id": payload.get("document_id"),
-                "mime_type": payload.get("mime_type"),
-                "suffix": payload.get("suffix"),
-            },
-        }
-        await consts.redis_client.set(store_key, json.dumps(store_payload, ensure_ascii=False), ex=MEDIA_PREPROCESSED_TTL_SEC)
+        jpeg_b64 = base64.b64encode(safe_jpeg).decode("ascii")
 
         log_caption = str(payload.get("caption_log") or payload.get("caption") or "").strip()
 
@@ -182,7 +170,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             "is_channel_post": bool(payload.get("is_channel_post")),
             "channel_id": payload.get("channel_id"),
             "channel_title": payload.get("channel_title"),
-            "image_b64": store_payload["jpeg_b64"],
+            "image_b64": jpeg_b64,
             "image_mime": "image/jpeg",
             "trigger": payload.get("trigger"),
             "enforce_on_topic": bool(payload.get("enforce_on_topic")),
@@ -203,7 +191,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
                 "message_id": message_id,
                 "text": log_caption,
                 "entities": payload.get("entities") or [],
-                "image_b64": store_payload["jpeg_b64"],
+                "image_b64": jpeg_b64,
                 "image_mime": "image/jpeg",
                 "source": "channel" if bool(payload.get("is_channel_post")) else "user",
                 "is_comment_context": payload.get("is_comment_context"),
