@@ -438,6 +438,16 @@ class GroupCommentContextTests(unittest.TestCase):
             is_automatic_forward=False,
         )
 
+        self.assertFalse(group.resolve_message_moderation_context(message) == "comment")
+
+    def test_is_comment_context_true_with_channel_sender(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, linked_chat_id=-100500),
+            sender_chat=types.SimpleNamespace(id=-100500, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
         self.assertTrue(group.resolve_message_moderation_context(message) == "comment")
 
     def test_is_comment_context_false_for_regular_group_message(self) -> None:

@@ -51,7 +51,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         data.update(overrides)
         return types.SimpleNamespace(**data)
 
-    async def test_comment_context_external_reply_respects_comment_policy(self) -> None:
+    async def test_linked_discussion_message_without_origin_signals_uses_group_policy(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=-10055),
             message_id=10,
@@ -84,6 +84,55 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(moderation, "settings", self._base_settings()),
             patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertTrue(handled)
+        delete_mock.assert_awaited_once()
+        reason = flag_mock.await_args.kwargs["reason"]
+        self.assertIn("external_reply", reason)
+        self.assertIn("context=group", reason)
+
+    async def test_linked_discussion_message_with_origin_signal_uses_comment_policy(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=-10055),
+            message_id=13,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=object(),
+            text="hi",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings()),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=True)),
             patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
             patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
             patch.object(moderation, "extract_urls", return_value=[]),

@@ -432,7 +432,7 @@ class DiscussionCommentIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(moderation, "settings", cfg),
-            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=True)),
             patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
             patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
             patch.object(moderation, "extract_urls", return_value=[]),
