@@ -168,6 +168,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             "is_group": True,
             "msg_id": message_id,
             "is_channel_post": bool(payload.get("is_channel_post")),
+            "is_comment_context": bool(payload.get("is_comment_context")),
             "channel_id": payload.get("channel_id"),
             "channel_title": payload.get("channel_title"),
             "image_b64": jpeg_b64,

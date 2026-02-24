@@ -1245,6 +1245,7 @@ async def on_group_voice(message: Message) -> None:
             "is_group": True,
             "msg_id": message.message_id,
             "is_channel_post": is_channel,
+            "is_comment_context": is_comment_context,
             "channel_id": channel.id if channel else None,
             "channel_title": getattr(channel, "title", None) if channel else None,
             "voice_in": True,
