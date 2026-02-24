@@ -141,7 +141,7 @@ class Settings:
     OPENAI_MAX_CONCURRENT_REQUESTS: int = field(default_factory=lambda: _get_env("OPENAI_MAX_CONCURRENT_REQUESTS", "300", conv=int))
     APPROX_CHARS_PER_TOKEN: float = field(default_factory=lambda: _get_env("APPROX_CHARS_PER_TOKEN", "3.8", conv=float))
     #Models for Various Tasks
-    BASE_MODEL: str = field(default_factory=lambda: _get_env("BASE_MODEL", "gpt-4.1-nano"))
+    BASE_MODEL: str = field(default_factory=lambda: _get_env("BASE_MODEL", "gpt-5-nano"))
     REASONING_MODEL: str = field(default_factory=lambda: _get_env("REASONING_MODEL", "gpt-4.1-mini"))
     RESPONSE_FREE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_FREE_MODEL", "gpt-4.1-mini"))
     RESPONSE_MODEL: str = field(default_factory=lambda: _get_env("RESPONSE_MODEL", "gpt-4.1"))
