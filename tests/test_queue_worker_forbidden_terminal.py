@@ -1052,7 +1052,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
 
         respond_mock.assert_awaited_once()
 
-    async def test_handle_job_passes_knowledge_owner_id_to_responder(self):
+    async def test_handle_job_ignores_knowledge_owner_id_for_bot_worker(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
@@ -1079,7 +1079,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
-        self.assertEqual(respond_mock.await_args.kwargs.get("knowledge_owner_id"), 9988)
+        self.assertIsNone(respond_mock.await_args.kwargs.get("knowledge_owner_id"))
 
     async def test_moderation_status_read_error_is_fail_open(self):
         fake_queue = _FakeQueueRedis()
