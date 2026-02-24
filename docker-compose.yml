@@ -213,7 +213,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["bash", "-lc", "alembic -c /app/alembic.ini upgrade head && python scripts/bootstrap_system_kb_pgvector.py --kb-file app/services/responder/rag/knowledge_on.json --model ${EMBEDDING_MODEL:-text-embedding-3-large}"]
+    command: ["sh", "-lc", "python -m alembic -c /app/alembic.ini upgrade head && python scripts/bootstrap_system_kb_pgvector.py --kb-file app/services/responder/rag/knowledge_on.json --model ${EMBEDDING_MODEL:-text-embedding-3-large}"]
 
   worker-tasks:
     build: .
