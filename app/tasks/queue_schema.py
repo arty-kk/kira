@@ -18,6 +18,7 @@ class BotQueueJob(BaseModel):
     reservation_ids: Optional[list[Annotated[int, Field(strict=True, gt=0)]]] = None
     is_group: bool = False
     is_channel_post: bool = False
+    is_comment_context: bool = False
     channel_title: Optional[str] = None
     voice_in: bool = False
     voice_file_id: Optional[str] = None

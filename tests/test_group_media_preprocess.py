@@ -106,6 +106,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_user_id_val", return_value=42),
             patch.object(group, "_replied_to_our_bot", return_value=False),
             patch.object(group, "_channel_obj", return_value=None),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)),
             patch.object(group, "_analytics_best_effort"),
             patch.object(group.redis_client, "sadd", AsyncMock()),
             patch.object(group.preprocess_group_image, "delay", delay_mock),
@@ -124,6 +125,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["chat_id"], 123)
         self.assertEqual(payload["message_id"], 777)
         self.assertEqual(payload["file_id"], "photo-file-id")
+        self.assertTrue(payload["is_comment_context"])
         self.assertNotIn("image_b64", payload)
 
     async def test_group_image_common_skips_non_channel_bot_messages(self) -> None:
@@ -210,6 +212,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
         payload = delay_mock.call_args.args[0]
         self.assertEqual(payload["trigger"], "channel_post")
         self.assertTrue(payload["is_channel_post"])
+        self.assertFalse(payload["is_comment_context"])
 
 
 class GroupReplyMentionFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -315,6 +318,7 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
         payload = buffer_mock.call_args.args[0]
         self.assertEqual(payload["trigger"], "channel_post")
         self.assertTrue(payload["is_channel_post"])
+        self.assertFalse(payload["is_comment_context"])
 
     async def test_on_group_voice_skips_non_channel_without_mention_even_with_on_topic(self) -> None:
         message = types.SimpleNamespace(

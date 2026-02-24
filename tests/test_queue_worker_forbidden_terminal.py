@@ -957,6 +957,52 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "trusted comment context with missing moderation status should requeue job",
         )
 
+    async def test_group_trigger_requeues_when_moderation_signal_missing_for_trusted_comment_context_image_job(self):
+        fake_queue = _FakeQueueRedis()
+        queue_worker.REDIS_QUEUE = fake_queue
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = True
+        queue_worker.TYPING_SKIP_GROUPS = False
+        queue_worker.BOT = types.SimpleNamespace(send_chat_action=AsyncMock(), send_message=AsyncMock())
+        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [])
+        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
+        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
+        setattr(queue_worker.settings, "COMMENT_MODERATION_ENABLED", True)
+
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
+        queue_worker.get_redis = lambda: redis_stub
+
+        mark_done = AsyncMock(return_value=1)
+        refund_reservation = AsyncMock(return_value=None)
+        respond_mock = AsyncMock(return_value="reply")
+
+        job = {
+            "chat_id": -100993,
+            "user_id": 993,
+            "text": "",
+            "msg_id": 215,
+            "reply_to": 215,
+            "is_group": True,
+            "is_channel_post": False,
+            "trigger": "mention",
+            "reservation_id": 339,
+            "is_comment_context": True,
+            "image_b64": "aW1hZ2U=",
+            "image_mime": "image/jpeg",
+        }
+
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1008))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        respond_mock.assert_not_awaited()
+        mark_done.assert_not_awaited()
+        refund_reservation.assert_not_awaited()
+        delete_inflight.assert_awaited()
+        self.assertTrue(
+            any(key == queue_worker.settings.QUEUE_KEY for key, _ in fake_queue.lpush_calls),
+            "trusted comment context image job with missing moderation status should requeue job",
+        )
+
     async def test_group_trigger_clean_status_continues_for_trusted_chat(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
