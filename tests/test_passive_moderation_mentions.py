@@ -166,6 +166,130 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "clean")
 
+    async def test_extract_external_mentions_does_not_mark_unknown_error_as_external(self) -> None:
+        redis = _FakeRedisMentions()
+        bot = types.SimpleNamespace(get_chat=AsyncMock(side_effect=RuntimeError("telegram api timeout")))
+        text = "hello @Broken"
+        entities = [{"type": "mention", "offset": 6, "length": 7}]
+
+        with (
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_bot", return_value=bot),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+        ):
+            external = await passive_moderation.extract_external_mentions(1, text, entities)
+
+        self.assertEqual(external, [])
+
+    async def test_check_light_does_not_flag_link_violation_on_mention_resolve_error(self) -> None:
+        text = "hello @Broken"
+        entities = [{"type": "mention", "offset": 6, "length": 7}]
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    TELEGRAM_BOT_USERNAME="kiragame_aibot",
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(
+                passive_moderation,
+                "get_bot",
+                return_value=types.SimpleNamespace(get_chat=AsyncMock(side_effect=RuntimeError("telegram api timeout"))),
+            ),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "clean")
+
+    async def test_check_light_flags_link_violation_for_external_channel_mention(self) -> None:
+        text = "hello @NewsChannel"
+        entities = [{"type": "mention", "offset": 6, "length": 12}]
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(
+                passive_moderation,
+                "get_bot",
+                return_value=types.SimpleNamespace(get_chat=AsyncMock(return_value=types.SimpleNamespace(type="channel", is_bot=False))),
+            ),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "link_violation")
+
+    async def test_check_light_flags_link_violation_for_external_bot_mention(self) -> None:
+        text = "hello @SomeBot"
+        entities = [{"type": "mention", "offset": 6, "length": 8}]
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(
+                passive_moderation,
+                "get_bot",
+                return_value=types.SimpleNamespace(get_chat=AsyncMock(return_value=types.SimpleNamespace(type="private", is_bot=True))),
+            ),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "link_violation")
+
 
     async def test_check_light_flags_profile_bio_cta_without_urls(self) -> None:
         text = "Все у меня в био, загляни в профиль"
