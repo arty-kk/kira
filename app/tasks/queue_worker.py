@@ -109,6 +109,8 @@ TTS_REPLY_TO_VOICE_IN_GROUPS = bool(getattr(
     settings, "TTS_REPLY_TO_VOICE_IN_GROUPS", os.environ.get("TTS_REPLY_TO_VOICE_IN_GROUPS", "0") not in ("0","false","False")))
 MODERATION_STATUS_WAIT_SEC = float(getattr(settings, "MODERATION_STATUS_WAIT_SEC", 1.2))
 MODERATION_STATUS_POLL_SEC = float(getattr(settings, "MODERATION_STATUS_POLL_SEC", 0.1))
+MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 3))
+MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 60))
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
@@ -1439,19 +1441,49 @@ async def handle_job(raw, processing_key: str) -> None:
                     is_trusted_destination = int(chat_id) in trusted_scope_ids or is_trusted_comment_context
 
                     if is_trusted_destination:
-                        logger.warning(
-                            "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s status=%s read_failed=%s",
-                            chat_id,
-                            msg_id,
-                            mod_status,
-                            read_failed,
-                        )
-                        requeue_guard_key = f"{job_key}:modwait_requeued"
-                        did_set = False
-                        with suppress(Exception):
-                            did_set = await REDIS_QUEUE.set(requeue_guard_key, 1, ex=60, nx=True)
+                        attempt_key = f"{job_key}:modwait_attempt"
+                        first_ts_key = f"{job_key}:modwait_first_ts"
+                        now_ts = int(time.time())
+                        ttl_sec = max(MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC * 2, 120)
+                        attempt = 1
+                        first_ts = now_ts
+                        tracking_failed = False
+                        try:
+                            attempt = int(await REDIS_QUEUE.incr(attempt_key))
+                            await REDIS_QUEUE.expire(attempt_key, ttl_sec)
+                            await REDIS_QUEUE.set(first_ts_key, now_ts, ex=ttl_sec, nx=True)
+                            first_ts_raw = await REDIS_QUEUE.get(first_ts_key)
+                            if first_ts_raw is not None:
+                                if isinstance(first_ts_raw, (bytes, bytearray)):
+                                    first_ts_raw = first_ts_raw.decode("utf-8", "ignore")
+                                first_ts = int(float(first_ts_raw))
+                        except Exception as exc:
+                            tracking_failed = True
+                            logger.warning(
+                                "MODERATION_SIGNAL_TRACKING_FAILED: chat_id=%s msg_id=%s job_key=%s error=%s",
+                                chat_id,
+                                msg_id,
+                                job_key,
+                                exc,
+                            )
 
-                        if did_set:
+                        elapsed_sec = max(0, now_ts - first_ts)
+                        hit_attempt_limit = MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS > 0 and attempt >= MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS
+                        hit_wait_limit = MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC > 0 and elapsed_sec >= MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC
+                        should_requeue = not tracking_failed and not (hit_attempt_limit or hit_wait_limit)
+
+                        if should_requeue:
+
+                            logger.warning(
+                                "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s",
+                                chat_id,
+                                msg_id,
+                                job_key,
+                                attempt,
+                                elapsed_sec,
+                                mod_status,
+                                read_failed,
+                            )
                             with suppress(Exception):
                                 await _delete_if_inflight(REDIS_QUEUE, job_key, value)
                             try:
@@ -1464,6 +1496,18 @@ async def handle_job(raw, processing_key: str) -> None:
                             except Exception as exc:
                                 logger.warning("Failed to requeue trusted moderation-wait job: %s", exc)
 
+                        logger.error(
+                            "MODERATION_SIGNAL_TIMEOUT_TERMINAL: terminal_reason=moderation_signal_timeout chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s",
+                            chat_id,
+                            msg_id,
+                            job_key,
+                            attempt,
+                            elapsed_sec,
+                            mod_status,
+                            read_failed,
+                        )
+                        with suppress(Exception):
+                            await REDIS_QUEUE.delete(attempt_key, first_ts_key)
                         with suppress(Exception):
                             await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                         await _refund_reservation()
