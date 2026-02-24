@@ -140,24 +140,20 @@ class KeywordFilterPerTagRankingTests(unittest.IsolatedAsyncioTestCase):
     async def test_find_tag_hits_uses_best_tag_per_item_and_returns_top3_texts(self) -> None:
         async def _fake_ensure_index(_model=None):
             return {
-                "tag_vecs": {
-                    "item-1": [[1.0, 0.0], [0.0, 1.0], [0.0, -1.0]],
-                    "item-2": [[0.95, 0.05], [-0.4, 0.9]],
-                    "item-3": [[0.85, 0.15]],
-                    "item-4": [[0.70, 0.30]],
-                },
-                "tags": {
-                    "item-1": ["strong", "weak-a", "weak-b"],
-                    "item-2": ["good", "weak"],
-                    "item-3": ["ok"],
-                    "item-4": ["lower"],
-                },
-                "texts": {
-                    "item-1": "text-1",
-                    "item-2": "text-2",
-                    "item-3": "text-3",
-                    "item-4": "text-4",
-                },
+                "E": np.asarray(
+                    [
+                        [1.0, 0.0],
+                        [0.0, 1.0],
+                        [0.95, 0.05],
+                        [0.1, 0.9],
+                        [0.85, 0.15],
+                        [0.70, 0.30],
+                    ],
+                    dtype=np.float32,
+                ),
+                "row_to_eid": ["item-1", "item-1", "item-2", "item-2", "item-3", "item-4"],
+                "row_to_tag": ["strong", "weak-a", "good", "weak", "ok", "lower"],
+                "row_to_text": ["text-1", "text-1", "text-2", "text-2", "text-3", "text-4"],
                 "model": "m",
             }
 
@@ -179,10 +175,53 @@ class KeywordFilterPerTagRankingTests(unittest.IsolatedAsyncioTestCase):
                 limit=3,
             )
 
+        self.assertTrue(all(isinstance(x, tuple) and len(x) == 3 for x in hits))
         self.assertEqual([hid for _, hid, _ in hits], ["item-1", "item-2", "item-3"])
         self.assertEqual([txt for _, _, txt in hits], ["text-1", "text-2", "text-3"])
         self.assertGreater(hits[0][0], hits[1][0])
         self.assertGreater(hits[1][0], hits[2][0])
+
+    async def test_find_tag_hits_limits_candidates_before_mmr(self) -> None:
+        top_n = keyword_filter.MMR_CANDIDATES_TOP_N
+        rows = []
+        row_to_eid = []
+        row_to_tag = []
+        row_to_text = []
+        for i in range(top_n + 5):
+            rows.append([1.0 - (i * 0.01), 0.0])
+            row_to_eid.append(f"item-{i}")
+            row_to_tag.append(f"tag-{i}")
+            row_to_text.append(f"text-{i}")
+
+        async def _fake_ensure_index(_model=None):
+            return {
+                "E": np.asarray(rows, dtype=np.float32),
+                "row_to_eid": row_to_eid,
+                "row_to_tag": row_to_tag,
+                "row_to_text": row_to_text,
+                "model": "m",
+            }
+
+        captured = {}
+
+        def _fake_mmr(cand_ids, _vecs, scores_by_id, top_k, lam):
+            captured["cand_count"] = len(cand_ids)
+            return sorted(cand_ids, key=lambda i: scores_by_id[i], reverse=True)[:top_k]
+
+        with (
+            mock.patch.object(keyword_filter, "_ensure_index", side_effect=_fake_ensure_index),
+            mock.patch.object(keyword_filter, "_mmr_select_ids", side_effect=_fake_mmr),
+        ):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=[1.0, 0.0],
+                embedding_model="m",
+                model="m",
+                limit=5,
+            )
+
+        self.assertEqual(captured["cand_count"], top_n)
+        self.assertEqual(len(hits), 5)
 
     def test_load_tags_index_from_npz_backward_compatible_v1(self) -> None:
         import tempfile
@@ -200,7 +239,83 @@ class KeywordFilterPerTagRankingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(idx)
         assert idx is not None
-        self.assertIn("tag_vecs", idx)
-        self.assertEqual(len(idx["tag_vecs"]["a"]), 1)
-        self.assertEqual(len(idx["tag_vecs"]["b"]), 1)
-        self.assertEqual(idx["texts"]["a"], "ta")
+        self.assertIn("E", idx)
+        self.assertEqual(idx["E"].shape, (2, 2))
+        self.assertEqual(idx["row_to_eid"], ["a", "b"])
+        self.assertEqual(idx["row_to_text"], ["ta", "tb"])
+
+    def test_load_tags_index_from_npz_backward_compatible_vecs_single_vector(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "tags_vecs.npz"
+            np.savez_compressed(
+                p,
+                vecs=np.asarray({"a": [1.0, 0.0], "b": [0.0, 1.0]}, dtype=object),
+                texts=np.asarray({"a": "ta", "b": "tb"}, dtype=object),
+            )
+            idx = keyword_filter._load_tags_index_from_npz(p)
+
+        self.assertIsNotNone(idx)
+        assert idx is not None
+        self.assertEqual(idx["row_to_eid"], ["a", "b"])
+        self.assertEqual(idx["E"].shape, (2, 2))
+
+    def test_load_tags_index_from_npz_backward_compatible_vecs_ndarray_rows(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "tags_vecs_nd.npz"
+            np.savez_compressed(
+                p,
+                vecs=np.asarray({"a": np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)}, dtype=object),
+                texts=np.asarray({"a": "ta"}, dtype=object),
+                tags=np.asarray({"a": ["first", "second"]}, dtype=object),
+            )
+            idx = keyword_filter._load_tags_index_from_npz(p)
+
+        self.assertIsNotNone(idx)
+        assert idx is not None
+        self.assertEqual(idx["row_to_eid"], ["a", "a"])
+        self.assertEqual(idx["row_to_tag"], ["first", "second"])
+        self.assertEqual(idx["E"].shape, (2, 2))
+
+    def test_load_tags_index_from_npz_backward_compatible_tag_vecs_single_vector(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "tags_tag_vecs_single.npz"
+            np.savez_compressed(
+                p,
+                tag_vecs=np.asarray({"a": np.asarray([1.0, 0.0], dtype=np.float32)}, dtype=object),
+                texts=np.asarray({"a": "ta"}, dtype=object),
+                tags=np.asarray({"a": ["first"]}, dtype=object),
+            )
+            idx = keyword_filter._load_tags_index_from_npz(p)
+
+        self.assertIsNotNone(idx)
+        assert idx is not None
+        self.assertEqual(idx["row_to_eid"], ["a"])
+        self.assertEqual(idx["row_to_tag"], ["first"])
+        self.assertEqual(idx["E"].shape, (1, 2))
+
+    async def test_find_tag_hits_handles_embedding_dim_mismatch(self) -> None:
+        async def _fake_ensure_index(_model=None):
+            return {
+                "E": np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+                "row_to_eid": ["item-1", "item-2"],
+                "row_to_tag": ["t1", "t2"],
+                "row_to_text": ["text-1", "text-2"],
+                "model": "m",
+            }
+
+        with mock.patch.object(keyword_filter, "_ensure_index", side_effect=_fake_ensure_index):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=[1000.0, 0.0, 1.0],
+                embedding_model="m",
+                model="m",
+                limit=2,
+            )
+
+        self.assertEqual([hid for _, hid, _ in hits], ["item-1"])
