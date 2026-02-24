@@ -19,8 +19,6 @@ def resolve_message_moderation_context(message: types.Message, *, from_linked: b
         return "comment"
     if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
         return "comment"
-    if getattr(message.chat, "linked_chat_id", None):
-        return "comment"
     return "group"
 
 
