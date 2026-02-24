@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 _INDICES: Dict[str, Dict[str, Any]] = {}
+MMR_CANDIDATES_TOP_N = 30
 
 # Backward-compat test hook: runtime cache is disabled, keep a clearable container.
 _EMB_CACHE: Dict[Tuple[str, str], List[float]] = {}
@@ -287,15 +288,72 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
                 )
                 return {
                     "ready": True,
+                    "E": E,
+                    "row_to_eid": [str(i) for i in ids],
+                    "row_to_tag": [str(t or "") for t in tag_texts],
+                    "row_to_text": [str(t or "") for t in texts],
                     "tag_vecs": tag_vecs_by_id,
                     "tags": tags_by_id,
                     "texts": texts_by_id,
                 }
 
             # backward-compat v1: E[N,D], ids[N], texts[N]
-            E = z["E"].astype(np.float32, copy=False)
-            ids = list(z["ids"].tolist())
-            texts = list(z["texts"].tolist())
+            if "E" in files and "ids" in files and "texts" in files:
+                E = z["E"].astype(np.float32, copy=False)
+                ids = list(z["ids"].tolist())
+                texts = list(z["texts"].tolist())
+                row_tags = ["" for _ in range(len(ids))]
+            elif "vecs" in files:
+                vecs = z["vecs"].tolist()
+                texts_map = z["texts"].tolist() if "texts" in files else {}
+                tags_map = z["tags"].tolist() if "tags" in files else {}
+                ids, texts, row_tags, rows = [], [], [], []
+                if isinstance(vecs, dict):
+                    for raw_id, raw_vecs in vecs.items():
+                        eid = str(raw_id)
+                        item_text = str((texts_map or {}).get(raw_id, "") if isinstance(texts_map, dict) else "")
+                        item_tags = (tags_map or {}).get(raw_id, []) if isinstance(tags_map, dict) else []
+                        arr = np.asarray(raw_vecs, dtype=np.float32)
+                        if arr.ndim == 1 and arr.size > 0:
+                            rows.append(arr.tolist())
+                            ids.append(eid)
+                            texts.append(item_text)
+                            row_tags.append(str(item_tags[0]) if item_tags else "")
+                            continue
+                        raw_iter = raw_vecs if isinstance(raw_vecs, (list, tuple, np.ndarray)) else []
+                        for i, raw_vec in enumerate(raw_iter):
+                            rows.append([float(x) for x in raw_vec])
+                            ids.append(eid)
+                            texts.append(item_text)
+                            row_tags.append(str(item_tags[i]) if i < len(item_tags) else "")
+                E = np.asarray(rows, dtype=np.float32)
+            elif "tag_vecs" in files:
+                vecs = z["tag_vecs"].tolist()
+                texts_map = z["texts"].tolist() if "texts" in files else {}
+                tags_map = z["tags"].tolist() if "tags" in files else {}
+                ids, texts, row_tags, rows = [], [], [], []
+                if isinstance(vecs, dict):
+                    for raw_id, raw_vecs in vecs.items():
+                        eid = str(raw_id)
+                        item_text = str((texts_map or {}).get(raw_id, "") if isinstance(texts_map, dict) else "")
+                        item_tags = (tags_map or {}).get(raw_id, []) if isinstance(tags_map, dict) else []
+                        arr = np.asarray(raw_vecs, dtype=np.float32)
+                        if arr.ndim == 1 and arr.size > 0:
+                            rows.append(arr.tolist())
+                            ids.append(eid)
+                            texts.append(item_text)
+                            row_tags.append(str(item_tags[0]) if item_tags else "")
+                            continue
+                        raw_iter = raw_vecs if isinstance(raw_vecs, (list, tuple, np.ndarray)) else []
+                        for i, raw_vec in enumerate(raw_iter):
+                            rows.append([float(x) for x in raw_vec])
+                            ids.append(eid)
+                            texts.append(item_text)
+                            row_tags.append(str(item_tags[i]) if i < len(item_tags) else "")
+                E = np.asarray(rows, dtype=np.float32)
+            else:
+                logger.error("tags NPZ unsupported keys: %s", sorted(files))
+                return None
 
         if E.ndim != 2:
             logger.error("tags NPZ E ndim mismatch: %s", E.shape)
@@ -314,10 +372,13 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
         norms = np.linalg.norm(E, axis=1, keepdims=True)
         norms[norms == 0.0] = 1.0
         E = E / norms
-        tag_vecs_by_id: Dict[str, List[List[float]]] = {
-            str(i): [E[k].tolist()] for k, i in enumerate(ids)
-        }
-        texts_by_id: Dict[str, str] = {str(i): texts[k] for k, i in enumerate(ids)}
+        tag_vecs_by_id: Dict[str, List[List[float]]] = {}
+        texts_by_id: Dict[str, str] = {}
+        for k, raw_id in enumerate(ids):
+            eid = str(raw_id)
+            tag_vecs_by_id.setdefault(eid, []).append(E[k].tolist())
+            if eid not in texts_by_id:
+                texts_by_id[eid] = str(texts[k] or "")
         if isinstance(meta, dict):
             dim_file = int(meta.get("dim", E.shape[1]))
             if dim_file != int(E.shape[1]):
@@ -333,7 +394,15 @@ def _load_tags_index_from_npz(p: Path) -> Optional[Dict[str, Any]]:
             E.shape[0],
             E.shape[1],
         )
-        return {"ready": True, "tag_vecs": tag_vecs_by_id, "texts": texts_by_id}
+        return {
+            "ready": True,
+            "E": E,
+            "row_to_eid": [str(i) for i in ids],
+            "row_to_tag": row_tags if 'row_tags' in locals() else ["" for _ in range(len(ids))],
+            "row_to_text": [str(t or "") for t in texts],
+            "tag_vecs": tag_vecs_by_id,
+            "texts": texts_by_id,
+        }
     except Exception:
         logger.exception(
             "keyword_filter: failed to load precomputed TAGS from %s", p
@@ -359,7 +428,10 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     if key in _INDICES and _INDICES[key].get("ready"):
         return _INDICES[key]
 
-    pre_idx = _load_precomputed_tags_index(model_file_name)
+    loop = asyncio.get_running_loop()
+    pre_idx = await loop.run_in_executor(
+        None, _load_precomputed_tags_index, model_file_name
+    )
     if pre_idx:
         pre_idx["model"] = model_file_name
         _INDICES[key] = pre_idx
@@ -369,7 +441,16 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
     base_dir = Path(__file__).resolve().parent
     filename = settings.KNOWLEDGE_ON_FILE
     if not filename:
-        _INDICES[key] = {"ready": True, "tag_vecs": {}, "texts": {}, "model": emb_model}
+        _INDICES[key] = {
+            "ready": True,
+            "E": np.zeros((0, 0), dtype=np.float32),
+            "row_to_eid": [],
+            "row_to_tag": [],
+            "row_to_text": [],
+            "tag_vecs": {},
+            "texts": {},
+            "model": emb_model,
+        }
         return _INDICES[key]
 
     items = _read_json_list(base_dir / filename)
@@ -413,8 +494,25 @@ async def _ensure_index(model: Optional[str]) -> Dict[str, Any]:
         tag_vecs_by_id[eid] = item_vecs
         tags_by_id[eid] = item_tags
 
+    rows: List[List[float]] = []
+    row_to_eid: List[str] = []
+    row_to_tag: List[str] = []
+    row_to_text: List[str] = []
+    for eid, vecs in tag_vecs_by_id.items():
+        tags = tags_by_id.get(eid) or []
+        txt = texts_by_id.get(eid, "")
+        for i, vec in enumerate(vecs):
+            rows.append(vec)
+            row_to_eid.append(eid)
+            row_to_tag.append(str(tags[i]) if i < len(tags) else "")
+            row_to_text.append(txt)
+
     _INDICES[key] = {
         "ready": True,
+        "E": np.asarray(rows, dtype=np.float32),
+        "row_to_eid": row_to_eid,
+        "row_to_tag": row_to_tag,
+        "row_to_text": row_to_text,
         "tag_vecs": tag_vecs_by_id,
         "tags": tags_by_id,
         "texts": texts_by_id,
@@ -432,17 +530,29 @@ async def _ensure_owner_index(owner_id: int, model: Optional[str]) -> Dict[str, 
     """Per-API-key TAGS index from api_keys/<owner_id>/tags_embedded_*.npz."""
     owner_id_int = int(owner_id)
     model_file_name = model or settings.EMBEDDING_MODEL
-    pre_idx = _load_precomputed_tags_index_for_owner(owner_id_int, model_file_name)
+    key = f"owner::{owner_id_int}::{model_file_name}"
+    if key in _INDICES and _INDICES[key].get("ready"):
+        return _INDICES[key]
+    loop = asyncio.get_running_loop()
+    pre_idx = await loop.run_in_executor(
+        None, _load_precomputed_tags_index_for_owner, owner_id_int, model_file_name
+    )
     if pre_idx:
         pre_idx["model"] = model_file_name
-        return pre_idx
+        _INDICES[key] = pre_idx
+        return _INDICES[key]
 
     idx: Dict[str, Any] = {
         "ready": True,
+        "E": np.zeros((0, 0), dtype=np.float32),
+        "row_to_eid": [],
+        "row_to_tag": [],
+        "row_to_text": [],
         "tag_vecs": {},
         "texts": {},
         "model": model_file_name,
     }
+    _INDICES[key] = idx
     logger.info(
         "keyword_filter: no per-owner TAGS index for owner_id=%s model=%s",
         owner_id_int,
@@ -485,11 +595,13 @@ async def find_tag_hits(
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
 ) -> List[Tuple[float, str, str]]:
+    t_total0 = time.perf_counter()
 
     t = _norm_ws(text)
     if not t:
         return []
 
+    t_load0 = time.perf_counter()
     sys_idx = await _ensure_index(model)
     indices: List[Tuple[str, Optional[int], Dict[str, Any]]] = [("sys", None, sys_idx)]
 
@@ -505,28 +617,36 @@ async def find_tag_hits(
         indices.append(("owner", owner_id_int, owner_idx))
 
     union_texts_by_id: Dict[str, str] = {}
-    union_tag_vecs_by_id: Dict[str, List[List[float]]] = {}
+    has_any_rows = False
 
     for scope, oid, idx in indices:
+        E = idx.get("E")
+        row_to_eid = idx.get("row_to_eid") or []
+        row_to_text = idx.get("row_to_text") or []
+        if isinstance(E, np.ndarray) and E.size > 0 and row_to_eid:
+            has_any_rows = True
+            for row_idx, eid in enumerate(row_to_eid):
+                rid = f"{oid}:{eid}" if (scope == "owner" and oid is not None) else str(eid)
+                if rid not in union_texts_by_id:
+                    union_texts_by_id[rid] = (
+                        str(row_to_text[row_idx]) if row_idx < len(row_to_text) else ""
+                    )
+            continue
+
         tag_vecs_by_id = idx.get("tag_vecs") or {}
         if not tag_vecs_by_id:
             legacy_vecs = idx.get("vecs") or {}
             tag_vecs_by_id = {k: [v] for k, v in legacy_vecs.items()}
-        texts_by_id = idx.get("texts") or {}
         if not tag_vecs_by_id:
             continue
-
-        for eid, item_vecs in tag_vecs_by_id.items():
-            if scope == "owner" and oid is not None:
-                rid = f"{oid}:{eid}"
-            else:
-                rid = eid
-            if rid not in union_tag_vecs_by_id:
-                union_tag_vecs_by_id[rid] = item_vecs
+        has_any_rows = True
+        texts_by_id = idx.get("texts") or {}
+        for eid in tag_vecs_by_id.keys():
+            rid = f"{oid}:{eid}" if (scope == "owner" and oid is not None) else str(eid)
             if rid not in union_texts_by_id:
-                union_texts_by_id[rid] = texts_by_id.get(eid, "")
+                union_texts_by_id[rid] = str(texts_by_id.get(eid, "") or "")
 
-    if not union_tag_vecs_by_id:
+    if not has_any_rows:
         return []
 
     try:
@@ -556,10 +676,11 @@ async def find_tag_hits(
     qv_by_model: Dict[str, List[float]] = {}
     models_needed: set[str] = set()
     for _, _, idx in indices:
-        tag_vecs_by_id = idx.get("tag_vecs") or {}
-        if not tag_vecs_by_id:
-            tag_vecs_by_id = {k: [v] for k, v in (idx.get("vecs") or {}).items()}
-        if not tag_vecs_by_id:
+        E = idx.get("E")
+        has_rows = isinstance(E, np.ndarray) and E.size > 0
+        if not has_rows:
+            has_rows = bool(idx.get("tag_vecs") or idx.get("vecs"))
+        if not has_rows:
             continue
         emb_model = idx.get("model") or (model or settings.EMBEDDING_MODEL)
         models_needed.add(emb_model)
@@ -579,46 +700,71 @@ async def find_tag_hits(
                 qv_by_model[emb_model] = precomputed_qv
             continue
         qv_by_model[emb_model] = (await _embed_texts([t], model=emb_model))[0]
+    load_elapsed = time.perf_counter() - t_load0
 
     scores_by_id: Dict[str, float] = {}
     rid_model: Dict[str, str] = {}
     best_tag_vec_by_id: Dict[str, List[float]] = {}
     best_tag_name_by_id: Dict[str, str] = {}
 
+    t_score0 = time.perf_counter()
+    total_rows = 0
     for scope, oid, idx in indices:
-        tag_vecs_by_id = idx.get("tag_vecs") or {}
-        if not tag_vecs_by_id:
-            tag_vecs_by_id = {k: [v] for k, v in (idx.get("vecs") or {}).items()}
-        if not tag_vecs_by_id:
+        E = idx.get("E")
+        row_to_eid = idx.get("row_to_eid") or []
+        row_to_tag = idx.get("row_to_tag") or []
+        row_to_text = idx.get("row_to_text") or []
+        if not isinstance(E, np.ndarray):
+            tag_vecs_by_id = idx.get("tag_vecs") or {}
+            if not tag_vecs_by_id:
+                tag_vecs_by_id = {k: [v] for k, v in (idx.get("vecs") or {}).items()}
+            rows: List[List[float]] = []
+            row_to_eid = []
+            row_to_tag = []
+            row_to_text = []
+            texts_map = idx.get("texts") or {}
+            tags_map = idx.get("tags") or {}
+            for eid, vecs in tag_vecs_by_id.items():
+                tags = tags_map.get(eid) or []
+                txt = str(texts_map.get(eid, "") or "")
+                for i, vec in enumerate(vecs):
+                    rows.append([float(x) for x in vec])
+                    row_to_eid.append(str(eid))
+                    row_to_tag.append(str(tags[i]) if i < len(tags) else "")
+                    row_to_text.append(txt)
+            E = np.asarray(rows, dtype=np.float32)
+        if E.size == 0:
             continue
         emb_model = idx.get("model") or (model or settings.EMBEDDING_MODEL)
         qv = qv_by_model[emb_model]
-        tags_by_id = idx.get("tags") or {}
-        for eid, item_vecs in tag_vecs_by_id.items():
-            if scope == "owner" and oid is not None:
-                rid = f"{oid}:{eid}"
-            else:
-                rid = eid
+        total_rows += int(E.shape[0])
+        qv_arr = np.asarray(qv, dtype=np.float32)
+        dim = min(int(E.shape[1]), int(qv_arr.shape[0])) if qv_arr.ndim == 1 else 0
+        if dim <= 0:
+            continue
+        scores = E[:, :dim] @ qv_arr[:dim]
+        for row_idx, score in enumerate(scores.tolist()):
+            if score < kw_thr:
+                continue
+            eid = str(row_to_eid[row_idx]) if row_idx < len(row_to_eid) else ""
+            if not eid:
+                continue
+            rid = f"{oid}:{eid}" if (scope == "owner" and oid is not None) else eid
             if rid in rid_model and rid_model[rid] != emb_model:
                 continue
             rid_model[rid] = emb_model
-            best_s: Optional[float] = None
-            best_vec: Optional[List[float]] = None
-            best_tag_name = ""
-            tag_names = tags_by_id.get(eid) or ["" for _ in item_vecs]
-            for i, ev in enumerate(item_vecs):
-                s = _cosine(qv, ev)
-                if best_s is None or s > best_s:
-                    best_s = float(s)
-                    best_vec = ev
-                    best_tag_name = str(tag_names[i]) if i < len(tag_names) else ""
-            if best_s is None or best_vec is None or best_s < kw_thr:
-                continue
             prev = scores_by_id.get(rid)
-            if prev is None or best_s > prev:
-                scores_by_id[rid] = best_s
-                best_tag_vec_by_id[rid] = best_vec
-                best_tag_name_by_id[rid] = best_tag_name
+            if prev is None or score > prev:
+                scores_by_id[rid] = float(score)
+                best_tag_vec_by_id[rid] = E[row_idx].tolist()
+                best_tag_name_by_id[rid] = (
+                    str(row_to_tag[row_idx]) if row_idx < len(row_to_tag) else ""
+                )
+                if rid not in union_texts_by_id:
+                    union_texts_by_id[rid] = (
+                        str(row_to_text[row_idx]) if row_idx < len(row_to_text) else ""
+                    )
+    score_elapsed = time.perf_counter() - t_score0
 
     if not scores_by_id:
         logger.info(
@@ -640,20 +786,31 @@ async def find_tag_hits(
         top_k = 3
 
     cand_ids = sorted(scores_by_id.keys(), key=lambda i: scores_by_id[i], reverse=True)
+    top_n = MMR_CANDIDATES_TOP_N
+    cand_ids = cand_ids[:top_n]
+    t_mmr0 = time.perf_counter()
     picked_ids = _mmr_select_ids(
         cand_ids, best_tag_vec_by_id, scores_by_id, top_k=top_k, lam=lam
     )
+    mmr_elapsed = time.perf_counter() - t_mmr0
 
     results: List[Tuple[float, str, str]] = [
         (scores_by_id[i], i, union_texts_by_id.get(i, "")) for i in picked_ids
     ]
+    total_elapsed = time.perf_counter() - t_total0
     logger.info(
-        "keyword_filter: embedding hits=%d (kw_thr=%.3f, λ=%.2f, owner_id=%s) → returned=%d",
+        "keyword_filter: embedding rows=%d candidates=%d topN=%d returned=%d timings(load=%.3fs score=%.3fs mmr=%.3fs total=%.3fs) (kw_thr=%.3f, λ=%.2f, owner_id=%s)",
+        total_rows,
         len(scores_by_id),
+        min(top_n, len(scores_by_id)),
+        len(results),
+        load_elapsed,
+        score_elapsed,
+        mmr_elapsed,
+        total_elapsed,
         kw_thr,
         lam,
         owner_id_int,
-        len(results),
     )
     if results:
         logger.debug(
