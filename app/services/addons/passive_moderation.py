@@ -282,7 +282,7 @@ async def extract_external_mentions(
     text: str,
     entities: List[dict] | None = None,
 ) -> List[str]:
-    """Return @usernames that resolve to external channels/bots or unknown chats."""
+    """Return @usernames that resolve to external channels/bots."""
     if not text or not entities:
         return []
 
@@ -349,6 +349,11 @@ async def extract_external_mentions(
                 chat = await asyncio.wait_for(bot.get_chat(f"@{uname}"), timeout=resolve_timeout)
             if not chat:
                 outcome = "unknown_error"
+                logger.warning(
+                    "extract_external_mentions: unknown_error empty chat response chat_id=%s uname=%s",
+                    chat_id,
+                    uname,
+                )
             elif getattr(chat, "type", None) == ChatType.CHANNEL:
                 outcome = "channel"
             elif getattr(chat, "is_bot", False):
@@ -357,6 +362,12 @@ async def extract_external_mentions(
                 outcome = "ok_user"
         except Exception:
             outcome = "unknown_error"
+            logger.warning(
+                "extract_external_mentions: unknown_error on get_chat chat_id=%s uname=%s",
+                chat_id,
+                uname,
+                exc_info=True,
+            )
 
         try:
             ttl = ttl_pos if outcome == "ok_user" else ttl_neg
@@ -368,9 +379,14 @@ async def extract_external_mentions(
     outcomes = await asyncio.gather(*(_resolve_outcome(uname) for uname in usernames), return_exceptions=True)
     for uname, outcome in zip(usernames, outcomes):
         if isinstance(outcome, Exception):
-            external.append(uname)
+            logger.warning(
+                "extract_external_mentions: unknown_error gather exception chat_id=%s uname=%s",
+                chat_id,
+                uname,
+                exc_info=(type(outcome), outcome, outcome.__traceback__),
+            )
             continue
-        if outcome in {"channel", "bot", "unknown_error"}:
+        if outcome in {"channel", "bot"}:
             external.append(uname)
 
     return external
