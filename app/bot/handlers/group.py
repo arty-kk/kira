@@ -111,9 +111,6 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
     if _is_chat_allowed(message.chat):
         return True
 
-    if not bool(getattr(settings, "COMMENT_MODERATION_ENABLED", False)):
-        return False
-
     target_ids = set(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
     with contextlib.suppress(Exception):
         if int(message.chat.id) in target_ids:

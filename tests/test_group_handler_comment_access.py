@@ -80,7 +80,7 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(group, "settings", cfg):
             self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
 
-    async def test_disabled_comment_scope_does_not_bypass_allowed_groups(self) -> None:
+    async def test_disabled_comment_scope_still_allows_trusted_comment_scope(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=400, type=ChatType.SUPERGROUP),
             sender_chat=types.SimpleNamespace(id=-100777, type=ChatType.CHANNEL),
@@ -92,6 +92,23 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
             ALLOWED_GROUP_IDS=[],
             COMMENT_MODERATION_ENABLED=False,
             COMMENT_TARGET_CHAT_IDS=[400],
+            COMMENT_SOURCE_CHANNEL_IDS=[-100777],
+        )
+        with patch.object(group, "settings", cfg):
+            self.assertTrue(await group._is_message_allowed_for_group_handlers(message))
+
+    async def test_untrusted_chat_still_blocked_when_not_in_allowed_or_comment_scope(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=401, type=ChatType.SUPERGROUP),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        cfg = types.SimpleNamespace(
+            ALLOWED_GROUP_IDS=[],
+            COMMENT_MODERATION_ENABLED=False,
+            COMMENT_TARGET_CHAT_IDS=[],
             COMMENT_SOURCE_CHANNEL_IDS=[-100777],
         )
         with patch.object(group, "settings", cfg):
