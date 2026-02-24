@@ -185,3 +185,81 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
         compute_mock.assert_awaited_once()
         self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "")
         self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "raw")
+
+
+class ResponderRequestEmbeddingContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_request_embedding_context_reused_by_persona_and_rag(self):
+        class _Persona:
+            def __init__(self):
+                self.state = {}
+                self.style_calls = []
+
+            async def ready(self, timeout=5.0):
+                return True
+
+            async def process_interaction(self, *_args, **_kwargs):
+                return None
+
+            async def summary(self):
+                return "summary"
+
+            async def style_guidelines(self, *_args, **kwargs):
+                self.style_calls.append(kwargs)
+                return ["guideline"]
+
+            async def style_modifiers(self):
+                return {}
+
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "hgetall": AsyncMock(return_value={}),
+                "get": AsyncMock(return_value=None),
+                "set": AsyncMock(return_value=True),
+                "delete": AsyncMock(return_value=1),
+            },
+        )()
+
+        persona = _Persona()
+        compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="topic", rag_query_source="raw")))
+
+        with patch.object(core, "get_redis", return_value=redis_stub), \
+             patch.object(core, "get_persona", AsyncMock(return_value=persona)), \
+             patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
+             patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
+             patch.object(core, "load_context", AsyncMock(return_value=[])), \
+             patch.object(core, "record_context", AsyncMock(return_value=None)), \
+             patch.object(core, "needs_coref", AsyncMock(return_value=False)), \
+             patch.object(core, "_compute_on_topic_relevance", compute_mock), \
+             patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
+             patch.object(core, "get_ltm_text", AsyncMock(return_value="")), \
+             patch.object(core, "get_all_mtm_texts", AsyncMock(return_value=[])), \
+             patch.object(core.logger, "info") as logger_info:
+
+            out = await core.respond_to_user(
+                text="topic",
+                chat_id=1,
+                user_id=2,
+                trigger="api",
+                enforce_on_topic=True,
+                skip_user_push=True,
+                skip_assistant_push=True,
+                skip_persona_interaction=True,
+                query_embedding=[0.1, 0.2],
+                embedding_model="text-embedding-3-large",
+            )
+
+        self.assertEqual(out, "")
+        self.assertEqual(len(persona.style_calls[0]["precomputed_embedding"]), 2)
+        self.assertAlmostEqual(persona.style_calls[0]["precomputed_embedding"][0], 0.1, places=6)
+        self.assertAlmostEqual(persona.style_calls[0]["precomputed_embedding"][1], 0.2, places=6)
+        self.assertEqual(len(compute_mock.await_args.kwargs["query_embedding"]), 2)
+
+        rag_log = None
+        for call in logger_info.call_args_list:
+            if call.args and call.args[0] == "RAG query embedding context":
+                rag_log = call
+                break
+        self.assertIsNotNone(rag_log)
+        self.assertEqual(rag_log.kwargs["extra"]["embedding_source"], "reused")
