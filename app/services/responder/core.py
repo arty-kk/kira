@@ -12,7 +12,7 @@ import numpy as np
 
 from dataclasses import dataclass
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Literal
 from aiohttp import ClientError
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -74,6 +74,29 @@ class RagQueryContext:
     embedding_model: str | None = None
     query_embedding_source: str = "module_local"
     query_embedding_reuse_count: int = 0
+
+
+@dataclass
+class RequestEmbeddingContext:
+    query_text: str
+    query_embedding: List[float] | None
+    embedding_model: str | None
+    embedding_source: Literal["computed", "reused"]
+
+
+def _normalize_embedding_vector(raw_embedding: Any) -> List[float] | None:
+    if not isinstance(raw_embedding, list) or not raw_embedding:
+        return None
+    try:
+        vec = np.asarray(raw_embedding, dtype=np.float32)
+    except Exception:
+        return None
+    if vec.ndim != 1 or vec.size == 0:
+        return None
+    vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+    if not np.any(vec):
+        return None
+    return vec.astype(np.float32, copy=False).tolist()
 
 
 async def _compute_on_topic_relevance(
@@ -1004,8 +1027,30 @@ async def respond_to_user(
         else:
             logger.info("   ↳ process_interaction END (t=%.3fs)", time.time() - t0)
 
+    query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
+    normalized_request_embedding = _normalize_embedding_vector(query_embedding)
+    request_embedding_context = RequestEmbeddingContext(
+        query_text=query,
+        query_embedding=normalized_request_embedding,
+        embedding_model=embedding_model,
+        embedding_source="reused" if normalized_request_embedding is not None else "computed",
+    )
+    if not (request_embedding_context.query_text or "").strip():
+        request_embedding_context.query_embedding = None
+        request_embedding_context.embedding_source = "computed"
+
     summ_t = asyncio.create_task(asyncio.wait_for(persona.summary(), 5.0))
-    guid_t = asyncio.create_task(asyncio.wait_for(persona.style_guidelines(memory_uid), 5.0))
+    guid_t = asyncio.create_task(
+        asyncio.wait_for(
+            persona.style_guidelines(
+                memory_uid,
+                precomputed_embedding=request_embedding_context.query_embedding,
+                embedding_model=request_embedding_context.embedding_model,
+                embedding_source=request_embedding_context.embedding_source,
+            ),
+            5.0,
+        )
+    )
     mods_t = asyncio.create_task(asyncio.wait_for(persona.style_modifiers(), 5.0))
     summ_res, guid_res, mods_res = await asyncio.gather(summ_t, guid_t, mods_t, return_exceptions=True)
     if isinstance(summ_res, Exception):
@@ -1077,7 +1122,6 @@ async def respond_to_user(
     )
 
     # Build initial history from STM only
-    query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
     coref_gate_t = asyncio.create_task(needs_coref(query))
     if getattr(settings, "LLM_AUDIT", False):
         logger.info("[TRACE] raw=%r query=%r", text[:200], query[:200])
@@ -1455,14 +1499,15 @@ async def respond_to_user(
             persona_owner_id=persona_owner_id,
             knowledge_owner_id=knowledge_owner_id,
             precomputed_rag_hits=precomputed_rag_hits,
-            query_embedding=query_embedding,
-            embedding_model=embedding_model,
+            query_embedding=request_embedding_context.query_embedding,
+            embedding_model=request_embedding_context.embedding_model,
             rag_precheck_source=rag_precheck_source,
             rag_query_source=rag_query_source,
         )
         logger.info(
             "RAG query embedding context",
             extra={
+                "embedding_source": request_embedding_context.embedding_source,
                 "rag_query_source": rag_query_context.rag_query_source,
                 "query_embedding_source": rag_query_context.query_embedding_source,
                 "query_embedding_reuse_count": rag_query_context.query_embedding_reuse_count,

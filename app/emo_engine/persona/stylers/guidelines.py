@@ -11,7 +11,7 @@ import re
 import secrets
 import time
 
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Literal, Sequence, Any
 
 from app.config import settings
 from ..constants.extra_devices import EXTRA_DEVICES, BOT_SIGNATURES
@@ -22,6 +22,22 @@ from ..executor import EXECUTOR
 
 logger = logging.getLogger(__name__)
 
+
+
+def _normalize_embedding_for_memory_query(embedding: Any) -> List[float] | None:
+    if embedding is None:
+        return None
+    if isinstance(embedding, (bytes, bytearray)):
+        return None
+    if not isinstance(embedding, Sequence) or isinstance(embedding, (str, bytes, bytearray)):
+        return None
+    try:
+        vec = [float(x) for x in embedding]
+    except Exception:
+        return None
+    if not vec or not any(vec):
+        return None
+    return vec
 
 def _metric(state: Dict[str, float], mods: Dict[str, float], key: str, fallback: float = 0.5) -> float:
     if not key:
@@ -143,6 +159,9 @@ async def style_guidelines(
     max_items: int = 18,
     *,
     human_mode: bool = True,
+    precomputed_embedding: Sequence[float] | None = None,
+    embedding_model: str | None = None,
+    embedding_source: Literal["computed", "reused"] | None = None,
 ) -> List[str]:
 
     state = self.state.copy()
@@ -280,37 +299,51 @@ async def style_guidelines(
 
     try:
         if last_msg and (not _low_info(last_msg)):
-            emb = None
-            cached_emb = getattr(self, "_last_msg_emb", None)
-            cached_text = getattr(self, "_last_msg_emb_text", None)
-            if cached_emb is not None and last_msg == cached_text:
-                emb = cached_emb
+            emb = _normalize_embedding_for_memory_query(precomputed_embedding)
+            emb_source = "reused" if emb is not None else "computed"
             if emb is None:
-                emb_task = getattr(self, "_emb_inflight", None)
-                emb_task_text = getattr(self, "_emb_inflight_text", None)
-                if emb_task is not None and emb_task_text == last_msg:
-                    if emb_task.done():
-                        try:
-                            if not emb_task.cancelled() and emb_task.exception() is None:
-                                emb = emb_task.result()
-                        except Exception:
-                            emb = None
-                    if emb is None:
-                        try:
-                            emb = await asyncio.wait_for(asyncio.shield(emb_task), timeout=0.4)
-                        except Exception:
-                            emb = None
-                    if emb:
-                        self._last_msg_emb = emb
-                        self._last_msg_emb_text = last_msg
-            if emb is None:
-                _t1 = time.perf_counter()
-                try:
-                    emb = await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
-                    logger.info("openai_request name=get_embedding duration_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
-                except asyncio.TimeoutError:
-                    logger.warning("openai_timeout name=get_embedding after_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
-                    raise
+                cached_emb = getattr(self, "_last_msg_emb", None)
+                cached_text = getattr(self, "_last_msg_emb_text", None)
+                if cached_emb is not None and last_msg == cached_text:
+                    emb = _normalize_embedding_for_memory_query(cached_emb)
+                if emb is None:
+                    emb_task = getattr(self, "_emb_inflight", None)
+                    emb_task_text = getattr(self, "_emb_inflight_text", None)
+                    if emb_task is not None and emb_task_text == last_msg:
+                        if emb_task.done():
+                            try:
+                                if not emb_task.cancelled() and emb_task.exception() is None:
+                                    emb = _normalize_embedding_for_memory_query(emb_task.result())
+                            except Exception:
+                                emb = None
+                        if emb is None:
+                            try:
+                                emb = _normalize_embedding_for_memory_query(
+                                    await asyncio.wait_for(asyncio.shield(emb_task), timeout=0.4)
+                                )
+                            except Exception:
+                                emb = None
+                        if emb is not None:
+                            self._last_msg_emb = emb
+                            self._last_msg_emb_text = last_msg
+                if emb is None:
+                    _t1 = time.perf_counter()
+                    try:
+                        emb = _normalize_embedding_for_memory_query(
+                            await asyncio.wait_for(get_embedding(last_msg), timeout=4.0)
+                        )
+                        logger.info("openai_request name=get_embedding duration_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
+                    except asyncio.TimeoutError:
+                        logger.warning("openai_timeout name=get_embedding after_ms=%.1f", (time.perf_counter() - _t1) * 1000.0)
+                        raise
+            logger.info(
+                "style_guidelines embedding context",
+                extra={
+                    "embedding_source": emb_source,
+                    "requested_embedding_source": embedding_source,
+                    "embedding_model": embedding_model,
+                },
+            )
             if emb and any(emb):
                 try:
                     hits = await asyncio.wait_for(
