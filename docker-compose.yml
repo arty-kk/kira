@@ -2,7 +2,7 @@
 services:
 
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     env_file: .env
     environment:
@@ -104,23 +104,6 @@ services:
       start_period: 90s
       retries: 10
 
-  precompute-embeddings:
-    build: .
-    restart: "no"
-    env_file: .env
-    environment:
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-large}
-    volumes:
-      - app_data:/app/data
-    command: [
-      "python",
-      "scripts/precompute_embeddings.py",
-      "--kb-file",
-      "app/services/responder/rag/knowledge_on.json",
-      "--out-file",
-      "/app/data/embeddings/knowledge_embedded_${EMBEDDING_MODEL:-text-embedding-3-large}.json"
-    ]
-
   bot:
     build: .
     restart: unless-stopped
@@ -150,8 +133,6 @@ services:
       db:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
-      precompute-embeddings:
         condition: service_completed_successfully
     volumes:
       - ./certs:/certs:ro
@@ -203,8 +184,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      precompute-embeddings:
-        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -234,7 +213,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    command: ["bash", "-lc", "alembic -c /app/alembic.ini upgrade head && python scripts/bootstrap_system_kb_pgvector.py --kb-file app/services/responder/rag/knowledge_on.json --model ${EMBEDDING_MODEL:-text-embedding-3-large}"]
 
   worker-tasks:
     build: .
@@ -268,8 +247,6 @@ services:
       db:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
-      precompute-embeddings:
         condition: service_completed_successfully
     command:
       - celery
@@ -325,8 +302,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      precompute-embeddings:
-        condition: service_completed_successfully
     command:
       - celery
       - "-A"
@@ -381,8 +356,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      precompute-embeddings:
-        condition: service_completed_successfully
     command:
       - celery
       - "-A"
@@ -434,8 +407,6 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      precompute-embeddings:
-        condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.queue_worker"]
     ulimits:
       nofile:
@@ -482,8 +453,6 @@ services:
       db:
         condition: service_healthy
       migrate:
-        condition: service_completed_successfully
-      precompute-embeddings:
         condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.api_worker"]
     ulimits:

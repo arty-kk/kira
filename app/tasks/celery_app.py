@@ -10,7 +10,6 @@ from celery import Celery, current_task
 from celery.signals import setup_logging as celery_setup_logging, worker_ready
 
 from app.config import settings
-from app.services.responder.rag.knowledge_proc import _init_kb
 from app.core.logging_config import setup_logging
 from app.tasks.utils.bg_loop import get_bg_loop
 
@@ -116,13 +115,7 @@ def _run(coro, timeout: float | None = None):
 
 @worker_ready.connect
 def _warm_up_worker(sender=None, **_kwargs) -> None:
-    try:
-        _run(_init_kb())
-        logger.info(
-            "Knowledge base initialized in Celery worker %s",
-            getattr(sender, "hostname", "?"),
-        )
-    except Exception:
-        logger.exception(
-            "Failed to initialize knowledge base in worker process"
-        )
+    logger.info(
+        "Celery worker ready: %s",
+        getattr(sender, "hostname", "?"),
+    )

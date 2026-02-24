@@ -6,6 +6,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 
 from app.core.db_base import Base
 
@@ -180,6 +181,27 @@ class ApiKeyKnowledge(Base):
             "version",
             name="uq_api_key_knowledge_version",
         ),
+    )
+
+
+
+class RagTagVector(Base):
+
+    __tablename__ = "rag_tag_vectors"
+
+    id = Column(BigInteger, Identity(always=False), primary_key=True)
+    scope = Column(String(16), nullable=False, server_default=text("'global'"), index=True)
+    owner_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True, index=True)
+    kb_id = Column(BigInteger, ForeignKey("api_key_knowledge.id", ondelete="CASCADE"), nullable=True, index=True)
+    embedding_model = Column(String(128), nullable=False, index=True)
+    external_id = Column(String(255), nullable=False)
+    text = Column(String, nullable=False)
+    tag = Column(String(255), nullable=False)
+    embedding = Column(Vector(3072), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
     )
 
 class GiftPurchase(Base):

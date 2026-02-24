@@ -49,7 +49,7 @@ from app.services.addons.analytics import (
     record_context, record_ping_response,
     record_assistant_reply, record_latency, record_timeout
 )
-from .rag import _KB_ENTRIES, _init_kb, is_relevant
+from .rag import is_relevant
 from .rag.knowledge_proc import _get_query_embedding
 from .context_select import (
     compose_mtm_snippet,
@@ -1599,13 +1599,6 @@ async def respond_to_user(
         else:
             logger.info("RAG: skipped (no tag/text hits)")
 
-
-    if reply is None and emb_model:
-        if emb_model not in _KB_ENTRIES:
-            try:
-                await _init_kb(emb_model)
-            except Exception:
-                logger.exception("Failed to init KB for %s", emb_model, exc_info=True)
 
     temperature = dynamic_temperature
     top_p = dynamic_top_p
