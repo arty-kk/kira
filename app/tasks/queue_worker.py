@@ -1500,25 +1500,27 @@ async def handle_job(raw, processing_key: str) -> None:
                 )
 
             soft_reply_context = bool(job.get("soft_reply_context"))
-            knowledge_owner_id = job.get("knowledge_owner_id")
+            # Bot worker and API worker are intentionally isolated layers.
+            # API-scoped owner KB must be used only in api_worker.
+            incoming_knowledge_owner_id = job.get("knowledge_owner_id")
+            if incoming_knowledge_owner_id is not None:
+                logger.info(
+                    "queue_worker: ignoring knowledge_owner_id in bot job chat=%s msg=%s",
+                    chat_id,
+                    msg_id,
+                )
+            knowledge_owner_id = None
             precomputed_rag_hits = None
             query_embedding = None
             embedding_model = None
 
             if is_group and trigger == "check_on_topic":
                 try:
-                    owner_id = int(knowledge_owner_id) if knowledge_owner_id is not None else None
-                except Exception:
-                    owner_id = None
-                if owner_id is not None and owner_id <= 0:
-                    owner_id = None
-
-                try:
                     embedding_model = settings.EMBEDDING_MODEL
                     precomputed_rag_hits = await find_tag_hits(
                         text,
                         model=embedding_model,
-                        owner_id=owner_id,
+                        owner_id=None,
                     )
                 except Exception:
                     logger.exception(
