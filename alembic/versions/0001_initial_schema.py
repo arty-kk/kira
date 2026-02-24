@@ -2,6 +2,7 @@
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from pgvector.sqlalchemy import Vector
 
 revision = "0001_initial_schema"
 down_revision = None
@@ -10,6 +11,8 @@ depends_on = None
 
 
 def upgrade():
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+
     op.create_table(
         "users",
         sa.Column("id", sa.BigInteger(), primary_key=True),
@@ -172,6 +175,27 @@ def upgrade():
     op.create_index("ix_request_reservations_user_id", "request_reservations", ["user_id"])
     op.create_index("ix_request_reservations_created_at", "request_reservations", ["created_at"])
 
+
+    op.create_table(
+        "rag_tag_vectors",
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=False), primary_key=True),
+        sa.Column("scope", sa.String(length=16), nullable=False, server_default=sa.text("'global'")),
+        sa.Column("owner_id", sa.BigInteger(), sa.ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("kb_id", sa.BigInteger(), sa.ForeignKey("api_key_knowledge.id", ondelete="CASCADE"), nullable=True),
+        sa.Column("embedding_model", sa.String(length=128), nullable=False),
+        sa.Column("external_id", sa.String(length=255), nullable=False),
+        sa.Column("text", sa.String(), nullable=False),
+        sa.Column("tag", sa.String(length=255), nullable=False),
+        sa.Column("embedding", Vector(3072), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
+    )
+    op.create_index("ix_rag_tag_vectors_scope", "rag_tag_vectors", ["scope"])
+    op.create_index("ix_rag_tag_vectors_owner_id", "rag_tag_vectors", ["owner_id"])
+    op.create_index("ix_rag_tag_vectors_kb_id", "rag_tag_vectors", ["kb_id"])
+    op.create_index("ix_rag_tag_vectors_embedding_model", "rag_tag_vectors", ["embedding_model"])
+    op.create_index("ix_rag_tag_vectors_created_at", "rag_tag_vectors", ["created_at"])
+
     op.create_table(
         "refund_outbox",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
@@ -232,6 +256,15 @@ def downgrade():
 
     op.drop_table("payment_receipts")
     op.drop_table("gift_purchases")
+
+    op.drop_index("ix_rag_tag_vectors_created_at", table_name="rag_tag_vectors")
+    op.drop_index("ix_rag_tag_vectors_embedding_model", table_name="rag_tag_vectors")
+    op.drop_index("ix_rag_tag_vectors_kb_id", table_name="rag_tag_vectors")
+    op.drop_index("ix_rag_tag_vectors_owner_id", table_name="rag_tag_vectors")
+    op.drop_index("ix_rag_tag_vectors_scope", table_name="rag_tag_vectors")
+    op.drop_table("rag_tag_vectors")
+
+
     op.drop_table("api_key_knowledge")
     op.drop_table("api_key_stats")
     op.drop_index("ix_api_keys_created_at", table_name="api_keys")

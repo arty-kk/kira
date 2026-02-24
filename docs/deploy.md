@@ -57,6 +57,13 @@ DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/appdb \
 python -m alembic -c alembic/alembic.ini upgrade head
 ```
 
+## RAG bootstrap
+
+- In docker-compose local deployment, `db` uses `pgvector/pgvector:pg16` so the `vector` extension is available for migrations.
+- `migrate` now performs Alembic migration and immediately builds the system RAG tag index into PostgreSQL (`pgvector`) from `knowledge_on.json`.
+- Runtime services (`api`, `main`, `worker-*`) start only after `migrate` completes, and read tag vectors from PostgreSQL tables (tags-based retrieval only).
+- Legacy local JSON/NPZ vector files are not used in runtime path.
+
 ## Supported scale variables
 
 - `DB_SCALE` → `db`

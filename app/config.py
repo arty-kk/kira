@@ -164,6 +164,7 @@ class Settings:
     EMBEDDING_TIMEOUT: int = field(default_factory=lambda: _get_env("EMBEDDING_TIMEOUT", "60", conv=int))
     EMBEDDING_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("EMBEDDING_MAX_CONCURRENCY", "100", conv=int))
     EMBED_BATCH_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BATCH_SIZE", "128", conv=int))
+    RAG_VECTOR_DIM: int = field(default_factory=lambda: _get_env("RAG_VECTOR_DIM", "3072", conv=int))
 
     # ─── Telegram ───────────────────────────────────────
     TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN"))
