@@ -291,6 +291,88 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_auto_forward_bypass_and_regular_forward_respects_toggle(self) -> None:
+        def make_message(message_id: int, *, is_automatic_forward: bool, forward_from_chat: object | None):
+            return types.SimpleNamespace(
+                chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+                message_id=message_id,
+                from_user=types.SimpleNamespace(id=42, is_bot=False),
+                sender_chat=None,
+                forward_from=None,
+                forward_from_chat=forward_from_chat,
+                forward_sender_name=None,
+                is_automatic_forward=is_automatic_forward,
+                external_reply=None,
+                text="forwarded",
+                caption=None,
+                entities=[],
+                caption_entities=[],
+                reply_markup=None,
+                sticker=None,
+                game=None,
+                dice=None,
+                via_bot=None,
+                story=None,
+                voice=None,
+                video_note=None,
+                audio=None,
+                photo=None,
+                video=None,
+                animation=None,
+                document=None,
+            )
+
+        auto_forward_message = make_message(
+            30,
+            is_automatic_forward=True,
+            forward_from_chat=types.SimpleNamespace(id=-2001, type=ChatType.CHANNEL),
+        )
+        regular_forward_message = make_message(
+            31,
+            is_automatic_forward=False,
+            forward_from_chat=types.SimpleNamespace(id=-2002, type=ChatType.CHANNEL),
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings(MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS=True, MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS=False)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+        ):
+            auto_handled = await moderation.apply_moderation_filters(auto_forward_message.chat.id, auto_forward_message)
+            regular_handled = await moderation.apply_moderation_filters(regular_forward_message.chat.id, regular_forward_message)
+
+        self.assertFalse(auto_handled)
+        self.assertTrue(regular_handled)
+        self.assertEqual(delete_mock.await_count, 1)
+        self.assertEqual(flag_mock.await_count, 1)
+        self.assertIn("forward_disallowed", flag_mock.await_args.kwargs["reason"])
+
+        with (
+            patch.object(moderation, "settings", self._base_settings(MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS=False, MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS=False)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock_off,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock_off,
+        ):
+            regular_handled_with_flag_off = await moderation.apply_moderation_filters(
+                regular_forward_message.chat.id,
+                regular_forward_message,
+            )
+
+        self.assertFalse(regular_handled_with_flag_off)
+        delete_mock_off.assert_not_awaited()
+        flag_mock_off.assert_not_awaited()
+
     def test_resolve_policy_relaxed_comment_disables_external_channel_checks(self) -> None:
         cfg = self._base_settings(COMMENT_MODERATION_LINK_POLICY="relaxed")
         policy = moderation.resolve_moderation_policy("comment", cfg)

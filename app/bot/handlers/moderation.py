@@ -987,6 +987,8 @@ async def moderation_on_edited(message: types.Message) -> None:
 def resolve_moderation_policy(context: str, cfg: Any) -> dict[str, Any]:
     policy = {
         "delete_external_channel_msgs": bool(getattr(cfg, "MODERATION_DELETE_EXTERNAL_CHANNEL_MSGS", True)),
+        # Применяется к обычным forwards (forward_from* / forward_sender_name),
+        # но не к Telegram auto-forward из linked-channel.
         "delete_channel_forwards": bool(getattr(cfg, "MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS", True)),
         "delete_external_replies": bool(getattr(cfg, "MODERATION_EXTERNAL_REPLIES_DELETE", True)),
         "link_policy": "group_default",
@@ -1004,6 +1006,8 @@ def resolve_moderation_policy(context: str, cfg: Any) -> dict[str, Any]:
 
 
 async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool:
+    # Telegram auto-forward комментариев из linked-channel не считается
+    # обычным forward для MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS.
     if bool(getattr(message, "is_automatic_forward", False)):
         return False
 
@@ -1092,12 +1096,13 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if is_trusted_sender_chat:
         return False
 
-    is_forward = bool(
-        getattr(message, "is_automatic_forward", False)
-        or getattr(message, "forward_from", None)
+    is_automatic_forward = bool(getattr(message, "is_automatic_forward", False))
+    has_forward_origin = bool(
+        getattr(message, "forward_from", None)
         or getattr(message, "forward_from_chat", None)
         or getattr(message, "forward_sender_name", None)
     )
+    is_regular_forward = bool(not is_automatic_forward and has_forward_origin)
     fchat = getattr(message, "forward_from_chat", None)
     is_channel_forward = bool(fchat and getattr(fchat, "type", None) == ChatType.CHANNEL)
     is_external_channel_msg = bool(
@@ -1119,7 +1124,14 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             pass
 
     delete_forwards_on = bool(policy["delete_channel_forwards"])
-    if delete_forwards_on and is_forward and not from_linked and not is_admin and not is_trusted_repost:
+    forward_disallowed = bool(
+        delete_forwards_on
+        and is_regular_forward
+        and not from_linked
+        and not is_admin
+        and not is_trusted_repost
+    )
+    if forward_disallowed:
         src_is_bot = bool(getattr(message, "forward_from", None) and getattr(message.forward_from, "is_bot", False))
         fchat = getattr(message, "forward_from_chat", None)
         try:
@@ -1227,7 +1239,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("file"), user_id=u.id)
             return await _delete_and_handle("file")
 
-    if is_forward and settings.MODERATION_NEW_DELETE_FORWARDS_24H and await _is_new_user(chat_id, u.id):
+    if is_regular_forward and settings.MODERATION_NEW_DELETE_FORWARDS_24H and await _is_new_user(chat_id, u.id):
         await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("forward_new_user"), user_id=u.id)
         return await _delete_and_handle("forward_new_user")
 
