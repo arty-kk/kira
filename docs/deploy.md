@@ -14,6 +14,7 @@
 - `COMPOSE_SCALE_OVERRIDES` — list like `api=2,worker-tasks=3;redis_kv=1`
 - `BOOTSTRAP_RAG_MAX_ATTEMPTS` (default: `3`)
 - `BOOTSTRAP_RAG_RETRY_DELAY_SEC` (default: `10`)
+- SSH action `command_timeout` in `.github/workflows/cd.yml` (set to `30m`): hard limit for a single remote deploy command (`Run Command Timeout` comes from this limit).
 
 ## first deploy/bootstrap
 

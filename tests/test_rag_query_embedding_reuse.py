@@ -37,8 +37,8 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         class _FakeSession:
             async def execute(self, _query):
                 rows = [
-                    ("global", None, "item-1", "text-1", [1.0] + [0.0] * 3071),
-                    ("global", None, "item-2", "text-2", [0.9, 0.1] + [0.0] * 3070),
+                    ("global", None, "item-1", "text-1", [1.0] + [0.0] * 3071, 0.99),
+                    ("global", None, "item-2", "text-2", [0.9, 0.1] + [0.0] * 3070, 0.91),
                 ]
                 return _FakeResult(rows)
 
@@ -54,6 +54,36 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=2)
 
         self.assertEqual(len(hits), 2)
+        self.assertEqual(hits[0][1], "item-1")
+
+
+    async def test_keyword_filter_accepts_numpy_embedding_from_db(self):
+        class _FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _FakeSession:
+            async def execute(self, _query):
+                rows = [
+                    ("global", None, "item-1", "text-1", np.asarray([1.0] + [0.0] * 3071, dtype=np.float32), 0.99),
+                ]
+                return _FakeResult(rows)
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 3071
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
+
+        self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0][1], "item-1")
 
     async def test_get_query_embedding_base64(self):

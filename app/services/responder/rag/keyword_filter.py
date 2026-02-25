@@ -2,7 +2,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import select, literal
 
 from app.config import settings
 from app.core.db import session_scope
@@ -83,35 +83,55 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             return []
         qv = _l2_normalize([float(x) for x in qraw])
 
+    scores_by_id: Dict[str, float] = {}
+    vec_by_id: Dict[str, List[float]] = {}
+    text_by_id: Dict[str, str] = {}
+    thr = float(getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", None) or (float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28) + float(getattr(settings, "RELEVANCE_MARGIN", 0.07) or 0.07)))
+
+    top_k = int(limit) if isinstance(limit, int) and limit > 0 else int(getattr(settings, "KNOWLEDGE_TOP_K", 3) or 3)
+    lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
+    candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
+
+    qv_arr = np.asarray(qv, dtype=np.float32)
+    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    if int(qv_arr.shape[0]) != expected_dim:
+        return []
+
+    score_expr = (literal(1.0) - RagTagVector.embedding.cosine_distance(qv)).label("score")
+
     async with session_scope(read_only=True) as db:
         conditions = [RagTagVector.embedding_model == emb_model]
         if owner_id:
             conditions.append((RagTagVector.scope == "global") | ((RagTagVector.scope == "owner") & (RagTagVector.owner_id == int(owner_id))))
         else:
             conditions.append(RagTagVector.scope == "global")
-        rows = await db.execute(select(RagTagVector.scope, RagTagVector.owner_id, RagTagVector.external_id, RagTagVector.text, RagTagVector.embedding).where(*conditions))
+
+        rows = await db.execute(
+            select(
+                RagTagVector.scope,
+                RagTagVector.owner_id,
+                RagTagVector.external_id,
+                RagTagVector.text,
+                RagTagVector.embedding,
+                score_expr,
+            )
+            .where(*conditions)
+            .where(score_expr >= thr)
+            .order_by(score_expr.desc())
+            .limit(candidate_limit)
+        )
         payload = rows.all()
 
-    scores_by_id: Dict[str, float] = {}
-    vec_by_id: Dict[str, List[float]] = {}
-    text_by_id: Dict[str, str] = {}
-    thr = float(getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", None) or (float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28) + float(getattr(settings, "RELEVANCE_MARGIN", 0.07) or 0.07)))
-
-    qv_arr = np.asarray(qv, dtype=np.float32)
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
-    if int(qv_arr.shape[0]) != expected_dim:
-        return []
-    for scope, oid, ext_id, txt, emb in payload:
-        vec = np.asarray(emb or [], dtype=np.float32)
+    for scope, oid, ext_id, txt, emb, score in payload:
+        vec_src = emb if emb is not None else []
+        vec = np.asarray(vec_src, dtype=np.float32)
         if vec.ndim != 1 or int(vec.shape[0]) != expected_dim:
             continue
         rid = f"{oid}:{ext_id}" if scope == "owner" and oid is not None else str(ext_id)
-        score = float(np.dot(vec, qv_arr) / (np.linalg.norm(vec) or 1.0))
-        if score < thr:
-            continue
+        score_f = float(score)
         prev = scores_by_id.get(rid)
-        if prev is None or score > prev:
-            scores_by_id[rid] = score
+        if prev is None or score_f > prev:
+            scores_by_id[rid] = score_f
             vec_by_id[rid] = [float(x) for x in vec]
             text_by_id[rid] = str(txt or "")
 
@@ -119,8 +139,6 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         logger.info("keyword_filter: no DB tag rows found for model=%s owner_id=%s", emb_model, owner_id)
         return []
 
-    top_k = int(limit) if isinstance(limit, int) and limit > 0 else int(getattr(settings, "KNOWLEDGE_TOP_K", 3) or 3)
-    lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
     cand_ids = sorted(scores_by_id.keys(), key=lambda i: scores_by_id[i], reverse=True)[:MMR_CANDIDATES_TOP_N]
     picked = _mmr_select_ids(cand_ids, vec_by_id, scores_by_id, top_k=top_k, lam=lam)
     return [(scores_by_id[i], i, text_by_id.get(i, "")) for i in picked]
