@@ -203,6 +203,45 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [])
         mocked_scope.assert_not_called()
 
+    async def test_keyword_filter_accepts_singleton_2d_query_embedding(self):
+        captured = {}
+
+        class _FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _FakeSession:
+            async def execute(self, _query, params=None):
+                captured["params"] = params
+                return _FakeResult([
+                    (
+                        "global",
+                        None,
+                        "ok",
+                        "ok-text",
+                        np.asarray([1.0] + [0.0] * 3071, dtype=np.float32),
+                        0.95,
+                        0.05,
+                    ),
+                ])
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [[1.0] + [0.0] * 3071]
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
+
+        self.assertEqual(hits, [(0.95, "ok", "ok-text")])
+        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
+
     async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
         with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
             hits = await keyword_filter.find_tag_hits("q", query_embedding=[1.0, 0.0], model="m", embedding_model="m")
@@ -228,6 +267,15 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits_nan, [])
         self.assertEqual(hits_inf, [])
         mocked_scope.assert_not_called()
+
+    async def test_get_query_embedding_singleton_nested_array(self):
+        async def _fake_call(**_kwargs):
+            return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[[1.0, 2.0]])])
+
+        with mock.patch.object(knowledge_proc, "_call_openai_with_retry", side_effect=_fake_call):
+            arr = await knowledge_proc._get_query_embedding("m", "q")
+
+        self.assertEqual(arr.tolist(), [1.0, 2.0])
 
     async def test_get_query_embedding_base64(self):
         payload = np.asarray([1.0, 2.0], dtype=np.float32).tobytes()

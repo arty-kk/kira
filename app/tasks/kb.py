@@ -27,6 +27,19 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 logger = logging.getLogger(__name__)
 
 
+def _normalize_embedding_row(raw: Any, *, expected_dim: int) -> List[float]:
+    arr = np.asarray(raw, dtype=np.float32)
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim != 1:
+        raise RuntimeError(f"kb: invalid embedding row shape={arr.shape}")
+    if int(arr.shape[0]) != expected_dim:
+        raise RuntimeError(f"kb: invalid embedding dim got={int(arr.shape[0])} expected={expected_dim}")
+    if not np.isfinite(arr).all():
+        raise RuntimeError("kb: embedding contains non-finite values")
+    return [float(x) for x in arr]
+
+
 async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
     if not texts:
         return []
@@ -39,6 +52,7 @@ async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
     if bs <= 0:
         bs = 128
 
+    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
     result: List[List[float]] = []
     overall_start = time.perf_counter()
 
@@ -51,6 +65,7 @@ async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
                     endpoint="embeddings.create",
                     model=api_model,
                     input=chunk,
+                    encoding_format="float",
                 ),
                 timeout=settings.EMBEDDING_TIMEOUT,
             )
@@ -83,9 +98,9 @@ async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
             emb = getattr(row, "embedding", None)
             if emb is None and isinstance(row, dict):
                 emb = row.get("embedding")
-            if not isinstance(emb, list):
+            if emb is None:
                 raise RuntimeError("kb: invalid embedding row")
-            result.append([float(x) for x in emb])
+            result.append(_normalize_embedding_row(emb, expected_dim=expected_dim))
 
     total_elapsed = time.perf_counter() - overall_start
     logger.info(

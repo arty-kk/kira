@@ -14,6 +14,20 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _normalize_embedding_1d(raw: object) -> Optional[np.ndarray]:
+    try:
+        arr = np.asarray(raw, dtype=np.float32)
+    except Exception:
+        return None
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim != 1 or arr.size == 0:
+        return None
+    if not np.isfinite(arr).all():
+        return None
+    return arr
+
+
 async def _get_query_embedding(api_model: str, query: str) -> Optional[np.ndarray]:
     _t0 = time.perf_counter()
     try:
@@ -29,10 +43,10 @@ async def _get_query_embedding(api_model: str, query: str) -> Optional[np.ndarra
     vec = resp.data[0].embedding
     if isinstance(vec, str):
         try:
-            return np.frombuffer(_b64.b64decode(vec), dtype=np.float32)
+            return _normalize_embedding_1d(np.frombuffer(_b64.b64decode(vec), dtype=np.float32))
         except Exception:
             return None
-    return np.asarray(vec, dtype=np.float32)
+    return _normalize_embedding_1d(vec)
 
 
 def _mmr_select(E_cand: np.ndarray, scores_cand: np.ndarray, top_k: int, lam: float) -> List[int]:
