@@ -23,7 +23,6 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 
 COPY . .
-COPY alembic/alembic.ini /app/alembic.ini
 
 RUN adduser --disabled-password --gecos '' appuser && \
     mkdir -p /app/data/embeddings && \

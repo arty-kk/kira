@@ -214,6 +214,13 @@ docker compose down
 
 docker compose build --no-cache --pull
 
+if [[ "${scale_values[migrate]:-1}" == "0" ]]; then
+  echo "Skipping migrate gate because migrate scale is set to 0"
+else
+  echo "Running migrate gate (must succeed before worker-* startup)..."
+  docker compose run --rm migrate
+fi
+
 docker compose up -d --force-recreate "${scale_args[@]}"
 
 docker system prune -a --volumes -f
