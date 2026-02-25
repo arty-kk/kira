@@ -16,7 +16,11 @@ WORKER_MODERATION_SCALE=${WORKER_MODERATION_SCALE:-}
 WORKER_MEDIA_SCALE=${WORKER_MEDIA_SCALE:-}
 WORKER_QUEUE_SCALE=${WORKER_QUEUE_SCALE:-}
 WORKER_API_SCALE=${WORKER_API_SCALE:-}
+BOOTSTRAP_RAG_SCALE=${BOOTSTRAP_RAG_SCALE:-}
 COMPOSE_SCALE_OVERRIDES=${COMPOSE_SCALE_OVERRIDES:-}
+
+BOOTSTRAP_RAG_MAX_ATTEMPTS=${BOOTSTRAP_RAG_MAX_ATTEMPTS:-3}
+BOOTSTRAP_RAG_RETRY_DELAY_SEC=${BOOTSTRAP_RAG_RETRY_DELAY_SEC:-10}
 
 readonly LEGACY_SCALE_VARS=(
   DIALOG_WORKER_SCALE
@@ -32,6 +36,7 @@ readonly SCALE_WHITELIST=(
   redis_kv
   redis_vec
   migrate
+  bootstrap-rag
   api
   worker-tasks
   worker-moderation
@@ -67,6 +72,17 @@ validate_scale_value() {
   local value=$2
   if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
     echo "${name} must be a non-negative integer, got: ${value}" >&2
+    exit 1
+  fi
+}
+
+require_gate_scale_enabled() {
+  local service=$1
+  local env_name=$2
+  local value=${scale_values[${service}]:-}
+
+  if [[ -n "${value}" && "${value}" == "0" ]]; then
+    echo "${env_name}=0 is not allowed: ${service} is a mandatory deploy gate" >&2
     exit 1
   fi
 }
@@ -150,6 +166,7 @@ set_scale_if_present "db" "DB_SCALE" "${DB_SCALE}"
 set_scale_if_present "redis_kv" "REDIS_KV_SCALE" "${REDIS_KV_SCALE}"
 set_scale_if_present "redis_vec" "REDIS_VEC_SCALE" "${REDIS_VEC_SCALE}"
 set_scale_if_present "migrate" "MIGRATE_SCALE" "${MIGRATE_SCALE}"
+set_scale_if_present "bootstrap-rag" "BOOTSTRAP_RAG_SCALE" "${BOOTSTRAP_RAG_SCALE}"
 set_scale_if_present "api" "API_SCALE" "${API_SCALE}"
 set_scale_if_present "worker-tasks" "WORKER_TASKS_SCALE" "${WORKER_TASKS_SCALE}"
 set_scale_if_present "worker-moderation" "WORKER_MODERATION_SCALE" "${WORKER_MODERATION_SCALE}"
@@ -157,6 +174,8 @@ set_scale_if_present "worker-media" "WORKER_MEDIA_SCALE" "${WORKER_MEDIA_SCALE}"
 set_scale_if_present "worker-queue" "WORKER_QUEUE_SCALE" "${WORKER_QUEUE_SCALE}"
 set_scale_if_present "worker-api" "WORKER_API_SCALE" "${WORKER_API_SCALE}"
 parse_compose_scale_overrides "${COMPOSE_SCALE_OVERRIDES}"
+require_gate_scale_enabled "migrate" "MIGRATE_SCALE"
+require_gate_scale_enabled "bootstrap-rag" "BOOTSTRAP_RAG_SCALE"
 
 scale_args=()
 build_scale_args scale_args
@@ -214,12 +233,30 @@ docker compose down
 
 docker compose build --no-cache --pull
 
-if [[ "${scale_values[migrate]:-1}" == "0" ]]; then
-  echo "Skipping migrate gate because migrate scale is set to 0"
-else
-  echo "Running migrate gate (must succeed before worker-* startup)..."
-  docker compose run --rm migrate
-fi
+echo "Running migrate gate (schema must be ready before rollout)..."
+docker compose up --force-recreate --abort-on-container-exit --exit-code-from migrate migrate
+echo "MIGRATIONS_DONE"
+
+validate_scale_value "BOOTSTRAP_RAG_MAX_ATTEMPTS" "${BOOTSTRAP_RAG_MAX_ATTEMPTS}"
+validate_scale_value "BOOTSTRAP_RAG_RETRY_DELAY_SEC" "${BOOTSTRAP_RAG_RETRY_DELAY_SEC}"
+
+bootstrap_attempt=1
+while (( bootstrap_attempt <= BOOTSTRAP_RAG_MAX_ATTEMPTS )); do
+  echo "Running RAG bootstrap attempt ${bootstrap_attempt}/${BOOTSTRAP_RAG_MAX_ATTEMPTS}..."
+  if docker compose up --force-recreate --abort-on-container-exit --exit-code-from bootstrap-rag bootstrap-rag; then
+    echo "RAG_BOOTSTRAP_DONE"
+    break
+  fi
+
+  echo "RAG_BOOTSTRAP_FAILED_ATTEMPT ${bootstrap_attempt}/${BOOTSTRAP_RAG_MAX_ATTEMPTS}" >&2
+  if (( bootstrap_attempt == BOOTSTRAP_RAG_MAX_ATTEMPTS )); then
+    echo "RAG_BOOTSTRAP_FAILED_FINAL" >&2
+    exit 1
+  fi
+
+  sleep "${BOOTSTRAP_RAG_RETRY_DELAY_SEC}"
+  bootstrap_attempt=$((bootstrap_attempt + 1))
+done
 
 docker compose up -d --force-recreate "${scale_args[@]}"
 

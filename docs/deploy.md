@@ -12,6 +12,8 @@
 - `DEPLOY_REPO_URL` (used when the repository is not cloned yet)
 - `DEPLOY_COMMIT_SHA` (when set, deploys exactly this commit SHA)
 - `COMPOSE_SCALE_OVERRIDES` — list like `api=2,worker-tasks=3;redis_kv=1`
+- `BOOTSTRAP_RAG_MAX_ATTEMPTS` (default: `3`)
+- `BOOTSTRAP_RAG_RETRY_DELAY_SEC` (default: `10`)
 
 ## first deploy/bootstrap
 
@@ -33,18 +35,46 @@ Expected bootstrap result in the same CD step:
 - `scripts/deploy.sh` is found,
 - `scripts/deploy.sh` is executed immediately.
 
-## Migration gate in `scripts/deploy.sh`
+## Schema is ready (`scripts/deploy.sh`)
 
-Before starting services with `docker compose up -d`, the deploy script runs a mandatory migrate gate:
+Before starting runtime services with `docker compose up -d`, the deploy script runs a mandatory schema gate:
 
 ```bash
-docker compose run --rm migrate
+docker compose up --force-recreate --abort-on-container-exit --exit-code-from migrate migrate
 ```
 
-Expected behavior:
-- If migrate exits with code `0`, deploy continues to service startup.
-- If migrate exits non-zero, deploy stops immediately and `worker-*` are not started.
-- If `migrate` scale is explicitly set to `0`, the gate is skipped intentionally.
+Success criterion:
+- migrate exits with code `0`;
+- deploy logs contain marker `MIGRATIONS_DONE`.
+
+Failure behavior:
+- if migrate exits non-zero, deploy stops immediately before runtime startup;
+- `MIGRATE_SCALE=0` is rejected because `migrate` is a mandatory deploy gate.
+
+## RAG bootstrap status (`scripts/deploy.sh`)
+
+After successful schema gate, deploy runs RAG bootstrap as a separate one-shot step:
+
+```bash
+docker compose up --force-recreate --abort-on-container-exit --exit-code-from bootstrap-rag bootstrap-rag
+```
+
+Retry/fail policy:
+- retries are controlled by `BOOTSTRAP_RAG_MAX_ATTEMPTS` (default `3`);
+- pause between retries is controlled by `BOOTSTRAP_RAG_RETRY_DELAY_SEC` (default `10`);
+- each failed attempt logs `RAG_BOOTSTRAP_FAILED_ATTEMPT`;
+- on final failure, deploy logs `RAG_BOOTSTRAP_FAILED_FINAL` and exits with code `1`.
+- `BOOTSTRAP_RAG_SCALE=0` is rejected because `bootstrap-rag` is a mandatory deploy gate.
+
+Success criterion:
+- bootstrap exits with code `0`;
+- deploy logs contain marker `RAG_BOOTSTRAP_DONE`;
+- bootstrap logs include progress lines for embedding batches (`embedding batch ...`) and DB flush progress (`db flush complete ...`).
+
+Manual retry/escalation:
+- inspect `docker compose logs bootstrap-rag`;
+- run `docker compose up --force-recreate --abort-on-container-exit --exit-code-from bootstrap-rag bootstrap-rag` manually after fixing root cause;
+- escalate if retries continue to fail (embedding provider issues, DB permissions, invalid knowledge file, etc.).
 
 ## Deploy target priority
 
@@ -156,28 +186,33 @@ OK:
 Deviation means:
 - If the error persists, repeat steps 1 and 3 immediately; this usually means worker runtime still points to another DB/schema.
 
-### 5) Enforce post-deploy gate: `migrate` must succeed before any `worker-*` starts
+### 5) Enforce post-deploy gates: `migrate` and `bootstrap-rag` must succeed before runtime startup
 
 Apply this gate in every deploy sequence:
 
 ```bash
 docker compose up migrate
 docker compose ps migrate
-docker compose up -d worker-tasks worker-media worker-moderation worker-queue worker-api
+docker compose up bootstrap-rag
+docker compose ps bootstrap-rag
+docker compose up -d bot api worker-tasks worker-media worker-moderation worker-queue worker-api
 ```
 
 OK:
-- `docker compose ps migrate` shows successful completion state (`Exited (0)`) before worker startup.
+- `docker compose ps migrate` shows successful completion state (`Exited (0)`) before bootstrap/runtime startup.
+- `docker compose ps bootstrap-rag` shows successful completion state (`Exited (0)`) before runtime startup.
 
 Deviation means:
-- If `migrate` failed, stop worker rollout, run `docker compose logs migrate`, fix root cause, and re-run step 2.
-- If worker points to another DB, align `DATABASE_URL` for both `migrate` and all `worker-*`, then restart from step 1.
+- If `migrate` failed, stop rollout, run `docker compose logs migrate`, fix root cause, and re-run step 2.
+- If `bootstrap-rag` failed, stop rollout, run `docker compose logs bootstrap-rag`, fix root cause, retry bootstrap, and only then continue.
+- If runtime points to another DB, align `DATABASE_URL` for `migrate` and all runtime services, then restart from step 1.
 
 ## RAG bootstrap
 
 - In docker-compose local deployment, `db` uses `pgvector/pgvector:pg16` so the `vector` extension is available for migrations.
-- `migrate` now performs Alembic migration and immediately builds the system RAG tag index into PostgreSQL (`pgvector`) from `knowledge_on.json`.
-- Runtime services (`api`, `main`, `worker-*`) start only after `migrate` completes, and read tag vectors from PostgreSQL tables (tags-based retrieval only).
+- `migrate` performs only Alembic migration.
+- `bootstrap-rag` builds the system RAG tag index into PostgreSQL (`pgvector`) from `knowledge_on.json` after successful migrations.
+- Runtime services (`bot`, `api`, `worker-*`) have hard dependency on successful completion of both `migrate` and `bootstrap-rag` (`service_completed_successfully`).
 - Legacy local JSON/NPZ vector files are not used in runtime path.
 
 ## Supported scale variables
@@ -186,6 +221,7 @@ Deviation means:
 - `REDIS_KV_SCALE` → `redis_kv`
 - `REDIS_VEC_SCALE` → `redis_vec`
 - `MIGRATE_SCALE` → `migrate`
+- `BOOTSTRAP_RAG_SCALE` → `bootstrap-rag`
 - `API_SCALE` → `api`
 - `WORKER_TASKS_SCALE` → `worker-tasks`
 - `WORKER_MODERATION_SCALE` → `worker-moderation`
@@ -201,6 +237,7 @@ The script exits with a non-zero code if:
 
 - required variables are empty,
 - scale values are not non-negative integers,
+- `MIGRATE_SCALE=0` or `BOOTSTRAP_RAG_SCALE=0` is provided,
 - `COMPOSE_SCALE_OVERRIDES` contains bad `key=value` pairs,
 - `COMPOSE_SCALE_OVERRIDES` references unknown services,
 - any legacy scale variable is set (`DIALOG_WORKER_SCALE`, `RAG_WORKER_SCALE`, `AUDIT_WORKER_SCALE`, `MAINTENANCE_WORKER_SCALE`, `POSTGRES_SCALE`, `REDIS_SCALE`).
