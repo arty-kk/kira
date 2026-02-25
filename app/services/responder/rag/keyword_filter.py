@@ -86,7 +86,12 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
 
     qv: List[float]
     if query_embedding is not None:
-        qv = _l2_normalize([float(x) for x in query_embedding])
+        try:
+            qv_src = [float(x) for x in query_embedding]
+        except (TypeError, ValueError) as exc:
+            logger.info("keyword_filter: invalid query_embedding conversion reason=%s type=%s", exc, type(query_embedding).__name__)
+            return []
+        qv = _l2_normalize(qv_src)
     else:
         qraw = await _get_query_embedding(embedding_model or emb_model, t)
         if qraw is None:
@@ -104,7 +109,30 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
 
     qv_arr = np.asarray(qv, dtype=np.float32)
     expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
-    if int(qv_arr.shape[0]) != expected_dim:
+    current_len = int(qv_arr.shape[0]) if qv_arr.ndim >= 1 else None
+    if qv_arr.ndim != 1:
+        logger.info(
+            "keyword_filter: invalid query embedding reason=non-1d shape=%s len=%s expected_dim=%s",
+            qv_arr.shape,
+            current_len,
+            expected_dim,
+        )
+        return []
+    if current_len != expected_dim:
+        logger.info(
+            "keyword_filter: invalid query embedding reason=dim-mismatch shape=%s len=%s expected_dim=%s",
+            qv_arr.shape,
+            current_len,
+            expected_dim,
+        )
+        return []
+    if not np.isfinite(qv_arr).all():
+        logger.info(
+            "keyword_filter: invalid query embedding reason=non-finite-values shape=%s len=%s expected_dim=%s",
+            qv_arr.shape,
+            current_len,
+            expected_dim,
+        )
         return []
 
     _, distance_expr = _build_halfvec_query_expr(qv, dim=expected_dim)

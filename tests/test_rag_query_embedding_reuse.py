@@ -184,6 +184,51 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(hits, [(0.95, "ok", "ok-text")])
 
+    async def test_keyword_filter_returns_empty_on_empty_query_embedding(self):
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=[], model="m", embedding_model="m")
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
+    async def test_keyword_filter_returns_empty_on_2d_query_embedding(self):
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=[[1.0, 0.0], [0.0, 1.0]],
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
+    async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=[1.0, 0.0], model="m", embedding_model="m")
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
+    async def test_keyword_filter_returns_empty_on_non_finite_query_embedding(self):
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits_nan = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=[float("nan")] + [0.0] * 3071,
+                model="m",
+                embedding_model="m",
+            )
+            hits_inf = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=[float("inf")] + [0.0] * 3071,
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits_nan, [])
+        self.assertEqual(hits_inf, [])
+        mocked_scope.assert_not_called()
+
     async def test_get_query_embedding_base64(self):
         payload = np.asarray([1.0, 2.0], dtype=np.float32).tobytes()
 
