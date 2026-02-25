@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
@@ -71,6 +71,22 @@ async def _run(args: argparse.Namespace) -> None:
         raise RuntimeError(f"no valid KB items loaded from {kb_path}")
 
     async with session_scope(read_only=True) as db:
+        current_schema = (await db.execute(text("select current_schema()"))).scalar_one_or_none()
+        if not current_schema:
+            raise RuntimeError("schema mismatch: current_schema() returned empty value")
+
+        rag_table_exists = (
+            await db.execute(
+                text("select to_regclass(current_schema() || '.rag_tag_vectors') is not null")
+            )
+        ).scalar_one()
+        if not rag_table_exists:
+            raise RuntimeError(
+                "missing table: "
+                f"{current_schema}.rag_tag_vectors is not available in current schema; "
+                "run migrate + DB smoke-check before bootstrap-rag"
+            )
+
         cnt = await db.execute(
             select(RagTagVector.id).where(
                 RagTagVector.scope == "global",
