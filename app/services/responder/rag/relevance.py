@@ -58,6 +58,12 @@ async def is_relevant(
             embedding_model=embedding_model,
         )
     except Exception:
+        query_embedding_len = len(query_embedding) if query_embedding is not None and hasattr(query_embedding, "__len__") else None
+        logger.error(
+            "gate: keyword pre-check input query_embedding_type=%s query_embedding_len=%s",
+            type(query_embedding).__name__,
+            query_embedding_len,
+        )
         logger.exception("gate: keyword pre-check failed")
         tag_hits = []
 

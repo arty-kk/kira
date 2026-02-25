@@ -135,32 +135,29 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
 
-    qv_arr = np.asarray(qv, dtype=np.float32)
-    current_len = int(qv_arr.shape[0]) if qv_arr.ndim >= 1 else None
-    if qv_arr.ndim != 1:
-        logger.info(
-            "keyword_filter: invalid query embedding reason=non-1d shape=%s len=%s expected_dim=%s",
-            qv_arr.shape,
-            current_len,
+    qv_sql = np.asarray(qv, dtype=np.float32)
+    if qv_sql.ndim == 2 and qv_sql.shape[0] == 1:
+        qv_sql = qv_sql[0]
+
+    current_len = int(qv_sql.shape[0]) if qv_sql.ndim >= 1 else None
+    if qv_sql.ndim != 1 or current_len != expected_dim:
+        logger.warning(
+            "keyword_filter: invalid query embedding for SQL reason=bad-shape shape=%s dtype=%s expected_dim=%s",
+            qv_sql.shape,
+            qv_sql.dtype,
             expected_dim,
         )
         return []
-    if current_len != expected_dim:
-        logger.info(
-            "keyword_filter: invalid query embedding reason=dim-mismatch shape=%s len=%s expected_dim=%s",
-            qv_arr.shape,
-            current_len,
-            expected_dim,
-        )
-        return []
-    if not np.isfinite(qv_arr).all():
+    if not np.isfinite(qv_sql).all():
         logger.info(
             "keyword_filter: invalid query embedding reason=non-finite-values shape=%s len=%s expected_dim=%s",
-            qv_arr.shape,
+            qv_sql.shape,
             current_len,
             expected_dim,
         )
         return []
+
+    query_vec_for_sql = qv_sql.astype(np.float32, copy=False).tolist()
 
     _, distance_expr = _build_halfvec_query_expr(dim=expected_dim)
     score_expr = (literal(1.0) - distance_expr).label("score")
@@ -174,7 +171,14 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             conditions.append(RagTagVector.scope == "global")
 
         sql_started = time.perf_counter()
-        logger.debug("keyword_filter: executing SQL with query_vec_len=%s expected_dim=%s", len(qv), expected_dim)
+        query_vec_source = "external query_embedding" if query_embedding is not None else "provider"
+        logger.debug(
+            "keyword_filter: executing SQL with query_vec_type=%s query_vec_len=%s expected_dim=%s source=%s",
+            type(query_vec_for_sql).__name__,
+            len(query_vec_for_sql),
+            expected_dim,
+            query_vec_source,
+        )
         rows = await db.execute(
             select(
                 RagTagVector.scope,
@@ -189,7 +193,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             .where(distance_expr <= max_distance)
             .order_by(distance_expr.asc())
             .limit(candidate_limit),
-            {"query_vec": qv},
+            {"query_vec": query_vec_for_sql},
         )
         payload = rows.all()
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
