@@ -40,8 +40,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    entrypoint: ["sh", "-c"]
-    command: /opt/venv/bin/python -m alembic -c /app/alembic/alembic.ini upgrade head
+    command: ["/opt/venv/bin/python", "-m", "alembic", "-c", "/app/alembic/alembic.ini", "upgrade", "head"]
 
   bootstrap-rag:
     build: .
