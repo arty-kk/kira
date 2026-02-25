@@ -3,6 +3,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from pgvector.utils.halfvec import HalfVector
 
 from app.services.responder.rag import keyword_filter
 from app.services.responder.rag import relevance
@@ -84,15 +85,14 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<=>", sql)
         self.assertIn("CAST", sql)
         self.assertIn("HALFVEC", sql)
-        self.assertIn("ORDER BY distance ASC", sql)
+        self.assertIn("ORDER BY ranked_candidates.distance ASC", sql)
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
         self.assertIn("scope", sql)
         self.assertIsInstance(captured["params"], dict)
         self.assertIn("query_vec", captured["params"])
-        self.assertIsInstance(captured["params"]["query_vec"], list)
-        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
-        self.assertTrue(all(isinstance(x, float) for x in captured["params"]["query_vec"]))
+        self.assertIsInstance(captured["params"]["query_vec"], HalfVector)
+        self.assertEqual(captured["params"]["query_vec"].dimensions(), 3072)
         self.assertEqual(hits, [(0.99, "item-1", "text-1"), (0.91, "42:item-2", "text-2")])
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
         self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
@@ -240,7 +240,8 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
         self.assertEqual(hits, [(0.95, "ok", "ok-text")])
-        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
+        self.assertIsInstance(captured["params"]["query_vec"], HalfVector)
+        self.assertEqual(captured["params"]["query_vec"].dimensions(), 3072)
 
     async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
         with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
