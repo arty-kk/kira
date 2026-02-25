@@ -105,8 +105,8 @@ Retry/fail policy:
 - `BOOTSTRAP_RAG_SCALE=0` is rejected because `bootstrap-rag` is a mandatory deploy gate.
 
 Operational note for tag-search performance:
-- Tag-search executes SQL distance preselect with query-time `HALFVEC` cast for the input query vector (`CAST(:query_vec AS HALFVEC(...))`), while stored embeddings remain `vector`.
-- RAG tag-search expects a pgvector ANN HNSW index on `rag_tag_vectors.embedding` (migration revision `0001_initial_schema`).
+- Tag-search executes SQL distance preselect with symmetric `HALFVEC(3072)` casts in distance expression: `CAST(rag_tag_vectors.embedding AS HALFVEC(3072)) <=> CAST(:query_vec AS HALFVEC(3072))`, while stored embeddings remain `vector(3072)`.
+- RAG tag-search expects a pgvector ANN HNSW expression index on `CAST(rag_tag_vectors.embedding AS HALFVEC(3072))` with `halfvec_cosine_ops` (migration revision `0001_initial_schema`).
 - Verify query plans with `EXPLAIN (ANALYZE, BUFFERS)` in the target environment.
 - Monitor logs after release:
   - `keyword_filter: sql stage complete ... duration_ms=... candidate_size=...`;

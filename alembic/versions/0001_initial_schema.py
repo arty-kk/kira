@@ -197,7 +197,7 @@ def upgrade():
     op.create_index("ix_rag_tag_vectors_created_at", "rag_tag_vectors", ["created_at"])
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_ann "
-        "ON rag_tag_vectors USING hnsw (embedding vector_cosine_ops);"
+        "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(3072))) halfvec_cosine_ops);"
     )
 
     op.create_table(
