@@ -119,6 +119,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             conditions.append(RagTagVector.scope == "global")
 
         sql_started = time.perf_counter()
+        logger.debug("keyword_filter: executing SQL with query_vec_len=%s expected_dim=%s", len(qv), expected_dim)
         rows = await db.execute(
             select(
                 RagTagVector.scope,
@@ -132,7 +133,8 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             .where(*conditions)
             .where(distance_expr <= max_distance)
             .order_by(distance_expr.asc())
-            .limit(candidate_limit)
+            .limit(candidate_limit),
+            {"query_vec": qv},
         )
         payload = rows.all()
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
