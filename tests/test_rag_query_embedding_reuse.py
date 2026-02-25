@@ -37,8 +37,9 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
                 return self._rows
 
         class _FakeSession:
-            async def execute(self, query):
+            async def execute(self, query, params=None):
                 captured["query"] = query
+                captured["params"] = params
                 rows = [
                     (
                         "global",
@@ -87,6 +88,11 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
         self.assertIn("scope", sql)
+        self.assertIsInstance(captured["params"], dict)
+        self.assertIn("query_vec", captured["params"])
+        self.assertIsInstance(captured["params"]["query_vec"], list)
+        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
+        self.assertTrue(all(isinstance(x, float) for x in captured["params"]["query_vec"]))
         self.assertEqual(hits, [(0.99, "item-1", "text-1"), (0.91, "42:item-2", "text-2")])
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
         self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
@@ -100,7 +106,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
                 return self._rows
 
         class _FakeSession:
-            async def execute(self, _query):
+            async def execute(self, _query, params=None):
                 rows = [
                     (
                         "global",
@@ -150,7 +156,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
                 return self._rows
 
         class _FakeSession:
-            async def execute(self, _query):
+            async def execute(self, _query, params=None):
                 rows = [
                     ("global", None, "bad", "bad", np.asarray([1.0, 0.0], dtype=np.float32), 0.99, 0.01),
                     (
