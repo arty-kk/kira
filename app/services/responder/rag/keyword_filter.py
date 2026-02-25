@@ -30,6 +30,23 @@ def _l2_normalize(vec: List[float]) -> List[float]:
     return [float(x / n) for x in arr]
 
 
+def _normalize_query_embedding(raw: object, *, expected_dim: int) -> List[float] | None:
+    try:
+        arr = np.asarray(raw, dtype=np.float32)
+    except Exception:
+        return None
+
+    if arr.ndim == 2 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim != 1:
+        return None
+    if int(arr.shape[0]) != expected_dim:
+        return None
+    if not np.isfinite(arr).all():
+        return None
+    return [float(x) for x in arr]
+
+
 def _mmr_select_ids(cand_ids: List[str], vecs_by_id: Dict[str, List[float]], scores_by_id: Dict[str, float], top_k: int, lam: float) -> List[str]:
     if top_k <= 0 or not cand_ids:
         return []
@@ -84,19 +101,30 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         return []
     emb_model = model or settings.EMBEDDING_MODEL
 
+    expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
     qv: List[float]
     if query_embedding is not None:
-        try:
-            qv_src = [float(x) for x in query_embedding]
-        except (TypeError, ValueError) as exc:
-            logger.info("keyword_filter: invalid query_embedding conversion reason=%s type=%s", exc, type(query_embedding).__name__)
+        qv_src = _normalize_query_embedding(query_embedding, expected_dim=expected_dim)
+        if qv_src is None:
+            logger.info(
+                "keyword_filter: invalid query_embedding conversion reason=bad-shape-or-values type=%s",
+                type(query_embedding).__name__,
+            )
             return []
         qv = _l2_normalize(qv_src)
     else:
         qraw = await _get_query_embedding(embedding_model or emb_model, t)
         if qraw is None:
             return []
-        qv = _l2_normalize([float(x) for x in qraw])
+        qv_src = _normalize_query_embedding(qraw, expected_dim=expected_dim)
+        if qv_src is None:
+            logger.info(
+                "keyword_filter: invalid query embedding from provider reason=bad-shape-or-values shape=%s expected_dim=%s",
+                getattr(qraw, "shape", None),
+                expected_dim,
+            )
+            return []
+        qv = _l2_normalize(qv_src)
 
     scores_by_id: Dict[str, float] = {}
     vec_by_id: Dict[str, List[float]] = {}
@@ -108,7 +136,6 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
 
     qv_arr = np.asarray(qv, dtype=np.float32)
-    expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
     current_len = int(qv_arr.shape[0]) if qv_arr.ndim >= 1 else None
     if qv_arr.ndim != 1:
         logger.info(
