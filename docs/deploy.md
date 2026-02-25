@@ -56,7 +56,7 @@ Failure behavior:
 Immediately after `MIGRATIONS_DONE` and before `bootstrap-rag`, deploy runs a DB state smoke-check in the same runtime context as `migrate`:
 
 ```bash
-docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
+docker compose run --rm migrate python /app/scripts/check_db_state.py
 ```
 
 The check validates:
@@ -79,7 +79,7 @@ Fail-fast behavior and error categories:
 Manual incident command (run in the same runtime context as `migrate`):
 
 ```bash
-docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
+docker compose run --rm migrate python /app/scripts/check_db_state.py
 ```
 
 Interpretation:
@@ -227,7 +227,7 @@ Apply this gate in every deploy sequence:
 
 ```bash
 docker compose up migrate
-docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
+docker compose run --rm migrate python /app/scripts/check_db_state.py
 docker compose up bootstrap-rag
 docker compose ps bootstrap-rag
 docker compose up -d bot api worker-tasks worker-media worker-moderation worker-queue worker-api
