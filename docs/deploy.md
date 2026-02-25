@@ -33,6 +33,19 @@ Expected bootstrap result in the same CD step:
 - `scripts/deploy.sh` is found,
 - `scripts/deploy.sh` is executed immediately.
 
+## Migration gate in `scripts/deploy.sh`
+
+Before starting services with `docker compose up -d`, the deploy script runs a mandatory migrate gate:
+
+```bash
+docker compose run --rm migrate
+```
+
+Expected behavior:
+- If migrate exits with code `0`, deploy continues to service startup.
+- If migrate exits non-zero, deploy stops immediately and `worker-*` are not started.
+- If `migrate` scale is explicitly set to `0`, the gate is skipped intentionally.
+
 ## Deploy target priority
 
 - If `DEPLOY_COMMIT_SHA` is set, deployment is pinned to that exact commit (`git checkout --detach <sha>`).
@@ -56,6 +69,109 @@ Example:
 DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/appdb \
 python -m alembic -c alembic/alembic.ini upgrade head
 ```
+
+## Troubleshooting runbook: DB sync check for `worker-tasks` after deploy
+
+Use this sequence when `worker-tasks` reports missing DB objects (for example `refund_outbox`) after deployment.
+
+### 1) Verify `DATABASE_URL` parity between `migrate` and `worker-tasks`
+
+Run and capture both values:
+
+```bash
+docker compose run --rm migrate sh -lc 'printf "migrate DATABASE_URL=%s\n" "$DATABASE_URL"'
+docker compose run --rm worker-tasks sh -lc 'printf "worker-tasks DATABASE_URL=%s\n" "$DATABASE_URL"'
+```
+
+OK:
+- Both commands print non-empty `DATABASE_URL` values.
+- Values are exactly identical as strings (same instance/host, port, database, and schema-related parameters).
+
+Deviation means:
+- Any difference means `migrate` and `worker-tasks` can target different DB context.
+- Stop here, align env/compose config, and re-run this step until values match exactly.
+
+### 2) Run migrations exactly as in `migrate`
+
+Run migrations in `migrate` service image/container context:
+
+```bash
+docker compose run --rm migrate sh -lc 'alembic -c /app/alembic/alembic.ini upgrade head'
+```
+
+OK:
+- Command exits with code `0`.
+- Output has no Alembic or PostgreSQL errors.
+
+Deviation means:
+- Non-zero exit code or stack trace means migrations are not applied.
+- Treat deploy as blocked: do not start/restart `worker-*` until this command succeeds.
+
+### 3) Check `refund_outbox` in PostgreSQL target schema and verify Alembic state
+
+Run SQL diagnostics against the same `DATABASE_URL` that `migrate` uses:
+
+```bash
+docker compose run --rm migrate sh -lc '
+python - <<"PY"
+import os
+import sqlalchemy as sa
+
+engine = sa.create_engine(os.environ["DATABASE_URL"])
+with engine.connect() as conn:
+    search_path = conn.execute(sa.text("show search_path")).scalar()
+    current_schema = conn.execute(sa.text("select current_schema()")).scalar()
+    in_current = conn.execute(sa.text("select to_regclass(current_schema() || '.refund_outbox') is not null")).scalar()
+    in_public = conn.execute(sa.text("select to_regclass('public.refund_outbox') is not null")).scalar()
+    versions = conn.execute(sa.text("select version_num from alembic_version order by version_num")).fetchall()
+
+print(f"search_path={search_path}")
+print(f"current_schema={current_schema}")
+print(f"refund_outbox_in_current_schema={in_current}")
+print(f"refund_outbox_in_public={in_public}")
+print(f"alembic_version={versions}")
+PY'
+```
+
+OK:
+- `refund_outbox_in_current_schema=True`.
+- `alembic_version` is readable and shows expected revision chain for current release.
+
+Deviation means:
+- `refund_outbox_in_current_schema=False` with `refund_outbox_in_public=True` means schema/search_path mismatch: worker reads another schema.
+- `refund_outbox_in_current_schema=False` and `refund_outbox_in_public=False` means migration is not applied to target DB.
+- Missing/incorrect `alembic_version` means wrong DB target or broken migration state; do not continue to worker restart.
+
+### 4) Restart `worker-tasks` only after successful migration and table checks
+
+Run only when steps 1–3 are all OK:
+
+```bash
+docker compose up -d --no-deps --force-recreate worker-tasks
+```
+
+OK:
+- `worker-tasks` starts without `UndefinedTableError: relation "refund_outbox" does not exist`.
+
+Deviation means:
+- If the error persists, repeat steps 1 and 3 immediately; this usually means worker runtime still points to another DB/schema.
+
+### 5) Enforce post-deploy gate: `migrate` must succeed before any `worker-*` starts
+
+Apply this gate in every deploy sequence:
+
+```bash
+docker compose up migrate
+docker compose ps migrate
+docker compose up -d worker-tasks worker-media worker-moderation worker-queue worker-api
+```
+
+OK:
+- `docker compose ps migrate` shows successful completion state (`Exited (0)`) before worker startup.
+
+Deviation means:
+- If `migrate` failed, stop worker rollout, run `docker compose logs migrate`, fix root cause, and re-run step 2.
+- If worker points to another DB, align `DATABASE_URL` for both `migrate` and all `worker-*`, then restart from step 1.
 
 ## RAG bootstrap
 

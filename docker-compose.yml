@@ -220,6 +220,24 @@ services:
       start_period: 30s
       retries: 5
 
+  migrate:
+    build: .
+    restart: "no"
+    env_file: .env
+    init: true
+    environment:
+      DB_APP_NAME: "migrations"
+      PYTHONPATH: "/app"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command: >
+      /opt/venv/bin/python -m alembic -c /app/alembic/alembic.ini upgrade head &&
+      /opt/venv/bin/python scripts/bootstrap_system_kb_pgvector.py
+      --kb-file app/services/responder/rag/knowledge_on.json
+      --model "${EMBEDDING_MODEL:-text-embedding-3-large}"
+
   worker-tasks:
     build: .
     restart: unless-stopped
