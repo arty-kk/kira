@@ -39,17 +39,36 @@ def _load_items(path: Path) -> List[Dict[str, Any]]:
     return result
 
 
-async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
+async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) -> List[List[float]]:
     if not texts:
         return []
-    resp = await _call_openai_with_retry(endpoint="embeddings.create", model=model, input=texts, encoding_format="float")
-    return [[float(x) for x in d.embedding] for d in resp.data]
+
+    vectors: List[List[float]] = []
+    total = len(texts)
+    for start in range(0, total, batch_size):
+        end = min(start + batch_size, total)
+        logger.info("embedding batch %d/%d: items=%d..%d model=%s", (start // batch_size) + 1, (total + batch_size - 1) // batch_size, start + 1, end, model)
+        batch = texts[start:end]
+        resp = await _call_openai_with_retry(endpoint="embeddings.create", model=model, input=batch, encoding_format="float")
+        batch_vectors = [[float(x) for x in d.embedding] for d in resp.data]
+        if len(batch_vectors) != len(batch):
+            raise RuntimeError(f"embedding response size mismatch: requested={len(batch)} got={len(batch_vectors)}")
+        vectors.extend(batch_vectors)
+
+    return vectors
 
 
 async def _run(args: argparse.Namespace) -> None:
-    kb_items = _load_items(Path(args.kb_file))
+    kb_path = Path(args.kb_file)
+    kb_items = _load_items(kb_path)
     model = args.model
     expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    batch_size = max(1, int(args.batch_size))
+
+    logger.info("bootstrap start: kb_file=%s items=%d model=%s batch_size=%d", kb_path, len(kb_items), model, batch_size)
+
+    if not kb_items:
+        raise RuntimeError(f"no valid KB items loaded from {kb_path}")
 
     async with session_scope(read_only=True) as db:
         cnt = await db.execute(
@@ -64,7 +83,14 @@ async def _run(args: argparse.Namespace) -> None:
         return
 
     tag_vocab = sorted({t for it in kb_items for t in it["tags"]})
-    tag_embs = await _embed_texts(tag_vocab, model) if tag_vocab else []
+    logger.info("tag vocabulary built: unique_tags=%d", len(tag_vocab))
+    if not tag_vocab:
+        raise RuntimeError(f"no tags found in KB payload: {kb_path}")
+
+    tag_embs = await _embed_texts_batched(tag_vocab, model, batch_size=batch_size) if tag_vocab else []
+    if len(tag_embs) != len(tag_vocab):
+        raise RuntimeError(f"tag embedding size mismatch: tags={len(tag_vocab)} embs={len(tag_embs)}")
+
     for vec in tag_embs:
         if len(vec) != expected_dim:
             raise RuntimeError(f"invalid tag embedding dim: got={len(vec)} expected={expected_dim}")
@@ -73,13 +99,15 @@ async def _run(args: argparse.Namespace) -> None:
     async with session_scope() as db:
         await db.execute(delete(RagTagVector).where(RagTagVector.scope == "global", RagTagVector.embedding_model == model))
 
-        tag_rows = []
+        rows_added = 0
+        flush_every = max(1, int(args.flush_every))
+        pending: List[RagTagVector] = []
         for item in kb_items:
             for tag in item["tags"]:
                 emb = tag_map.get(tag)
                 if emb is None:
                     continue
-                tag_rows.append(
+                pending.append(
                     RagTagVector(
                         scope="global",
                         owner_id=None,
@@ -91,11 +119,20 @@ async def _run(args: argparse.Namespace) -> None:
                         embedding=emb,
                     )
                 )
-        if tag_rows:
-            db.add_all(tag_rows)
-        await db.flush()
+                if len(pending) >= flush_every:
+                    db.add_all(pending)
+                    await db.flush()
+                    rows_added += len(pending)
+                    logger.info("db flush complete: total_rows=%d", rows_added)
+                    pending.clear()
 
-    logger.info("system tag-index prepared in pgvector: rows=%d unique_tags=%d model=%s", len(tag_rows), len(tag_vocab), model)
+        if pending:
+            db.add_all(pending)
+            await db.flush()
+            rows_added += len(pending)
+            logger.info("db flush complete: total_rows=%d", rows_added)
+
+    logger.info("system tag-index prepared in pgvector: rows=%d unique_tags=%d model=%s", rows_added, len(tag_vocab), model)
 
 
 def main() -> None:
@@ -103,6 +140,8 @@ def main() -> None:
     parser.add_argument("--kb-file", default="app/services/responder/rag/knowledge_on.json")
     parser.add_argument("--model", default=settings.EMBEDDING_MODEL)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--flush-every", type=int, default=500)
     args = parser.parse_args()
     asyncio.run(_run(args))
 

@@ -32,7 +32,8 @@ run_and_assert_ok "explicit scales" env \
   REDIS_KV_SCALE=2 \
   REDIS_VEC_SCALE=3 \
   API_SCALE=4 \
-  MIGRATE_SCALE=0 \
+  MIGRATE_SCALE=1 \
+  BOOTSTRAP_RAG_SCALE=1 \
   WORKER_TASKS_SCALE=5 \
   WORKER_MODERATION_SCALE=6 \
   WORKER_MEDIA_SCALE=7 \
@@ -56,6 +57,18 @@ run_and_assert_fail "unknown override service rejected" env \
   DEPLOY_PATH="${REPO_ROOT}" \
   DEPLOY_VALIDATE_ONLY=1 \
   COMPOSE_SCALE_OVERRIDES="unknown=1" \
+  bash "${DEPLOY_SCRIPT}"
+
+run_and_assert_fail "migrate gate cannot be disabled" env \
+  DEPLOY_PATH="${REPO_ROOT}" \
+  DEPLOY_VALIDATE_ONLY=1 \
+  MIGRATE_SCALE=0 \
+  bash "${DEPLOY_SCRIPT}"
+
+run_and_assert_fail "bootstrap gate cannot be disabled" env \
+  DEPLOY_PATH="${REPO_ROOT}" \
+  DEPLOY_VALIDATE_ONLY=1 \
+  BOOTSTRAP_RAG_SCALE=0 \
   bash "${DEPLOY_SCRIPT}"
 
 run_and_assert_fail "negative scale rejected" env \

@@ -41,11 +41,26 @@ services:
       db:
         condition: service_healthy
     entrypoint: ["sh", "-c"]
+    command: /opt/venv/bin/python -m alembic -c /app/alembic/alembic.ini upgrade head
+
+  bootstrap-rag:
+    build: .
+    restart: "no"
+    env_file: .env
+    init: true
+    environment:
+      DB_APP_NAME: "bootstrap-rag"
+      PYTHONPATH: "/app"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     command: >
-      /opt/venv/bin/python -m alembic -c /app/alembic/alembic.ini upgrade head &&
       /opt/venv/bin/python scripts/bootstrap_system_kb_pgvector.py
       --kb-file app/services/responder/rag/knowledge_on.json
       --model "${EMBEDDING_MODEL:-text-embedding-3-large}"
+      --force
       
   redis_kv:
     image: redis:7-alpine
@@ -152,6 +167,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      bootstrap-rag:
+        condition: service_completed_successfully
     volumes:
       - ./certs:/certs:ro
       - ./dialogs:/data/dialogs
@@ -201,6 +218,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      bootstrap-rag:
         condition: service_completed_successfully
     ports:
       - "8000:8000"
@@ -252,6 +271,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      bootstrap-rag:
         condition: service_completed_successfully
     command:
       - celery
@@ -307,6 +328,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      bootstrap-rag:
+        condition: service_completed_successfully
     command:
       - celery
       - "-A"
@@ -361,6 +384,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      bootstrap-rag:
+        condition: service_completed_successfully
     command:
       - celery
       - "-A"
@@ -412,6 +437,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      bootstrap-rag:
+        condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.queue_worker"]
     ulimits:
       nofile:
@@ -458,6 +485,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      bootstrap-rag:
         condition: service_completed_successfully
     entrypoint: ["python", "-u", "-m", "app.tasks.api_worker"]
     ulimits:
