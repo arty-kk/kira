@@ -238,7 +238,8 @@ docker compose up --force-recreate --abort-on-container-exit --exit-code-from mi
 echo "MIGRATIONS_DONE"
 
 echo "Running post-migrate DB smoke-check gate..."
-docker compose run --rm migrate python /app/scripts/check_db_state.py
+docker compose run --rm migrate sh -lc 'test -f scripts/check_db_state.py || { echo "scripts/check_db_state.py not found in container workdir" >&2; exit 1; }'
+docker compose run --rm migrate python scripts/check_db_state.py
 echo "DB_SMOKE_CHECK_DONE"
 
 validate_scale_value "BOOTSTRAP_RAG_MAX_ATTEMPTS" "${BOOTSTRAP_RAG_MAX_ATTEMPTS}"

@@ -56,7 +56,8 @@ Failure behavior:
 Immediately after `MIGRATIONS_DONE` and before `bootstrap-rag`, deploy runs a DB state smoke-check in the same runtime context as `migrate`:
 
 ```bash
-docker compose run --rm migrate python /app/scripts/check_db_state.py
+docker compose run --rm migrate sh -lc 'test -f scripts/check_db_state.py || { echo "scripts/check_db_state.py not found in container workdir" >&2; exit 1; }'
+docker compose run --rm migrate python scripts/check_db_state.py
 ```
 
 The check validates:
@@ -79,7 +80,8 @@ Fail-fast behavior and error categories:
 Manual incident command (run in the same runtime context as `migrate`):
 
 ```bash
-docker compose run --rm migrate python /app/scripts/check_db_state.py
+docker compose run --rm migrate sh -lc 'test -f scripts/check_db_state.py || { echo "scripts/check_db_state.py not found in container workdir" >&2; exit 1; }'
+docker compose run --rm migrate python scripts/check_db_state.py
 ```
 
 Interpretation:
@@ -227,7 +229,8 @@ Apply this gate in every deploy sequence:
 
 ```bash
 docker compose up migrate
-docker compose run --rm migrate python /app/scripts/check_db_state.py
+docker compose run --rm migrate sh -lc 'test -f scripts/check_db_state.py || { echo "scripts/check_db_state.py not found in container workdir" >&2; exit 1; }'
+docker compose run --rm migrate python scripts/check_db_state.py
 docker compose up bootstrap-rag
 docker compose ps bootstrap-rag
 docker compose up -d bot api worker-tasks worker-media worker-moderation worker-queue worker-api
