@@ -70,8 +70,8 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
     _ = owner_id
 
 
-def _build_halfvec_query_expr(query_vec: List[float], *, dim: int):
-    query_vec_param = bindparam("query_vec", value=query_vec, type_=RagTagVector.embedding.type)
+def _build_halfvec_query_expr(*, dim: int):
+    query_vec_param = bindparam("query_vec")
     halfvec_query_param = cast(query_vec_param, HALFVEC(dim))
     halfvec_embedding_expr = cast(RagTagVector.embedding, HALFVEC(dim))
     distance_expr = halfvec_embedding_expr.op("<=>")(halfvec_query_param).label("distance")
@@ -135,7 +135,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         )
         return []
 
-    _, distance_expr = _build_halfvec_query_expr(qv, dim=expected_dim)
+    _, distance_expr = _build_halfvec_query_expr(dim=expected_dim)
     score_expr = (literal(1.0) - distance_expr).label("score")
     max_distance = 1.0 - thr
 
