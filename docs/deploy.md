@@ -51,9 +51,44 @@ Failure behavior:
 - if migrate exits non-zero, deploy stops immediately before runtime startup;
 - `MIGRATE_SCALE=0` is rejected because `migrate` is a mandatory deploy gate.
 
+## Post-migrate DB smoke-check (`scripts/check_db_state.py`)
+
+Immediately after `MIGRATIONS_DONE` and before `bootstrap-rag`, deploy runs a DB state smoke-check in the same runtime context as `migrate`:
+
+```bash
+docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
+```
+
+The check validates:
+- active target schema via `current_schema()`;
+- required tables in current schema only (`users`, `refund_outbox`, `rag_tag_vectors`) via `to_regclass(current_schema() || '.<table>')`;
+- `vector` extension presence in `pg_extension`;
+- Alembic revision in `alembic_version` is exactly `0001_initial_schema`.
+
+Success criterion:
+- command exits with code `0`;
+- output includes `db smoke-check passed`;
+- deploy logs contain marker `DB_SMOKE_CHECK_DONE`.
+
+Fail-fast behavior and error categories:
+- `schema mismatch`: wrong/empty schema context, missing/misplaced `alembic_version`, DB connectivity mismatch;
+- `missing table`: one of required tables is absent in `current_schema()`;
+- `missing extension`: `vector` extension is unavailable;
+- `unexpected alembic revision`: `alembic_version.version_num` differs from `0001_initial_schema`.
+
+Manual incident command (run in the same runtime context as `migrate`):
+
+```bash
+docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
+```
+
+Interpretation:
+- exit `0` means schema state is aligned with current repo expectations;
+- exit non-zero means rollout must stay blocked until the printed category is resolved.
+
 ## RAG bootstrap status (`scripts/deploy.sh`)
 
-After successful schema gate, deploy runs RAG bootstrap as a separate one-shot step:
+After successful schema gate and DB smoke-check gate, deploy runs RAG bootstrap as a separate one-shot step:
 
 ```bash
 docker compose up --force-recreate --abort-on-container-exit --exit-code-from bootstrap-rag bootstrap-rag
@@ -186,24 +221,26 @@ OK:
 Deviation means:
 - If the error persists, repeat steps 1 and 3 immediately; this usually means worker runtime still points to another DB/schema.
 
-### 5) Enforce post-deploy gates: `migrate` and `bootstrap-rag` must succeed before runtime startup
+### 5) Enforce post-deploy gates: `migrate`, DB smoke-check, and `bootstrap-rag` must succeed before runtime startup
 
 Apply this gate in every deploy sequence:
 
 ```bash
 docker compose up migrate
-docker compose ps migrate
+docker compose run --rm migrate 'python /app/scripts/check_db_state.py'
 docker compose up bootstrap-rag
 docker compose ps bootstrap-rag
 docker compose up -d bot api worker-tasks worker-media worker-moderation worker-queue worker-api
 ```
 
 OK:
-- `docker compose ps migrate` shows successful completion state (`Exited (0)`) before bootstrap/runtime startup.
+- migrate completes successfully before any runtime startup.
+- DB smoke-check exits with code `0` and prints `db smoke-check passed` before bootstrap/runtime startup.
 - `docker compose ps bootstrap-rag` shows successful completion state (`Exited (0)`) before runtime startup.
 
 Deviation means:
 - If `migrate` failed, stop rollout, run `docker compose logs migrate`, fix root cause, and re-run step 2.
+- If DB smoke-check failed, stop rollout and fix exactly the reported category (`schema mismatch` / `missing table` / `missing extension` / `unexpected alembic revision`) before continuing.
 - If `bootstrap-rag` failed, stop rollout, run `docker compose logs bootstrap-rag`, fix root cause, retry bootstrap, and only then continue.
 - If runtime points to another DB, align `DATABASE_URL` for `migrate` and all runtime services, then restart from step 1.
 
