@@ -40,7 +40,7 @@ from app.prompts_base import (
     RESPONDER_REPLY_CONTEXT_USER_PREV_PING_TEMPLATE,
 )
 from app.core.db import session_scope
-from app.core.models import User
+from app.core.models import RagTagVector, User
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
@@ -51,6 +51,7 @@ from app.services.addons.analytics import (
 )
 from .rag import is_relevant
 from .rag.knowledge_proc import _get_query_embedding
+from .rag.query_embedding import normalize_query_embedding
 from .context_select import (
     compose_mtm_snippet,
     select_ltm_snippet,
@@ -84,20 +85,6 @@ class RequestEmbeddingContext:
     embedding_source: Literal["computed", "reused"]
 
 
-def _normalize_embedding_vector(raw_embedding: Any) -> List[float] | None:
-    if not isinstance(raw_embedding, list) or not raw_embedding:
-        return None
-    try:
-        vec = np.asarray(raw_embedding, dtype=np.float32)
-    except Exception:
-        return None
-    if vec.ndim != 1 or vec.size == 0:
-        return None
-    vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
-    if not np.any(vec):
-        return None
-    return vec.astype(np.float32, copy=False).tolist()
-
 
 async def _compute_on_topic_relevance(
     *,
@@ -115,10 +102,19 @@ async def _compute_on_topic_relevance(
     on_topic_flag = False
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model, rag_query_source=rag_query_source)
-    if query_embedding:
-        rag_query_context.query_embedding = query_embedding
-        rag_query_context.embedding_model = embedding_model or settings.EMBEDDING_MODEL
-        rag_query_context.query_embedding_source = rag_precheck_source or "external_precomputed"
+    expected_rag_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+    if query_embedding is not None:
+        normalized_query_embedding = normalize_query_embedding(query_embedding, expected_dim=expected_rag_dim)
+        if normalized_query_embedding is None:
+            logger.info(
+                "core: skipping invalid precomputed query_embedding reason=bad-shape-or-values type=%s expected_dim=%s",
+                type(query_embedding).__name__,
+                expected_rag_dim,
+            )
+        else:
+            rag_query_context.query_embedding = normalized_query_embedding
+            rag_query_context.embedding_model = embedding_model or settings.EMBEDDING_MODEL
+            rag_query_context.query_embedding_source = rag_precheck_source or "external_precomputed"
     if precomputed_rag_hits is not None:
         on_topic_hits = precomputed_rag_hits
         on_topic_flag = bool(precomputed_rag_hits)
@@ -129,13 +125,20 @@ async def _compute_on_topic_relevance(
             emb_model = settings.EMBEDDING_MODEL
             qraw = await _get_query_embedding(emb_model, query_to_model)
             if qraw is not None:
-                qvec = np.asarray(qraw, dtype=np.float32)
-                qvec = np.nan_to_num(qvec, nan=0.0, posinf=0.0, neginf=0.0)
-                norm = float(np.linalg.norm(qvec))
-                if np.isfinite(norm) and norm >= 1e-12:
-                    rag_query_context.query_embedding = (qvec / norm).astype(np.float32, copy=False).tolist()
-                    rag_query_context.embedding_model = emb_model
-                    rag_query_context.query_embedding_source = "precomputed_per_request"
+                qvec_raw = normalize_query_embedding(qraw, expected_dim=expected_rag_dim)
+                if qvec_raw is None:
+                    logger.info(
+                        "core: invalid query embedding from provider reason=bad-shape-or-values shape=%s expected_dim=%s",
+                        getattr(qraw, "shape", None),
+                        expected_rag_dim,
+                    )
+                else:
+                    qvec = np.asarray(qvec_raw, dtype=np.float32)
+                    norm = float(np.linalg.norm(qvec))
+                    if np.isfinite(norm) and norm >= 1e-12:
+                        rag_query_context.query_embedding = (qvec / norm).astype(np.float32, copy=False).tolist()
+                        rag_query_context.embedding_model = emb_model
+                        rag_query_context.query_embedding_source = "precomputed_per_request"
         except Exception:
             logger.exception("RAG query embedding precompute failed for chat_id=%s", chat_id, exc_info=True)
 
@@ -1028,7 +1031,14 @@ async def respond_to_user(
             logger.info("   ↳ process_interaction END (t=%.3fs)", time.time() - t0)
 
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
-    normalized_request_embedding = _normalize_embedding_vector(query_embedding)
+    expected_rag_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+    normalized_request_embedding = normalize_query_embedding(query_embedding, expected_dim=expected_rag_dim)
+    if query_embedding is not None and normalized_request_embedding is None:
+        logger.info(
+            "core: invalid query_embedding for RAG reason=bad-shape-or-values type=%s expected_dim=%s",
+            type(query_embedding).__name__,
+            expected_rag_dim,
+        )
     request_embedding_context = RequestEmbeddingContext(
         query_text=query,
         query_embedding=normalized_request_embedding,
