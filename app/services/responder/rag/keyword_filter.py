@@ -73,7 +73,8 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 def _build_halfvec_query_expr(query_vec: List[float], *, dim: int):
     query_vec_param = bindparam("query_vec", value=query_vec, type_=RagTagVector.embedding.type)
     halfvec_query_param = cast(query_vec_param, HALFVEC(dim))
-    distance_expr = RagTagVector.embedding.op("<=>")(halfvec_query_param).label("distance")
+    halfvec_embedding_expr = cast(RagTagVector.embedding, HALFVEC(dim))
+    distance_expr = halfvec_embedding_expr.op("<=>")(halfvec_query_param).label("distance")
     return query_vec_param, distance_expr
 
 
@@ -102,7 +103,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
 
     qv_arr = np.asarray(qv, dtype=np.float32)
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
     if int(qv_arr.shape[0]) != expected_dim:
         return []
 
