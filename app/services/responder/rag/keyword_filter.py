@@ -1,8 +1,10 @@
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import bindparam, literal, select
+from pgvector.sqlalchemy import HALFVEC
+from sqlalchemy import bindparam, cast, literal, select
 
 from app.config import settings
 from app.core.db import session_scope
@@ -68,6 +70,13 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
     _ = owner_id
 
 
+def _build_halfvec_query_expr(query_vec: List[float], *, dim: int):
+    query_vec_param = bindparam("query_vec", value=query_vec, type_=RagTagVector.embedding.type)
+    halfvec_query_param = cast(query_vec_param, HALFVEC(dim))
+    distance_expr = RagTagVector.embedding.op("<=>")(halfvec_query_param).label("distance")
+    return query_vec_param, distance_expr
+
+
 async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Optional[int] = None, owner_id: Optional[int] = None, query_embedding: Optional[List[float]] = None, embedding_model: Optional[str] = None) -> List[Tuple[float, str, str]]:
     t = _norm_ws(text)
     if not t:
@@ -97,8 +106,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     if int(qv_arr.shape[0]) != expected_dim:
         return []
 
-    query_vec_param = bindparam("query_vec", value=qv, type_=RagTagVector.embedding.type)
-    distance_expr = RagTagVector.embedding.op("<=>")(query_vec_param).label("distance")
+    _, distance_expr = _build_halfvec_query_expr(qv, dim=expected_dim)
     score_expr = (literal(1.0) - distance_expr).label("score")
     max_distance = 1.0 - thr
 
@@ -109,6 +117,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         else:
             conditions.append(RagTagVector.scope == "global")
 
+        sql_started = time.perf_counter()
         rows = await db.execute(
             select(
                 RagTagVector.scope,
@@ -125,6 +134,15 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             .limit(candidate_limit)
         )
         payload = rows.all()
+        sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
+
+    logger.info(
+        "keyword_filter: sql stage complete duration_ms=%.2f candidate_size=%s model=%s owner_id=%s",
+        sql_duration_ms,
+        len(payload),
+        emb_model,
+        owner_id,
+    )
 
     for scope, oid, ext_id, txt, emb, score, _distance in payload:
         vec_src = emb if emb is not None else []
@@ -140,6 +158,12 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             text_by_id[rid] = str(txt or "")
 
     if not scores_by_id:
+        logger.info(
+            "keyword_filter: empty-hit no-scored-candidates model=%s owner_id=%s sql_candidate_size=%s",
+            emb_model,
+            owner_id,
+            len(payload),
+        )
         logger.info("keyword_filter: no DB tag rows found for model=%s owner_id=%s", emb_model, owner_id)
         return []
 

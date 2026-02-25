@@ -81,11 +81,65 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         sql = str(captured["query"])
         self.assertIn("<=>", sql)
+        self.assertIn("CAST", sql)
+        self.assertIn("HALFVEC", sql)
         self.assertIn("ORDER BY distance ASC", sql)
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
         self.assertIn("scope", sql)
         self.assertEqual(hits, [(0.99, "item-1", "text-1"), (0.91, "42:item-2", "text-2")])
+        self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
+        self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
+
+    async def test_keyword_filter_halfvec_query_time_regression_stable_top1(self):
+        class _FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _FakeSession:
+            async def execute(self, _query):
+                rows = [
+                    (
+                        "global",
+                        None,
+                        "first",
+                        "first-text",
+                        np.asarray([1.0] + [0.0] * 3071, dtype=np.float32),
+                        0.95,
+                        0.05,
+                    ),
+                    (
+                        "global",
+                        None,
+                        "second",
+                        "second-text",
+                        np.asarray([0.95, 0.05] + [0.0] * 3070, dtype=np.float32),
+                        0.88,
+                        0.12,
+                    ),
+                ]
+                return _FakeResult(rows)
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 3071
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
+
+        self.assertEqual(hits, [(0.95, "first", "first-text")])
+        self.assertIsInstance(hits[0], tuple)
+        self.assertEqual(len(hits[0]), 3)
+        self.assertIsInstance(hits[0][0], float)
+        self.assertIsInstance(hits[0][1], str)
+        self.assertIsInstance(hits[0][2], str)
 
     async def test_keyword_filter_filters_invalid_vectors_from_payload(self):
         class _FakeResult:
