@@ -195,6 +195,10 @@ def upgrade():
     op.create_index("ix_rag_tag_vectors_kb_id", "rag_tag_vectors", ["kb_id"])
     op.create_index("ix_rag_tag_vectors_embedding_model", "rag_tag_vectors", ["embedding_model"])
     op.create_index("ix_rag_tag_vectors_created_at", "rag_tag_vectors", ["created_at"])
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_ann "
+        "ON rag_tag_vectors USING hnsw (embedding vector_cosine_ops);"
+    )
 
     op.create_table(
         "refund_outbox",
@@ -257,6 +261,7 @@ def downgrade():
     op.drop_table("payment_receipts")
     op.drop_table("gift_purchases")
 
+    op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_embedding_cosine_ann;")
     op.drop_index("ix_rag_tag_vectors_created_at", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_embedding_model", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_kb_id", table_name="rag_tag_vectors")

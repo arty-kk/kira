@@ -2,7 +2,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import select, literal
+from sqlalchemy import bindparam, literal, select
 
 from app.config import settings
 from app.core.db import session_scope
@@ -97,7 +97,10 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     if int(qv_arr.shape[0]) != expected_dim:
         return []
 
-    score_expr = (literal(1.0) - RagTagVector.embedding.cosine_distance(qv)).label("score")
+    query_vec_param = bindparam("query_vec", value=qv, type_=RagTagVector.embedding.type)
+    distance_expr = RagTagVector.embedding.op("<=>")(query_vec_param).label("distance")
+    score_expr = (literal(1.0) - distance_expr).label("score")
+    max_distance = 1.0 - thr
 
     async with session_scope(read_only=True) as db:
         conditions = [RagTagVector.embedding_model == emb_model]
@@ -114,15 +117,16 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
                 RagTagVector.text,
                 RagTagVector.embedding,
                 score_expr,
+                distance_expr,
             )
             .where(*conditions)
-            .where(score_expr >= thr)
-            .order_by(score_expr.desc())
+            .where(distance_expr <= max_distance)
+            .order_by(distance_expr.asc())
             .limit(candidate_limit)
         )
         payload = rows.all()
 
-    for scope, oid, ext_id, txt, emb, score in payload:
+    for scope, oid, ext_id, txt, emb, score, _distance in payload:
         vec_src = emb if emb is not None else []
         vec = np.asarray(vec_src, dtype=np.float32)
         if vec.ndim != 1 or int(vec.shape[0]) != expected_dim:

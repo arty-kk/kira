@@ -26,6 +26,11 @@ class InitialMigrationTests(unittest.TestCase):
         self.assertEqual(migration.revision, "0001_initial_schema")
         self.assertIsNone(migration.down_revision)
 
+    def test_init_migration_contains_rag_hnsw_index(self):
+        source = (ROOT / "alembic" / "versions" / "0001_initial_schema.py").read_text()
+        self.assertIn("ix_rag_tag_vectors_embedding_cosine_ann", source)
+        self.assertIn("USING hnsw", source)
+
 
 if __name__ == "__main__":
     unittest.main()

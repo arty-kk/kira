@@ -104,6 +104,10 @@ Retry/fail policy:
 - on final failure, deploy logs `RAG_BOOTSTRAP_FAILED_FINAL` and exits with code `1`.
 - `BOOTSTRAP_RAG_SCALE=0` is rejected because `bootstrap-rag` is a mandatory deploy gate.
 
+Operational note for tag-search performance:
+- RAG tag-search expects a pgvector ANN HNSW index on `rag_tag_vectors.embedding` (migration revision `0001_initial_schema`).
+- Verify query plans with `EXPLAIN (ANALYZE, BUFFERS)` in the target environment.
+
 Success criterion:
 - bootstrap exits with code `0`;
 - deploy logs contain marker `RAG_BOOTSTRAP_DONE`;
