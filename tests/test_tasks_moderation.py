@@ -168,28 +168,34 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         def _fake_run(coro):
             return asyncio.run(coro)
 
-        redis_client = type("RedisStub", (), {
-            "set": unittest.mock.AsyncMock(return_value=True),
-            "eval": unittest.mock.AsyncMock(return_value=1),
-            "incrby": unittest.mock.AsyncMock(return_value=1),
-            "incr": unittest.mock.AsyncMock(return_value=1),
-        })()
+        redis_set_mock = unittest.mock.AsyncMock(return_value=True)
+        redis_eval_mock = unittest.mock.AsyncMock(return_value=1)
 
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle),
             patch("app.tasks.moderation._run", side_effect=_fake_run),
-            patch("app.tasks.moderation.consts.redis_client", redis_client),
+            patch.object(passive_moderate.__wrapped__.__globals__["consts"], "redis_client", type("RedisStub", (), {
+                "set": redis_set_mock,
+                "eval": redis_eval_mock,
+                "incrby": unittest.mock.AsyncMock(return_value=1),
+                "incr": unittest.mock.AsyncMock(return_value=1),
+            })()),
         ):
             result = passive_moderate.run(payload)
 
         self.assertEqual(result, "clean")
-        redis_client.set.assert_any_await(
+        redis_set_mock.assert_awaited_once_with(
             "mod:inflight:100:300",
             unittest.mock.ANY,
             ex=unittest.mock.ANY,
             nx=True,
         )
-        redis_client.eval.assert_awaited()
+        redis_eval_mock.assert_awaited_once_with(
+            unittest.mock.ANY,
+            1,
+            "mod:inflight:100:300",
+            unittest.mock.ANY,
+        )
 
     def test_prepare_moderation_payload_drops_oversized_json(self) -> None:
         oversized = {"text": "x", "image_b64": "a" * (settings.CELERY_MODERATION_MAX_PAYLOAD_BYTES + 128)}
