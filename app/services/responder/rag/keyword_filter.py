@@ -10,6 +10,7 @@ from app.config import settings
 from app.core.db import session_scope
 from app.core.models import RagTagVector
 from .knowledge_proc import _get_query_embedding
+from .query_embedding import normalize_query_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +30,6 @@ def _l2_normalize(vec: List[float]) -> List[float]:
         return [float(x) for x in arr]
     return [float(x / n) for x in arr]
 
-
-def _normalize_query_embedding(raw: object, *, expected_dim: int) -> List[float] | None:
-    try:
-        arr = np.asarray(raw, dtype=np.float32)
-    except Exception:
-        return None
-
-    if arr.ndim == 2 and arr.shape[0] == 1:
-        arr = arr[0]
-    if arr.ndim != 1:
-        return None
-    if int(arr.shape[0]) != expected_dim:
-        return None
-    if not np.isfinite(arr).all():
-        return None
-    return [float(x) for x in arr]
 
 
 def _mmr_select_ids(cand_ids: List[str], vecs_by_id: Dict[str, List[float]], scores_by_id: Dict[str, float], top_k: int, lam: float) -> List[str]:
@@ -104,7 +89,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
     qv: List[float]
     if query_embedding is not None:
-        qv_src = _normalize_query_embedding(query_embedding, expected_dim=expected_dim)
+        qv_src = normalize_query_embedding(query_embedding, expected_dim=expected_dim)
         if qv_src is None:
             logger.info(
                 "keyword_filter: invalid query_embedding conversion reason=bad-shape-or-values type=%s",
@@ -116,7 +101,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         qraw = await _get_query_embedding(embedding_model or emb_model, t)
         if qraw is None:
             return []
-        qv_src = _normalize_query_embedding(qraw, expected_dim=expected_dim)
+        qv_src = normalize_query_embedding(qraw, expected_dim=expected_dim)
         if qv_src is None:
             logger.info(
                 "keyword_filter: invalid query embedding from provider reason=bad-shape-or-values shape=%s expected_dim=%s",

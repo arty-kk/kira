@@ -288,6 +288,24 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(arr.tolist(), [1.0, 2.0])
 
+    async def test_get_query_embedding_empty_data_returns_none(self):
+        async def _fake_call(**_kwargs):
+            return types.SimpleNamespace(data=[])
+
+        with mock.patch.object(knowledge_proc, "_call_openai_with_retry", side_effect=_fake_call):
+            arr = await knowledge_proc._get_query_embedding("m", "q")
+
+        self.assertIsNone(arr)
+
+    async def test_get_query_embedding_missing_embedding_returns_none(self):
+        async def _fake_call(**_kwargs):
+            return types.SimpleNamespace(data=[types.SimpleNamespace()])
+
+        with mock.patch.object(knowledge_proc, "_call_openai_with_retry", side_effect=_fake_call):
+            arr = await knowledge_proc._get_query_embedding("m", "q")
+
+        self.assertIsNone(arr)
+
 
 if __name__ == "__main__":
     unittest.main()

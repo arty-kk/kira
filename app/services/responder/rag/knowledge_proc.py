@@ -40,7 +40,12 @@ async def _get_query_embedding(api_model: str, query: str) -> Optional[np.ndarra
         logger.exception("Embedding query failed for model %s", api_model)
         return None
 
-    vec = resp.data[0].embedding
+    try:
+        data = getattr(resp, "data", None)
+        vec = data[0].embedding if data else None
+    except Exception:
+        return None
+
     if isinstance(vec, str):
         try:
             return _normalize_embedding_1d(np.frombuffer(_b64.b64decode(vec), dtype=np.float32))
