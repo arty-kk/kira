@@ -1504,7 +1504,7 @@ async def respond_to_user(
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
-        active_kb_id: int | None = None
+        active_kb_id: int | None = knowledge_kb_id
         on_topic_flag, on_topic_hits, rag_query_context = await _compute_on_topic_relevance(
             chat_id=chat_id,
             query_to_model=rag_query_for_relevance,
