@@ -65,9 +65,8 @@ async def is_relevant(
             query_embedding_len,
         )
         logger.warning(
-            "gate: keyword pre-check failed err_type=%s err=%s",
+            "gate: keyword pre-check failed err_type=%s",
             type(exc).__name__,
-            exc,
         )
         tag_hits = []
 

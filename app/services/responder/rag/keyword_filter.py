@@ -231,8 +231,17 @@ async def find_tag_hits(
 
         stmt = select(ranked_candidates).order_by(ranked_candidates.c.distance.asc())
 
-        rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
-        payload = rows.all()
+        try:
+            rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
+            payload = rows.all()
+        except Exception as exc:
+            logger.warning(
+                "keyword_filter: sql stage failed err_type=%s model=%s owner_id=%s",
+                type(exc).__name__,
+                emb_model,
+                owner_id,
+            )
+            return []
 
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
 

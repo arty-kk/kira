@@ -183,6 +183,24 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(hits, [(0.95, "ok", "ok-text")])
 
+    async def test_keyword_filter_returns_empty_when_sql_execute_raises(self):
+        class _FakeSession:
+            async def execute(self, _query, params=None):
+                raise ValueError("boom")
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 3071
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
+
+        self.assertEqual(hits, [])
+
     async def test_keyword_filter_returns_empty_on_empty_query_embedding(self):
         with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
             hits = await keyword_filter.find_tag_hits("q", query_embedding=[], model="m", embedding_model="m")
