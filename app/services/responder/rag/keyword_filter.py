@@ -57,12 +57,12 @@ def _mmr_select_ids(
             if not v_r:
                 continue
             max_sim = 0.0
-            v_r_np = np.asarray(v_r, dtype=np.float32)
+            v_r_np = np.asarray(v_r, dtype=np.float32).reshape(-1)
 
             for sid in selected:
                 v_s = vecs_by_id.get(sid)
                 if v_s:
-                    v_s_np = np.asarray(v_s, dtype=np.float32)
+                    v_s_np = np.asarray(v_s, dtype=np.float32).reshape(-1)
                     max_sim = max(max_sim, float(np.dot(v_r_np, v_s_np)))
 
             mmr = lam * scores_by_id.get(rid, 0.0) - (1.0 - lam) * max_sim
@@ -98,14 +98,7 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    """
-    IMPORTANT:
-    - RagTagVector.embedding is Vector(3072) in your model.
-    - Do NOT use HALFVEC here; it triggers pgvector/sqlalchemy halfvec bind processor and breaks.
-    """
-    query_vec_param = bindparam("query_vec", type_=Vector(dim))
-    distance_expr = RagTagVector.embedding.op("<=>")(query_vec_param).label("distance")
-    return query_vec_param, distance_expr
+    return RagTagVector.embedding.op("<=>")(bindparam("query_vec", type_=Vector(dim))).label("distance")
 
 
 async def find_tag_hits(
@@ -190,7 +183,7 @@ async def find_tag_hits(
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
 
     # 4) SQL
-    _, distance_expr = _build_vector_distance_expr(dim=expected_dim)
+    distance_expr = _build_vector_distance_expr(dim=expected_dim)
 
     async with session_scope(read_only=True) as db:
         conditions = [RagTagVector.embedding_model == emb_model]
