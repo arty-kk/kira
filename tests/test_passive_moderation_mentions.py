@@ -603,8 +603,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(flagged)
         self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "")
-        cached_payload = redis.set.await_args.args[1]
-        self.assertIn('"flagged": false', str(cached_payload).lower())
+        redis.set.assert_not_awaited()
 
     async def test_moderate_with_openai_mixed_payload_keeps_text_and_image(self) -> None:
         redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))

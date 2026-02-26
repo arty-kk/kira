@@ -604,49 +604,7 @@ async def moderate_with_openai(
         text = ""
     trimmed = text[:MAX_PROMPT_TEXT]
 
-    model_tag = settings.MODERATION_MODEL
-    tox_tag = str(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", ""))
-    img_tag = ""
-    if image_b64:
-        try:
-            img_tag = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()[:16]
-        except Exception:
-            img_tag = "img"
-
-    cache_key = "mod:cache:" + hashlib.sha256(
-        (model_tag + "|" + tox_tag + "|" + trimmed + "|" + img_tag).encode("utf-8")
-    ).hexdigest()[:48]
     msg_hash, msg_len = _log_message_ref(trimmed)
-
-    redis = get_redis()
-    try:
-        cached = await redis.get(cache_key)
-        if cached is not None:
-            if isinstance(cached, (bytes, bytearray)):
-                cached = cached.decode("utf-8", "ignore")
-            cached_raw = str(cached).strip()
-
-            cached_flagged = cached_raw == "1"
-            cached_category = ""
-            if cached_raw.startswith("{"):
-                with contextlib.suppress(Exception):
-                    data = json.loads(cached_raw)
-                    if isinstance(data, dict):
-                        cached_flagged = bool(data.get("flagged", False))
-                        cached_category = str(data.get("category") or "").strip()
-
-            _LAST_AI_MODERATION_CATEGORY.set(cached_category if cached_flagged else "")
-            logger.info(
-                "moderation result (cache): model=%s flagged=%s category=%s message_hash=%s message_len=%s",
-                settings.MODERATION_MODEL,
-                cached_flagged,
-                cached_category or "-",
-                msg_hash,
-                msg_len,
-            )
-            return cached_flagged
-    except Exception:
-        logger.debug("moderate_with_openai: cache lookup failed")
 
     client = get_openai()
 
@@ -693,19 +651,6 @@ async def moderate_with_openai(
     categories_dump = _to_plain_dict(categories_obj)
     category_scores_dump = _to_plain_dict(category_scores_obj)
     primary_category = _primary_ai_category(categories_dump, category_scores_dump, flagged)
-
-    try:
-        ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
-        payload = json.dumps({
-            "flagged": bool(flagged),
-            "category": primary_category,
-        }, ensure_ascii=False)
-        await asyncio.wait_for(
-            redis.set(cache_key, payload, ex=ttl, nx=True),
-            timeout=0.5,
-        )
-    except Exception:
-        logger.debug("moderate_with_openai: failed to cache result")
 
     logger.info(
         "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
