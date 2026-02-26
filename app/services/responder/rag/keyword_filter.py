@@ -4,6 +4,8 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import bindparam, select, func
 from sqlalchemy.sql import over
 
 from app.config import settings
