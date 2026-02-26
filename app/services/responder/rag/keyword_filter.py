@@ -223,7 +223,6 @@ async def find_tag_hits(
             conditions.append(RagTagVector.scope == "global")
 
         sql_started = time.perf_counter()
-        query_vec_source = "external query_embedding" if query_embedding is not None else "provider"
 
         knn = (
             select(
