@@ -68,6 +68,11 @@ try:
 except Exception:
     _ACTIVE_KB_CACHE_TTL_SEC = 60
 _ACTIVE_KB_CACHE_TTL_SEC = max(0, min(3600, _ACTIVE_KB_CACHE_TTL_SEC))
+try:
+    _ACTIVE_KB_CACHE_MAX = int(getattr(settings, "RAG_ACTIVE_KB_CACHE_MAX", 8192) or 8192)
+except Exception:
+    _ACTIVE_KB_CACHE_MAX = 8192
+_ACTIVE_KB_CACHE_MAX = max(256, min(200_000, _ACTIVE_KB_CACHE_MAX))
 
 
 def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
@@ -109,6 +114,23 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
                 return int(kb_cached)
         except Exception:
             pass
+
+        try:
+            if len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
+                now = time.time()
+                ttl = float(_ACTIVE_KB_CACHE_TTL_SEC)
+                stale_before = now - ttl
+                for k, (ts0, _) in list(_ACTIVE_KB_CACHE.items()):
+                    if not ts0 or ts0 < stale_before:
+                        _ACTIVE_KB_CACHE.pop(k, None)
+                if len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
+                    items = sorted(_ACTIVE_KB_CACHE.items(), key=lambda kv: float(kv[1][0] or 0.0))
+                    drop_n = max(0, len(items) - _ACTIVE_KB_CACHE_MAX)
+                    for i in range(drop_n):
+                        _ACTIVE_KB_CACHE.pop(items[i][0], None)
+        except Exception:
+            pass
+            
     try:
         async with session_scope(read_only=True, stmt_timeout_ms=1200) as db:
             res = await db.execute(
