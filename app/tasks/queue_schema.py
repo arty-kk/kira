@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-"""Queue payload schemas used to validate job payloads before enqueueing."""
-
 from typing import Any, Optional, Annotated
 
 from pydantic import BaseModel, Field, ValidationError
