@@ -155,6 +155,7 @@ async def _compute_on_topic_relevance(
                 return_hits=True,
                 persona_owner_id=persona_owner_id,
                 knowledge_owner_id=knowledge_owner_id,
+                knowledge_kb_id=active_kb_id,
                 strict_autoreply_gate=(trigger == "check_on_topic"),
                 query_embedding=rag_query_context.query_embedding,
                 embedding_model=rag_query_context.embedding_model,
