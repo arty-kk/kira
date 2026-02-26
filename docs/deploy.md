@@ -114,6 +114,11 @@ Operational note for tag-search performance:
   - `keyword_filter: empty-hit no-scored-candidates ...` event frequency.
 - Rollback instruction: revert query-time halfvec path to vector query param in code, then redeploy with the standard deploy pipeline.
 
+### RAG tag vectors: dimension integrity check and safe rebuild
+
+- Model schema uses `vector(3072)` for `rag_tag_vectors.embedding`; monitor rows with mismatched dimensions using SQL check `vector_dims(embedding) <> 3072`.
+- If mismatches are detected, clear only the affected target dataset (do not wipe unrelated KB/owner scopes), then run the standard rebuild path already used in operations: `bootstrap-rag` (or the project's штатный rebuild process for the same target).
+
 Success criterion:
 - bootstrap exits with code `0`;
 - deploy logs contain marker `RAG_BOOTSTRAP_DONE`;

@@ -212,7 +212,10 @@ async def find_tag_hits(
         kb_id_int = None
 
     async with session_scope(read_only=True) as db:
-        conditions = [RagTagVector.embedding_model == emb_model]
+        conditions = [
+            RagTagVector.embedding_model == emb_model,
+            func.vector_dims(RagTagVector.embedding) == expected_dim,
+        ]
 
         if owner_id:
             owner_cond = (RagTagVector.scope == "owner") & (RagTagVector.owner_id == int(owner_id))
@@ -290,12 +293,14 @@ async def find_tag_hits(
             root_type = type(root_exc).__name__ if root_exc is not None else "-"
             root_msg = str(root_exc or "")[:240]
             logger.error(
-                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s",
+                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s",
                 type(exc).__name__,
                 root_type,
                 root_msg,
                 emb_model,
                 owner_id,
+                kb_id_int,
+                expected_dim,
             )
             return []
 
