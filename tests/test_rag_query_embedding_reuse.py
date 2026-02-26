@@ -82,8 +82,6 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         sql = str(captured["query"])
         self.assertIn("<=>", sql)
-        self.assertIn("CAST", sql)
-        self.assertIn("HALFVEC", sql)
         self.assertIn("ORDER BY ranked_candidates.distance ASC", sql)
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)

@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import HALFVEC, Vector
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
@@ -98,13 +98,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    # Bind as full-precision vector, then cast query-side to halfvec in SQL.
-    # This keeps the ANN expression symmetric with index definition while
-    # avoiding HALFVEC python bind-processor edge-cases on some drivers.
+    # Single stable SQL path: plain pgvector cosine distance.
+    # Avoids halfvec cast/operator runtime incompatibilities.
     query_vec_bind = bindparam("query_vec", type_=Vector(dim))
-    embedding_half = cast(RagTagVector.embedding, HALFVEC(dim))
-    query_half = cast(query_vec_bind, HALFVEC(dim))
-    return embedding_half.op("<=>")(query_half).label("distance")
+    return RagTagVector.embedding.op("<=>")(query_vec_bind).label("distance")
 
 
 async def find_tag_hits(
@@ -167,9 +164,7 @@ async def find_tag_hits(
         )
         return []
 
-    # Keep a plain 1D float list here: HALFVEC bind-processor will convert it.
-    # Passing HalfVector instance may be re-wrapped by pgvector and fail with
-    # ValueError("expected ndim to be 1") on some code paths/drivers.
+    # Keep a plain 1D float list for pgvector bind processing.
     query_vec_sql_param = [float(x) for x in qv_sql.tolist()]
 
     # 3) thresholds
@@ -238,9 +233,14 @@ async def find_tag_hits(
             rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
             payload = rows.all()
         except Exception as exc:
-            logger.warning(
-                "keyword_filter: sql stage failed err_type=%s model=%s owner_id=%s",
+            root_exc = getattr(exc, "orig", None)
+            root_type = type(root_exc).__name__ if root_exc is not None else "-"
+            root_msg = str(root_exc or "")[:240]
+            logger.error(
+                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s",
                 type(exc).__name__,
+                root_type,
+                root_msg,
                 emb_model,
                 owner_id,
             )
