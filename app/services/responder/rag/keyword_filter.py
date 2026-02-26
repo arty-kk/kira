@@ -4,8 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import bindparam, cast, select
+from sqlalchemy.sql import over
 
 from app.config import settings
 from app.core.db import session_scope
@@ -31,6 +30,14 @@ def _l2_normalize(vec: List[float]) -> List[float]:
     if not np.isfinite(n) or n <= 0.0:
         return [float(x) for x in arr.tolist()]
     return [float(x / n) for x in arr.tolist()]
+
+
+def _l2_normalize_np(arr: np.ndarray) -> np.ndarray:
+    arr = np.asarray(arr, dtype=np.float32).reshape(-1)
+    n = float(np.linalg.norm(arr))
+    if not np.isfinite(n) or n <= 0.0:
+        return arr
+    return arr / n
 
 
 def _mmr_select_ids(
@@ -194,7 +201,10 @@ async def find_tag_hits(
         if owner_id:
             conditions.append(
                 (RagTagVector.scope == "global")
-                | ((RagTagVector.scope == "owner") & (RagTagVector.owner_id == int(owner_id)))
+                | (
+                    (RagTagVector.scope == "owner")
+                    & (RagTagVector.owner_id == int(owner_id))
+                )
             )
         else:
             conditions.append(RagTagVector.scope == "global")
@@ -202,32 +212,51 @@ async def find_tag_hits(
         sql_started = time.perf_counter()
         query_vec_source = "external query_embedding" if query_embedding is not None else "provider"
 
-        logger.debug(
-            "keyword_filter: executing SQL with vec_type=%s vec_len=%s expected_dim=%s source=%s",
-            type(query_vec_sql_param).__name__,
-            len(query_vec_sql_param),
-            expected_dim,
-            query_vec_source,
-        )
+        rn = over(
+            func.row_number(),
+            partition_by=(
+                RagTagVector.scope,
+                RagTagVector.owner_id,
+                RagTagVector.kb_id,
+                RagTagVector.external_id,
+            ),
+            order_by=distance_expr.asc(),
+        ).label("rn")
 
-        ranked_candidates = (
+        scored = (
             select(
                 RagTagVector.scope.label("scope"),
                 RagTagVector.owner_id.label("owner_id"),
+                RagTagVector.kb_id.label("kb_id"),
                 RagTagVector.external_id.label("external_id"),
                 RagTagVector.text.label("text"),
+                RagTagVector.tag.label("tag"),
                 RagTagVector.embedding.label("embedding"),
                 (1.0 - distance_expr).label("similarity"),
-                distance_expr,
+                distance_expr.label("distance"),
+                rn,
             )
             .where(*conditions)
             .where(distance_expr <= max_distance)
-            .order_by(distance_expr.asc())
-            .limit(candidate_limit)
-            .cte("ranked_candidates")
+            .cte("scored")
         )
 
-        stmt = select(ranked_candidates).order_by(ranked_candidates.c.distance.asc())
+        stmt = (
+            select(
+                scored.c.scope,
+                scored.c.owner_id,
+                scored.c.kb_id,
+                scored.c.external_id,
+                scored.c.text,
+                scored.c.tag,
+                scored.c.embedding,
+                scored.c.similarity,
+                scored.c.distance,
+            )
+            .where(scored.c.rn == 1)
+            .order_by(scored.c.distance.asc())
+            .limit(candidate_limit)
+        )
 
         try:
             rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
@@ -261,18 +290,20 @@ async def find_tag_hits(
     vec_by_id: Dict[str, List[float]] = {}
     text_by_id: Dict[str, str] = {}
 
-    for scope, oid, ext_id, txt, emb, similarity, distance in payload:
+    for scope, oid, kb_id, ext_id, txt, tag, emb, similarity, distance in payload:
         score_f = float(similarity)
 
         vec = np.asarray(emb if emb is not None else [], dtype=np.float32).reshape(-1)
         if int(vec.shape[0]) != expected_dim:
             continue
 
-        rid = f"{oid}:{ext_id}" if scope == "owner" and oid is not None else str(ext_id)
+        rid = f"{scope}:{int(oid or 0)}:{int(kb_id or 0)}:{str(ext_id)}"
+
         prev = scores_by_id.get(rid)
         if prev is None or score_f > prev:
             scores_by_id[rid] = score_f
-            vec_by_id[rid] = [float(x) for x in vec.tolist()]
+            vec_n = _l2_normalize_np(vec)
+            vec_by_id[rid] = [float(x) for x in vec_n.tolist()]
             text_by_id[rid] = str(txt or "")
 
     if not scores_by_id:
