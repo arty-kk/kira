@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import HALFVEC
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
@@ -98,7 +98,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    query_vec_bind = bindparam("query_vec", type_=HALFVEC(dim))
+    # Bind as full-precision vector, then cast query-side to halfvec in SQL.
+    # This keeps the ANN expression symmetric with index definition while
+    # avoiding HALFVEC python bind-processor edge-cases on some drivers.
+    query_vec_bind = bindparam("query_vec", type_=Vector(dim))
     embedding_half = cast(RagTagVector.embedding, HALFVEC(dim))
     query_half = cast(query_vec_bind, HALFVEC(dim))
     return embedding_half.op("<=>")(query_half).label("distance")
