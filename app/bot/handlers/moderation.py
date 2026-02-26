@@ -556,8 +556,7 @@ async def handle_passive_moderation(
             contains_telegram_obfuscated(text or "") or
             contains_any_link_obfuscated(text or "") or
             len(text or "") > deep_text_threshold or
-            new_user or
-            (light_status == "toxic")
+            new_user
         )
 
         risk = base_risk

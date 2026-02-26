@@ -364,6 +364,46 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set_args, ("mod_alert:light:100:42", 1))
         self.assertEqual(set_kwargs, {"ex": 60, "nx": True})
 
+    async def test_handle_passive_moderation_toxic_does_not_delete_or_run_deep(self) -> None:
+        fake_redis = _FakeRedis()
+        check_deep_mock = AsyncMock(return_value=True)
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(
+                MODERATION_ADMIN_EXEMPT=False,
+                MOD_ALERT_THROTTLE_SECONDS=60,
+                MOD_LIGHT_TIMEOUT=2.0,
+                MOD_DEEP_TIMEOUT=5.0,
+                MOD_DEEP_TEXT_THRESHOLD=400,
+                MODERATION_DELETE_BLOCKED=True,
+                MODERATION_DELETE_FLAGGED=True,
+            )),
+            patch.object(moderation, "get_targets", return_value=[]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", check_deep_mock),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        check_deep_mock.assert_not_awaited()
+        delete_mock.assert_not_awaited()
+
     async def test_handle_passive_moderation_blocks_previously_flagged_profile_in_worker(self) -> None:
         fake_redis = _FakeRedis()
         fake_redis.exists = AsyncMock(return_value=True)
