@@ -551,6 +551,62 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(blocked)
         moderate_mock.assert_awaited_once_with("hello there", image_b64=None, image_mime=None)
 
+
+
+    async def test_moderate_with_openai_image_only_payload_has_no_synthetic_text(self) -> None:
+        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
+        response = types.SimpleNamespace(
+            results=[
+                types.SimpleNamespace(
+                    flagged=False,
+                    categories={},
+                    category_scores={},
+                )
+            ]
+        )
+        create_mock = AsyncMock(return_value=response)
+        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_openai", return_value=client),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("", image_b64="Zm9v", image_mime="image/png")
+
+        self.assertFalse(flagged)
+        sent_input = create_mock.await_args.kwargs["input"]
+        self.assertEqual(len(sent_input), 1)
+        self.assertEqual(sent_input[0]["type"], "image_url")
+        self.assertNotIn("text", sent_input[0])
+
+    async def test_moderate_with_openai_mixed_payload_keeps_text_and_image(self) -> None:
+        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
+        response = types.SimpleNamespace(
+            results=[
+                types.SimpleNamespace(
+                    flagged=False,
+                    categories={},
+                    category_scores={},
+                )
+            ]
+        )
+        create_mock = AsyncMock(return_value=response)
+        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_openai", return_value=client),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("hello", image_b64="Zm9v", image_mime="image/png")
+
+        self.assertFalse(flagged)
+        sent_input = create_mock.await_args.kwargs["input"]
+        self.assertEqual(len(sent_input), 2)
+        self.assertEqual(sent_input[0], {"type": "text", "text": "hello"})
+        self.assertEqual(sent_input[1]["type"], "image_url")
+
     async def test_check_deep_with_history_includes_context_and_new_message(self) -> None:
         moderate_mock = AsyncMock(return_value=True)
         history = [

@@ -651,15 +651,19 @@ async def moderate_with_openai(
     client = get_openai()
 
     if image_b64:
-        input_payload = [
-            {"type": "text", "text": trimmed or "(no text)"},
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}",
-                },
+        image_item = {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}",
             },
-        ]
+        }
+        if trimmed:
+            input_payload = [
+                {"type": "text", "text": trimmed},
+                image_item,
+            ]
+        else:
+            input_payload = [image_item]
     else:
         input_payload = trimmed
 
