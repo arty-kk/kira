@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from sqlalchemy import delete, select, text
 
@@ -18,25 +18,52 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 
-def _load_items(path: Path) -> List[Dict[str, Any]]:
+def _load_items(path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list):
         raise ValueError("knowledge file must contain JSON array")
     result: List[Dict[str, Any]] = []
+    items_with_duplicate_tags = 0
+    duplicates_removed_total = 0
     for row in payload:
         if not isinstance(row, dict):
             continue
         text = str(row.get("text") or "").strip()
         if not text:
             continue
+
+        normalized_tags = [str(t).strip() for t in (row.get("tags") or []) if str(t).strip()]
+        deduplicated_tags: List[str] = []
+        seen_tags = set()
+        for tag in normalized_tags:
+            if tag in seen_tags:
+                duplicates_removed_total += 1
+                continue
+            seen_tags.add(tag)
+            deduplicated_tags.append(tag)
+
+        if len(deduplicated_tags) < len(normalized_tags):
+            items_with_duplicate_tags += 1
+
         result.append(
             {
                 "id": str(row.get("id") or ""),
                 "text": text,
-                "tags": [str(t).strip() for t in (row.get("tags") or []) if str(t).strip()],
+                "tags": deduplicated_tags,
             }
         )
-    return result
+
+    if duplicates_removed_total > 0:
+        logger.warning(
+            "KB tag duplicates removed during load: items_with_duplicate_tags=%d duplicates_removed_total=%d",
+            items_with_duplicate_tags,
+            duplicates_removed_total,
+        )
+
+    return result, {
+        "items_with_duplicate_tags": items_with_duplicate_tags,
+        "duplicates_removed_total": duplicates_removed_total,
+    }
 
 
 async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) -> List[List[float]]:
@@ -60,7 +87,7 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
 
 async def _run(args: argparse.Namespace) -> None:
     kb_path = Path(args.kb_file)
-    kb_items = _load_items(kb_path)
+    kb_items, load_stats = _load_items(kb_path)
     model = args.model
     expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
     batch_size = max(1, int(args.batch_size))
@@ -69,6 +96,13 @@ async def _run(args: argparse.Namespace) -> None:
 
     if not kb_items:
         raise RuntimeError(f"no valid KB items loaded from {kb_path}")
+
+    if load_stats["duplicates_removed_total"] > 0:
+        logger.info(
+            "kb load cleanup summary: items_with_duplicate_tags=%d duplicates_removed_total=%d",
+            load_stats["items_with_duplicate_tags"],
+            load_stats["duplicates_removed_total"],
+        )
 
     async with session_scope(read_only=True) as db:
         current_schema = (await db.execute(text("select current_schema()"))).scalar_one_or_none()
