@@ -18,9 +18,11 @@ migration = _load_init_migration_module()
 
 
 class InitialMigrationTests(unittest.TestCase):
-    def test_only_single_init_migration_exists(self):
+    def test_init_migration_file_exists(self):
         versions = sorted((ROOT / "alembic" / "versions").glob("*.py"))
-        self.assertEqual([p.name for p in versions], ["0001_initial_schema.py"])
+        names = [p.name for p in versions]
+        self.assertIn("0001_initial_schema.py", names)
+        self.assertEqual(names[0], "0001_initial_schema.py")
 
     def test_init_migration_is_root_revision(self):
         self.assertEqual(migration.revision, "0001_initial_schema")

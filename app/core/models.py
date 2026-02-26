@@ -202,6 +202,11 @@ class RagTagVector(Base):
 
     __table_args__ = (
         CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
+        CheckConstraint(
+            "((scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
+            "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
+            name="ck_rag_tag_vectors_scope_owner_kb_consistency",
+        ),
     )
 
 class GiftPurchase(Base):
