@@ -220,6 +220,36 @@ Deviation means:
 - `refund_outbox_in_current_schema=False` and `refund_outbox_in_public=False` means migration is not applied to target DB.
 - Missing/incorrect `alembic_version` means wrong DB target or broken migration state; do not continue to worker restart.
 
+
+### Recovery for partial apply of `0005_rag_scope_owner_ck`
+
+If migration `0005_rag_scope_owner_ck` failed after executing part of `upgrade()`, use this safe recovery sequence in the same DB context as `migrate`:
+
+1. Check constraint presence:
+
+```sql
+SELECT c.conname
+FROM pg_constraint c
+JOIN pg_class t ON t.oid = c.conrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE c.conname = 'ck_rag_tag_vectors_scope_owner_kb_consistency'
+  AND t.relname = 'rag_tag_vectors'
+  AND n.nspname = current_schema();
+```
+
+2. Check Alembic revision state:
+
+```sql
+SELECT version_num FROM alembic_version ORDER BY version_num;
+```
+
+3. Recover state:
+- If constraint is absent and `alembic_version` is still `0004_fix_rag_unique_indexes`, run normal migration path: `alembic -c /app/alembic/alembic.ini upgrade head`.
+- If constraint exists but `alembic_version` is still `0004_fix_rag_unique_indexes`, validate data and align revision by project procedure: `alembic -c /app/alembic/alembic.ini stamp 0005_rag_scope_owner_ck`, then continue with `upgrade head`.
+- If both constraint and revision are already at `0005_rag_scope_owner_ck`, continue with `upgrade head` to apply next revisions only.
+
+Before `stamp`, ensure migration side effects are actually present (constraint exists and invalid rows are already cleaned) to avoid drift between metadata and real schema.
+
 ### 4) Restart `worker-tasks` only after successful migration and table checks
 
 Run only when steps 1–3 are all OK:
