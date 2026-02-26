@@ -252,7 +252,8 @@ async def find_tag_hits(
         return []
 
     query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
-    query_vec_bind = np.asarray(query_vec_sql_param, dtype=">f4")
+    query_vec_bind = np.asarray(query_vec_sql_param, dtype=">f4").reshape(-1)
+    query_vec_bind_fallback = [float(x) for x in query_vec_bind.tolist()]
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -333,28 +334,52 @@ async def find_tag_hits(
             payload = rows.all()
         except Exception as exc:
             root_exc = getattr(exc, "orig", None)
-            root_type = type(root_exc).__name__ if root_exc is not None else "-"
-            root_msg = str(root_exc or "")[:240]
-            query_vec_len = len(query_vec_bind) if hasattr(query_vec_bind, "__len__") else None
-            query_vec_sample_type = (
-                type(query_vec_bind[0]).__name__
-                if hasattr(query_vec_bind, "__len__") and len(query_vec_bind) > 0
-                else None
-            )
-            logger.error(
-                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s query_vec_len=%s query_vec_type=%s query_vec_sample_type=%s",
-                type(exc).__name__,
-                root_type,
-                root_msg,
-                emb_model,
-                owner_id,
-                kb_id_int,
-                expected_dim,
-                query_vec_len,
-                type(query_vec_bind).__name__,
-                query_vec_sample_type,
-            )
-            return []
+            db_err = root_exc or exc
+            root_type = type(db_err).__name__ if db_err is not None else "-"
+            root_msg = str(db_err or "")
+
+            if root_type == "ValueError" and "expected ndim to be 1" in root_msg:
+                try:
+                    rows = await db.execute(stmt, {"query_vec": query_vec_bind_fallback})
+                    payload = rows.all()
+                    logger.warning(
+                        "keyword_filter: sql stage recovered via list fallback model=%s owner_id=%s kb_id=%s expected_dim=%s",
+                        emb_model,
+                        owner_id,
+                        kb_id_int,
+                        expected_dim,
+                    )
+                except Exception as retry_exc:
+                    exc = retry_exc
+                    root_exc = getattr(exc, "orig", None)
+                    db_err = root_exc or exc
+                    root_type = type(db_err).__name__ if db_err is not None else "-"
+                    root_msg = str(db_err or "")
+                else:
+                    root_exc = None
+                    db_err = None
+
+            if db_err is not None:
+                query_vec_len = len(query_vec_bind) if hasattr(query_vec_bind, "__len__") else None
+                query_vec_sample_type = (
+                    type(query_vec_bind[0]).__name__
+                    if hasattr(query_vec_bind, "__len__") and len(query_vec_bind) > 0
+                    else None
+                )
+                logger.error(
+                    "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s query_vec_len=%s query_vec_type=%s query_vec_sample_type=%s",
+                    type(exc).__name__,
+                    root_type,
+                    root_msg[:240],
+                    emb_model,
+                    owner_id,
+                    kb_id_int,
+                    expected_dim,
+                    query_vec_len,
+                    type(query_vec_bind).__name__,
+                    query_vec_sample_type,
+                )
+                return []
 
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
 
