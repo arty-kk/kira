@@ -62,6 +62,12 @@ from .context_select import (
 
 
 logger = logging.getLogger(__name__)
+_ACTIVE_KB_CACHE: dict[tuple[int, str], tuple[float, int]] = {}
+try:
+    _ACTIVE_KB_CACHE_TTL_SEC = int(getattr(settings, "RAG_ACTIVE_KB_CACHE_TTL_SEC", 60) or 60)
+except Exception:
+    _ACTIVE_KB_CACHE_TTL_SEC = 60
+_ACTIVE_KB_CACHE_TTL_SEC = max(0, min(3600, _ACTIVE_KB_CACHE_TTL_SEC))
 
 
 def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
@@ -95,6 +101,14 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
         return None
 
     emb_model = (embedding_model or settings.EMBEDDING_MODEL)
+    cache_key = (ak, emb_model)
+    if _ACTIVE_KB_CACHE_TTL_SEC > 0:
+        try:
+            ts, kb_cached = _ACTIVE_KB_CACHE.get(cache_key, (0.0, 0))
+            if ts and (time.time() - ts) <= float(_ACTIVE_KB_CACHE_TTL_SEC) and kb_cached > 0:
+                return int(kb_cached)
+        except Exception:
+            pass
     try:
         async with session_scope(read_only=True, stmt_timeout_ms=1200) as db:
             res = await db.execute(
@@ -108,7 +122,15 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
                 .limit(1)
             )
             kb = res.scalar_one_or_none()
-            return int(kb) if kb is not None else None
+            if kb is None:
+                return None
+            kb_id = int(kb)
+            if _ACTIVE_KB_CACHE_TTL_SEC > 0 and kb_id > 0:
+                try:
+                    _ACTIVE_KB_CACHE[cache_key] = (time.time(), kb_id)
+                except Exception:
+                    pass
+            return kb_id
     except Exception:
         logger.debug(
             "resolve_active_kb_id failed api_key_id=%s embedding_model=%s",
@@ -906,6 +928,7 @@ async def respond_to_user(
     billing_tier: str | None = None,
     persona_owner_id: int | None = None,
     knowledge_owner_id: int | None = None,
+    knowledge_kb_id: int | None = None,
     memory_uid: int | None = None,
     persona_profile_id: str | int | None = None,
     request_id: str | None = None,
@@ -1538,7 +1561,14 @@ async def respond_to_user(
     rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
         active_kb_id: int | None = None
-        if knowledge_owner_id is not None:
+        try:
+            if knowledge_kb_id is not None:
+                active_kb_id = int(knowledge_kb_id)
+                if active_kb_id <= 0:
+                    active_kb_id = None
+        except Exception:
+            active_kb_id = None
+        if active_kb_id is None and knowledge_owner_id is not None:
             active_kb_id = await _resolve_active_kb_id(
                 api_key_id=knowledge_owner_id,
                 embedding_model=(request_embedding_context.embedding_model or settings.EMBEDDING_MODEL),
