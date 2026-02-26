@@ -21,6 +21,7 @@ async def is_relevant(
     return_hits: bool,
     persona_owner_id: Optional[int] = None,
     knowledge_owner_id: Optional[int] = None,
+    knowledge_kb_id: Optional[int] = None,
     strict_autoreply_gate: bool = False,
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
@@ -46,6 +47,15 @@ async def is_relevant(
 
     owner_id_for_scoped_paths = owner_id_int if owner_id_int > 0 else None
 
+    kb_id_int: Optional[int] = None
+    try:
+        if knowledge_kb_id is not None:
+            kb_id_int = int(knowledge_kb_id)
+            if kb_id_int <= 0:
+                kb_id_int = None
+    except Exception:
+        kb_id_int = None
+
     try:
         if query_embedding is not None and query_embedding_reuse_counter is not None:
             query_embedding_reuse_counter[0] += 1
@@ -54,6 +64,7 @@ async def is_relevant(
             model=model,
             limit=topk * 10,
             owner_id=owner_id_for_scoped_paths,
+            kb_id=kb_id_int,
             query_embedding=query_embedding,
             embedding_model=embedding_model,
         )
