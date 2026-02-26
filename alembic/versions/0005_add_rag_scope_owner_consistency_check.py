@@ -14,16 +14,18 @@ _CONSTRAINT_NAME = "ck_rag_tag_vectors_scope_owner_kb_consistency"
 
 
 def upgrade():
-    bind = op.get_bind()
-    invalid_count = bind.execute(
-        sa.text(
-            "SELECT COUNT(*) FROM rag_tag_vectors WHERE NOT (" + _CONSISTENCY_RULE + ")"
+    ctx = op.get_context()
+    if not getattr(ctx, "as_sql", False):
+        bind = op.get_bind()
+        invalid_count = bind.execute(
+            sa.text(
+                "SELECT COUNT(*) FROM rag_tag_vectors WHERE NOT (" + _CONSISTENCY_RULE + ")"
+            )
+        ).scalar_one()
+        ctx.config.print_stdout(
+            "rag_tag_vectors invalid scope/owner/kb rows before cleanup: %s",
+            invalid_count,
         )
-    ).scalar_one()
-    op.get_context().config.print_stdout(
-        "rag_tag_vectors invalid scope/owner/kb rows before cleanup: %s",
-        invalid_count,
-    )
 
     op.execute(
         "DELETE FROM rag_tag_vectors WHERE NOT (" + _CONSISTENCY_RULE + ");"

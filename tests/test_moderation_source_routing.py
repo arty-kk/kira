@@ -364,7 +364,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set_args, ("mod_alert:light:100:42", 1))
         self.assertEqual(set_kwargs, {"ex": 60, "nx": True})
 
-    async def test_handle_passive_moderation_toxic_does_not_delete_or_run_deep(self) -> None:
+    async def test_handle_passive_moderation_toxic_skips_deep_and_deletes_when_flagged_delete_enabled(self) -> None:
         fake_redis = _FakeRedis()
         check_deep_mock = AsyncMock(return_value=True)
 
@@ -402,7 +402,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "flagged")
         check_deep_mock.assert_not_awaited()
-        delete_mock.assert_not_awaited()
+        delete_mock.assert_awaited_once_with(100, 77)
 
     async def test_handle_passive_moderation_blocks_previously_flagged_profile_in_worker(self) -> None:
         fake_redis = _FakeRedis()
@@ -864,6 +864,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
                 message=None,
                 text="toxic text",
                 entities=[],
+                image_b64="dGVzdA==",
                 source="user",
                 user_id=42,
                 message_id=77,
