@@ -143,6 +143,8 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         return []
 
     query_vec_sql_param = qv_sql.astype(np.float32, copy=False).tolist()
+    if not isinstance(query_vec_sql_param, list):
+        query_vec_sql_param = [float(x) for x in list(query_vec_sql_param)]
 
     _, distance_expr = _build_halfvec_query_expr(dim=expected_dim)
     max_distance = 1.0 - thr
@@ -179,6 +181,12 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             .limit(candidate_limit)
         )
 
+        logger.error(
+            "DEBUG query_vec: type=%s len=%s elem0_type=%s",
+            type(query_vec_sql_param),
+            (len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None),
+            (type(query_vec_sql_param[0]).__name__ if isinstance(query_vec_sql_param, list) and query_vec_sql_param else None),
+        )
         rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
 
         payload = rows.all()
