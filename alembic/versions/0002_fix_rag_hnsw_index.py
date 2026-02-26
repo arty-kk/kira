@@ -12,7 +12,8 @@ def upgrade():
 
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw "
-        "ON rag_tag_vectors USING hnsw (embedding vector_cosine_ops);"
+        # For 3072-dim embeddings, pgvector requires halfvec for HNSW cosine index (vector_cosine_ops exceeds dimension limit).
+        "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(3072))) halfvec_cosine_ops);"
     )
   
     op.execute(
