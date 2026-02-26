@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION_PATH = ROOT / "alembic" / "versions" / "0005_add_rag_scope_owner_consistency_check.py"
+MIGRATION_PATH = ROOT / "alembic" / "versions" / "0005_rag_scope_owner_ck.py"
 CONSTRAINT_NAME = "ck_rag_tag_vectors_scope_owner_kb_consistency"
 CONSISTENCY_RULE_SQL = (
     "(scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
@@ -26,7 +26,7 @@ def test_migration_has_expected_revision_and_constraint_sql():
     migration = _load_migration_module()
     source = MIGRATION_PATH.read_text()
 
-    assert migration.revision == "0005_add_rag_scope_owner_consistency_check"
+    assert migration.revision == "0005_rag_scope_owner_ck"
     assert migration.down_revision == "0004_fix_rag_unique_indexes"
     assert CONSTRAINT_NAME in source
     assert "SELECT COUNT(*) FROM rag_tag_vectors WHERE NOT" in source

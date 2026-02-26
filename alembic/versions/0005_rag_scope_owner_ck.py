@@ -1,7 +1,7 @@
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0005_add_rag_scope_owner_consistency_check"
+revision = "0005_rag_scope_owner_ck"
 down_revision = "0004_fix_rag_unique_indexes"
 branch_labels = None
 depends_on = None
