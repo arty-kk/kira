@@ -10,7 +10,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_comment_csv_parsing_logs_invalid_tokens(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",
@@ -34,7 +34,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_enabled_without_lists_logs_warning(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",
@@ -60,7 +60,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_invalid_comment_link_policy_falls_back_with_warning(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",
@@ -77,7 +77,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_valid_comment_csv_parses_without_invalid_tokens_warning(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",
@@ -97,7 +97,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_allowed_group_ids_csv_parsing_logs_invalid_tokens(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",
@@ -116,7 +116,7 @@ class CommentSettingsConfigTests(unittest.TestCase):
     def test_moderator_ids_mixed_csv_parsing_logs_invalid_tokens(self) -> None:
         env = {
             "OPENAI_API_KEY": "test-key",
-            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/db",
+            "DATABASE_URL": "postgresql+psycopg://u:p@localhost:5432/db",
             "REDIS_URL": "redis://localhost:6379/0",
             "REDIS_URL_QUEUE": "redis://localhost:6379/1",
             "REDIS_URL_VECTOR": "redis://localhost:6379/2",

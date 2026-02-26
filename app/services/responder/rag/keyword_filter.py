@@ -4,8 +4,8 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import bindparam, select
+from pgvector.sqlalchemy import HALFVEC, HalfVector
+from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
 from app.core.db import session_scope
@@ -98,7 +98,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    return RagTagVector.embedding.op("<=>")(bindparam("query_vec", type_=Vector(dim))).label("distance")
+    query_vec_bind = bindparam("query_vec", type_=HALFVEC(dim))
+    embedding_half = cast(RagTagVector.embedding, HALFVEC(dim))
+    query_half = cast(query_vec_bind, HALFVEC(dim))
+    return embedding_half.op("<=>")(query_half).label("distance")
 
 
 async def find_tag_hits(
@@ -161,8 +164,8 @@ async def find_tag_hits(
         )
         return []
 
-    # Vector(dim) bind expects list[float]
-    query_vec_sql_param: List[float] = [float(x) for x in qv_sql.tolist()]
+    # HalfVector(dim) bind keeps query-time halfvec cast symmetric with ANN index expression.
+    query_vec_sql_param = HalfVector([float(x) for x in qv_sql.tolist()])
 
     # 3) thresholds
     thr = float(
@@ -202,25 +205,29 @@ async def find_tag_hits(
         logger.debug(
             "keyword_filter: executing SQL with vec_type=%s vec_len=%s expected_dim=%s source=%s",
             type(query_vec_sql_param).__name__,
-            len(query_vec_sql_param),
+            query_vec_sql_param.dimensions(),
             expected_dim,
             query_vec_source,
         )
 
-        stmt = (
+        ranked_candidates = (
             select(
-                RagTagVector.scope,
-                RagTagVector.owner_id,
-                RagTagVector.external_id,
-                RagTagVector.text,
-                RagTagVector.embedding,
+                RagTagVector.scope.label("scope"),
+                RagTagVector.owner_id.label("owner_id"),
+                RagTagVector.external_id.label("external_id"),
+                RagTagVector.text.label("text"),
+                RagTagVector.embedding.label("embedding"),
+                (1.0 - distance_expr).label("similarity"),
                 distance_expr,
             )
             .where(*conditions)
             .where(distance_expr <= max_distance)
             .order_by(distance_expr.asc())
             .limit(candidate_limit)
+            .cte("ranked_candidates")
         )
+
+        stmt = select(ranked_candidates).order_by(ranked_candidates.c.distance.asc())
 
         rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
         payload = rows.all()
@@ -240,8 +247,8 @@ async def find_tag_hits(
     vec_by_id: Dict[str, List[float]] = {}
     text_by_id: Dict[str, str] = {}
 
-    for scope, oid, ext_id, txt, emb, distance in payload:
-        score_f = 1.0 - float(distance)
+    for scope, oid, ext_id, txt, emb, similarity, distance in payload:
+        score_f = float(similarity)
 
         vec = np.asarray(emb if emb is not None else [], dtype=np.float32).reshape(-1)
         if int(vec.shape[0]) != expected_dim:

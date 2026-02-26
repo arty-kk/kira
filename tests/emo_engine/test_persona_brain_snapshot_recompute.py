@@ -9,7 +9,7 @@ def _seed_env() -> None:
     os.environ.setdefault("TELEGRAM_BOT_USERNAME", "testbot")
     os.environ.setdefault("TELEGRAM_BOT_ID", "1")
     os.environ.setdefault("WEBHOOK_URL", "https://example.invalid")
-    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/db")
+    os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://user:pass@localhost/db")
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
     os.environ.setdefault("REDIS_URL_QUEUE", "redis://localhost:6379/1")
     os.environ.setdefault("REDIS_URL_VECTOR", "redis://localhost:6379/2")

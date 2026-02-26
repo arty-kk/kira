@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 _REQUIRED_IMPORT_ENV = {
     "OPENAI_API_KEY": "test-openai-key",
-    "DATABASE_URL": "postgresql+asyncpg://postgres:postgres@localhost/test",
+    "DATABASE_URL": "postgresql+psycopg://postgres:postgres@localhost/test",
     "REDIS_URL": "redis://localhost:6379/0",
     "REDIS_URL_QUEUE": "redis://localhost:6379/1",
     "REDIS_URL_VECTOR": "redis://localhost:6379/2",

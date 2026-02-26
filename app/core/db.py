@@ -27,7 +27,8 @@ else:
 connect_args = {}
 app_name = getattr(settings, "DB_APP_NAME", "") or None
 if app_name:
-    connect_args = {"server_settings": {"application_name": app_name}}
+    connect_args = {"options": f"-c application_name={app_name}"}
+
 
 engine = create_async_engine(
     settings.DATABASE_URL,

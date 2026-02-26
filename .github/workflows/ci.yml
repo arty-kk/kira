@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -52,7 +52,7 @@ jobs:
           TELEGRAM_BOT_USERNAME=test_bot
           TELEGRAM_BOT_ID=123456789
           WEBHOOK_URL=https://example.com/webhook
-          DATABASE_URL=postgresql://test_user:test_password@postgres:5432/test_db
+          DATABASE_URL=postgresql+psycopg://test_user:test_password@postgres:5432/test_db
           REDIS_URL=redis://:test_redis_password@redis:6379/0
           REDIS_URL_QUEUE=redis://:test_redis_password@redis:6379/1
           REDIS_URL_VECTOR=redis://:test_redis_password@redis:6379/2
