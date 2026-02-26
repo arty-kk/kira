@@ -22,6 +22,7 @@ from app.services.responder.rag.keyword_filter import invalidate_tags_index
 from app.clients.telegram_client import get_bot
 from app.bot.utils.telegram_safe import send_message_safe
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from app.services.responder.core import invalidate_active_kb_cache
 
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ def rebuild_for_api_key(api_key_id: int, kb_id: int) -> None:
     _run(_rebuild_for_api_key_async(api_key_id, kb_id))
     invalidate_api_kb_cache(api_key_id)
     invalidate_tags_index(api_key_id)
+    invalidate_active_kb_cache(api_key_id)
 
 
 async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
@@ -336,10 +338,10 @@ def _remove_owner_dir(owner_id: int) -> None:
 
 @celery.task(name="kb.clear_for_api_key")
 def clear_for_api_key(api_key_id: int) -> None:
-
     _remove_owner_dir(int(api_key_id))
     invalidate_api_kb_cache(api_key_id)
     invalidate_tags_index(api_key_id)
+    invalidate_active_kb_cache(api_key_id)
 
 
 async def _gc_orphan_api_key_dirs_async() -> None:
