@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 
 def normalize_query_embedding(raw: Any, expected_dim: int) -> list[float] | None:
