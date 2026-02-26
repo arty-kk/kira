@@ -73,6 +73,41 @@ try:
 except Exception:
     _ACTIVE_KB_CACHE_MAX = 8192
 _ACTIVE_KB_CACHE_MAX = max(256, min(200_000, _ACTIVE_KB_CACHE_MAX))
+try:
+    _ACTIVE_KB_CLEANUP_INTERVAL_SEC = int(getattr(settings, "RAG_ACTIVE_KB_CLEANUP_INTERVAL_SEC", 30) or 30)
+except Exception:
+    _ACTIVE_KB_CLEANUP_INTERVAL_SEC = 30
+_ACTIVE_KB_CLEANUP_INTERVAL_SEC = max(0, min(3600, _ACTIVE_KB_CLEANUP_INTERVAL_SEC))
+_ACTIVE_KB_LAST_CLEANUP_TS: float = 0.0
+
+def _active_kb_cache_cleanup(now: float) -> None:
+
+    if _ACTIVE_KB_CACHE_TTL_SEC <= 0:
+        # TTL disabled: only cap-based pruning.
+        if len(_ACTIVE_KB_CACHE) <= _ACTIVE_KB_CACHE_MAX:
+            return
+        drop_n = len(_ACTIVE_KB_CACHE) - _ACTIVE_KB_CACHE_MAX
+        for _ in range(drop_n):
+            try:
+                _ACTIVE_KB_CACHE.pop(next(iter(_ACTIVE_KB_CACHE)), None)
+            except StopIteration:
+                break
+        return
+
+    ttl = float(_ACTIVE_KB_CACHE_TTL_SEC)
+    stale_before = now - ttl
+
+    for k, (ts0, _) in list(_ACTIVE_KB_CACHE.items()):
+        if not ts0 or ts0 < stale_before:
+            _ACTIVE_KB_CACHE.pop(k, None)
+
+    if len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
+        drop_n = len(_ACTIVE_KB_CACHE) - _ACTIVE_KB_CACHE_MAX
+        for _ in range(drop_n):
+            try:
+                _ACTIVE_KB_CACHE.pop(next(iter(_ACTIVE_KB_CACHE)), None)
+            except StopIteration:
+                break
 
 
 def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
@@ -116,18 +151,15 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
             pass
 
         try:
-            if len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
-                now = time.time()
-                ttl = float(_ACTIVE_KB_CACHE_TTL_SEC)
-                stale_before = now - ttl
-                for k, (ts0, _) in list(_ACTIVE_KB_CACHE.items()):
-                    if not ts0 or ts0 < stale_before:
-                        _ACTIVE_KB_CACHE.pop(k, None)
-                if len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
-                    items = sorted(_ACTIVE_KB_CACHE.items(), key=lambda kv: float(kv[1][0] or 0.0))
-                    drop_n = max(0, len(items) - _ACTIVE_KB_CACHE_MAX)
-                    for i in range(drop_n):
-                        _ACTIVE_KB_CACHE.pop(items[i][0], None)
+            global _ACTIVE_KB_LAST_CLEANUP_TS
+            now = time.time()
+            if _ACTIVE_KB_CLEANUP_INTERVAL_SEC == 0:
+                do_cleanup = True
+            else:
+                do_cleanup = (now - float(_ACTIVE_KB_LAST_CLEANUP_TS or 0.0)) >= float(_ACTIVE_KB_CLEANUP_INTERVAL_SEC)
+            if do_cleanup and len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
+                _ACTIVE_KB_LAST_CLEANUP_TS = now
+                _active_kb_cache_cleanup(now)
         except Exception:
             pass
             
