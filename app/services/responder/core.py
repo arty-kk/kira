@@ -93,6 +93,7 @@ async def _compute_on_topic_relevance(
     trigger: str | None,
     persona_owner_id: int | None,
     knowledge_owner_id: int | None,
+    knowledge_kb_id: int | None,
     precomputed_rag_hits: List[Any] | None,
     query_embedding: List[float] | None,
     embedding_model: str | None,
@@ -155,7 +156,7 @@ async def _compute_on_topic_relevance(
                 return_hits=True,
                 persona_owner_id=persona_owner_id,
                 knowledge_owner_id=knowledge_owner_id,
-                knowledge_kb_id=active_kb_id,
+                knowledge_kb_id=knowledge_kb_id,
                 strict_autoreply_gate=(trigger == "check_on_topic"),
                 query_embedding=rag_query_context.query_embedding,
                 embedding_model=rag_query_context.embedding_model,
@@ -1503,12 +1504,14 @@ async def respond_to_user(
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
+        active_kb_id: int | None = None
         on_topic_flag, on_topic_hits, rag_query_context = await _compute_on_topic_relevance(
             chat_id=chat_id,
             query_to_model=rag_query_for_relevance,
             trigger=trigger,
             persona_owner_id=persona_owner_id,
             knowledge_owner_id=knowledge_owner_id,
+            knowledge_kb_id=active_kb_id,
             precomputed_rag_hits=precomputed_rag_hits,
             query_embedding=request_embedding_context.query_embedding,
             embedding_model=request_embedding_context.embedding_model,
