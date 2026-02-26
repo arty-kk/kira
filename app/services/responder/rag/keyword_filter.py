@@ -252,6 +252,7 @@ async def find_tag_hits(
         return []
 
     query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
+    query_vec_bind = np.asarray(query_vec_sql_param, dtype=">f4")
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -328,16 +329,16 @@ async def find_tag_hits(
         )
 
         try:
-            rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
+            rows = await db.execute(stmt, {"query_vec": query_vec_bind})
             payload = rows.all()
         except Exception as exc:
             root_exc = getattr(exc, "orig", None)
             root_type = type(root_exc).__name__ if root_exc is not None else "-"
             root_msg = str(root_exc or "")[:240]
-            query_vec_len = len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None
+            query_vec_len = len(query_vec_bind) if hasattr(query_vec_bind, "__len__") else None
             query_vec_sample_type = (
-                type(query_vec_sql_param[0]).__name__
-                if isinstance(query_vec_sql_param, list) and query_vec_sql_param
+                type(query_vec_bind[0]).__name__
+                if hasattr(query_vec_bind, "__len__") and len(query_vec_bind) > 0
                 else None
             )
             logger.error(
@@ -350,7 +351,7 @@ async def find_tag_hits(
                 kb_id_int,
                 expected_dim,
                 query_vec_len,
-                type(query_vec_sql_param).__name__,
+                type(query_vec_bind).__name__,
                 query_vec_sample_type,
             )
             return []
