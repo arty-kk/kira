@@ -179,11 +179,11 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             .limit(candidate_limit)
         )
 
-        logger.error(
+        logger.debug(
             "DEBUG query_vec: type=%s len=%s elem0_type=%s",
-            type(query_vec_sql_param),
-            (len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None),
-            (type(query_vec_sql_param[0]).__name__ if isinstance(query_vec_sql_param, list) and query_vec_sql_param else None),
+            type(query_vec_sql_param).__name__,
+            len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None,
+            type(query_vec_sql_param[0]).__name__ if isinstance(query_vec_sql_param, list) and query_vec_sql_param else None,
         )
         rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
 
