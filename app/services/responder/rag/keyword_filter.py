@@ -4,7 +4,6 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from pgvector.sqlalchemy import HALFVEC
-from pgvector.utils.halfvec import HalfVector
 from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
@@ -74,10 +73,9 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_halfvec_query_expr(*, dim: int):
-    query_vec_param = bindparam("query_vec")
-    halfvec_query_param = cast(query_vec_param, HALFVEC(dim))
+    query_vec_param = bindparam("query_vec", type_=HALFVEC(dim))
     halfvec_embedding_expr = cast(RagTagVector.embedding, HALFVEC(dim))
-    distance_expr = halfvec_embedding_expr.op("<=>")(halfvec_query_param).label("distance")
+    distance_expr = halfvec_embedding_expr.op("<=>")(query_vec_param).label("distance")
     return query_vec_param, distance_expr
 
 
@@ -143,7 +141,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         )
         return []
 
-    query_vec_sql_param = HalfVector(qv_sql.astype(np.float32, copy=False))
+    query_vec_sql_param = qv_sql.astype(np.float32, copy=False).tolist()
 
     _, distance_expr = _build_halfvec_query_expr(dim=expected_dim)
     max_distance = 1.0 - thr
@@ -164,33 +162,23 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
             expected_dim,
             query_vec_source,
         )
-        ranked_candidates = (
+
+        stmt = (
             select(
-                RagTagVector.scope.label("scope"),
-                RagTagVector.owner_id.label("owner_id"),
-                RagTagVector.external_id.label("external_id"),
-                RagTagVector.text.label("text"),
-                RagTagVector.embedding.label("embedding"),
+                RagTagVector.scope,
+                RagTagVector.owner_id,
+                RagTagVector.external_id,
+                RagTagVector.text,
+                RagTagVector.embedding,
                 distance_expr,
             )
             .where(*conditions)
-            .subquery("ranked_candidates")
+            .where(distance_expr <= max_distance)
+            .order_by(distance_expr.asc())
+            .limit(candidate_limit)
         )
 
-        rows = await db.execute(
-            select(
-                ranked_candidates.c.scope,
-                ranked_candidates.c.owner_id,
-                ranked_candidates.c.external_id,
-                ranked_candidates.c.text,
-                ranked_candidates.c.embedding,
-                ranked_candidates.c.distance,
-            )
-            .where(ranked_candidates.c.distance <= max_distance)
-            .order_by(ranked_candidates.c.distance.asc())
-            .limit(candidate_limit),
-            {"query_vec": query_vec_sql_param},
-        )
+        rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
 
         payload = rows.all()
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
@@ -203,15 +191,8 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         owner_id,
     )
 
-    for row in payload:
-        if len(row) == 7:
-            scope, oid, ext_id, txt, emb, score, distance = row
-            score_f = float(score)
-        elif len(row) == 6:
-            scope, oid, ext_id, txt, emb, distance = row
-            score_f = float(1.0 - float(distance))
-        else:
-            continue
+    for scope, oid, ext_id, txt, emb, distance in payload:
+        score_f = 1.0 - float(distance)
 
         vec_src = emb if emb is not None else []
         vec = np.asarray(vec_src, dtype=np.float32)
