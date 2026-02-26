@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import HALFVEC, HalfVector
+from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
@@ -164,8 +164,10 @@ async def find_tag_hits(
         )
         return []
 
-    # HalfVector(dim) bind keeps query-time halfvec cast symmetric with ANN index expression.
-    query_vec_sql_param = HalfVector([float(x) for x in qv_sql.tolist()])
+    # Keep a plain 1D float list here: HALFVEC bind-processor will convert it.
+    # Passing HalfVector instance may be re-wrapped by pgvector and fail with
+    # ValueError("expected ndim to be 1") on some code paths/drivers.
+    query_vec_sql_param = [float(x) for x in qv_sql.tolist()]
 
     # 3) thresholds
     thr = float(
@@ -205,7 +207,7 @@ async def find_tag_hits(
         logger.debug(
             "keyword_filter: executing SQL with vec_type=%s vec_len=%s expected_dim=%s source=%s",
             type(query_vec_sql_param).__name__,
-            query_vec_sql_param.dimensions(),
+            len(query_vec_sql_param),
             expected_dim,
             query_vec_source,
         )
