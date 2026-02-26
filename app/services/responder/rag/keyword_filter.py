@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import HALFVEC, HalfVector
+from pgvector.sqlalchemy import HALFVEC, Vector
 from sqlalchemy import bindparam, cast, select
 
 from app.config import settings
@@ -98,7 +98,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    query_vec_bind = bindparam("query_vec", type_=HALFVEC(dim))
+    # Bind as full-precision vector, then cast query-side to halfvec in SQL.
+    # This keeps the ANN expression symmetric with index definition while
+    # avoiding HALFVEC python bind-processor edge-cases on some drivers.
+    query_vec_bind = bindparam("query_vec", type_=Vector(dim))
     embedding_half = cast(RagTagVector.embedding, HALFVEC(dim))
     query_half = cast(query_vec_bind, HALFVEC(dim))
     return embedding_half.op("<=>")(query_half).label("distance")
@@ -164,8 +167,10 @@ async def find_tag_hits(
         )
         return []
 
-    # HalfVector(dim) bind keeps query-time halfvec cast symmetric with ANN index expression.
-    query_vec_sql_param = HalfVector([float(x) for x in qv_sql.tolist()])
+    # Keep a plain 1D float list here: HALFVEC bind-processor will convert it.
+    # Passing HalfVector instance may be re-wrapped by pgvector and fail with
+    # ValueError("expected ndim to be 1") on some code paths/drivers.
+    query_vec_sql_param = [float(x) for x in qv_sql.tolist()]
 
     # 3) thresholds
     thr = float(
@@ -205,7 +210,7 @@ async def find_tag_hits(
         logger.debug(
             "keyword_filter: executing SQL with vec_type=%s vec_len=%s expected_dim=%s source=%s",
             type(query_vec_sql_param).__name__,
-            query_vec_sql_param.dimensions(),
+            len(query_vec_sql_param),
             expected_dim,
             query_vec_source,
         )
@@ -229,8 +234,17 @@ async def find_tag_hits(
 
         stmt = select(ranked_candidates).order_by(ranked_candidates.c.distance.asc())
 
-        rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
-        payload = rows.all()
+        try:
+            rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
+            payload = rows.all()
+        except Exception as exc:
+            logger.warning(
+                "keyword_filter: sql stage failed err_type=%s model=%s owner_id=%s",
+                type(exc).__name__,
+                emb_model,
+                owner_id,
+            )
+            return []
 
         sql_duration_ms = (time.perf_counter() - sql_started) * 1000.0
 

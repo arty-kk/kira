@@ -2229,6 +2229,9 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d  %(message)s",
         force=True,
     )
+    sqlalchemy_level_name = os.environ.get("SQLALCHEMY_LOG_LEVEL", "WARNING").upper()
+    sqlalchemy_level = getattr(logging, sqlalchemy_level_name, logging.WARNING)
+    logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
     asyncio.run(_async_main())
 
 if __name__ == "__main__":

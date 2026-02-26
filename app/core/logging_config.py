@@ -4,6 +4,7 @@ import os
 from logging.config import dictConfig
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+SQLALCHEMY_LOG_LEVEL = os.getenv("SQLALCHEMY_LOG_LEVEL", "WARNING").upper()
 
 def setup_logging() -> None:
     
@@ -39,7 +40,7 @@ def setup_logging() -> None:
             },
             "sqlalchemy.engine": {
                 "handlers": ["console"],
-                "level": LOG_LEVEL,
+                "level": SQLALCHEMY_LOG_LEVEL,
                 "propagate": False
             },
             "aiohttp.server": {
