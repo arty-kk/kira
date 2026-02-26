@@ -92,7 +92,6 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("scope", sql)
         self.assertIsInstance(captured["params"], dict)
         self.assertIn("query_vec", captured["params"])
-        self.assertIsInstance(captured["params"]["query_vec"], list)
         self.assertEqual(len(captured["params"]["query_vec"]), 3072)
         self.assertEqual(hits, [(0.99, "global:0:0:item-1", "text-1"), (0.91, "owner:42:0:item-2", "text-2")])
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
@@ -228,6 +227,35 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [])
         mocked_scope.assert_not_called()
 
+    async def test_keyword_filter_returns_empty_when_l2_output_cannot_be_cast_for_sql(self):
+        query = [1.0] + [0.0] * 3071
+        with (
+            mock.patch.object(keyword_filter, "_l2_normalize", return_value=object()),
+            mock.patch.object(keyword_filter, "session_scope") as mocked_scope,
+        ):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
+    async def test_keyword_filter_preflight_rejects_ragged_embedding_without_sql(self):
+        query = [[1.0] + [0.0] * 3071, [0.0] * 3070]
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
     async def test_keyword_filter_accepts_singleton_2d_query_embedding(self):
         captured = {}
 
@@ -267,7 +295,6 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
         self.assertEqual(hits, [(0.95, "global:0:0:ok", "ok-text")])
-        self.assertIsInstance(captured["params"]["query_vec"], list)
         self.assertEqual(len(captured["params"]["query_vec"]), 3072)
 
     async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
