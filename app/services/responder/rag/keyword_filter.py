@@ -119,6 +119,7 @@ async def find_tag_hits(
     model: Optional[str] = None,
     limit: Optional[int] = None,
     owner_id: Optional[int] = None,
+    kb_id: Optional[int] = None,
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
 ) -> List[Tuple[float, str, str]]:
@@ -197,6 +198,13 @@ async def find_tag_hits(
     # 4) SQL
     distance_expr = _build_vector_distance_expr(dim=expected_dim)
 
+    try:
+        kb_id_int = int(kb_id) if kb_id is not None else None
+        if kb_id_int is not None and kb_id_int <= 0:
+            kb_id_int = None
+    except Exception:
+        kb_id_int = None
+
     async with session_scope(read_only=True) as db:
         conditions = [RagTagVector.embedding_model == emb_model]
 
@@ -206,6 +214,11 @@ async def find_tag_hits(
                 | (
                     (RagTagVector.scope == "owner")
                     & (RagTagVector.owner_id == int(owner_id))
+                    & (
+                        (RagTagVector.kb_id == kb_id_int)
+                        if kb_id_int is not None
+                        else True
+                    )
                 )
             )
         else:
