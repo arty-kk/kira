@@ -9,6 +9,7 @@ import re
 import unicodedata
 import hashlib
 import numpy as np
+from sqlalchemy import select
 
 from dataclasses import dataclass
 
@@ -40,7 +41,7 @@ from app.prompts_base import (
     RESPONDER_REPLY_CONTEXT_USER_PREV_PING_TEMPLATE,
 )
 from app.core.db import session_scope
-from app.core.models import RagTagVector, User
+from app.core.models import RagTagVector, User, ApiKeyKnowledge
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
@@ -84,6 +85,38 @@ class RequestEmbeddingContext:
     embedding_model: str | None
     embedding_source: Literal["computed", "reused"]
 
+
+async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str | None) -> int | None:
+    try:
+        ak = int(api_key_id or 0)
+    except Exception:
+        return None
+    if ak <= 0:
+        return None
+
+    emb_model = (embedding_model or settings.EMBEDDING_MODEL)
+    try:
+        async with session_scope(read_only=True, stmt_timeout_ms=1200) as db:
+            res = await db.execute(
+                select(ApiKeyKnowledge.id)
+                .where(
+                    ApiKeyKnowledge.api_key_id == ak,
+                    ApiKeyKnowledge.status == "ready",
+                    ApiKeyKnowledge.embedding_model == emb_model,
+                )
+                .order_by(ApiKeyKnowledge.version.desc(), ApiKeyKnowledge.id.desc())
+                .limit(1)
+            )
+            kb = res.scalar_one_or_none()
+            return int(kb) if kb is not None else None
+    except Exception:
+        logger.debug(
+            "resolve_active_kb_id failed api_key_id=%s embedding_model=%s",
+            ak,
+            emb_model,
+            exc_info=True,
+        )
+        return None
 
 
 async def _compute_on_topic_relevance(
@@ -1504,7 +1537,12 @@ async def respond_to_user(
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model)
     if (not internal_mode) and reply is None and (query_to_model or "").strip():
-        active_kb_id: int | None = knowledge_kb_id
+        active_kb_id: int | None = None
+        if knowledge_owner_id is not None:
+            active_kb_id = await _resolve_active_kb_id(
+                api_key_id=knowledge_owner_id,
+                embedding_model=(request_embedding_context.embedding_model or settings.EMBEDDING_MODEL),
+            )
         on_topic_flag, on_topic_hits, rag_query_context = await _compute_on_topic_relevance(
             chat_id=chat_id,
             query_to_model=rag_query_for_relevance,
