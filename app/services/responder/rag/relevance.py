@@ -62,11 +62,11 @@ async def is_relevant(
         tag_hits = await find_tag_hits(
             text,
             model=model,
-            limit=topk * 10,
+            limit=topk,
             owner_id=owner_id_for_scoped_paths,
             kb_id=kb_id_int,
             query_embedding=query_embedding,
-            embedding_model=embedding_model,
+            embedding_model=(embedding_model or model),
         )
     except Exception as exc:
         query_embedding_len = len(query_embedding) if query_embedding is not None and hasattr(query_embedding, "__len__") else None
