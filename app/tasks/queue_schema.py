@@ -1,3 +1,4 @@
+#app/tasks/queue_schema.py
 from __future__ import annotations
 
 from typing import Any, Optional, Annotated
@@ -32,7 +33,6 @@ class BotQueueJob(BaseModel):
     query_embedding: Optional[list[float]] = None
     embedding_model: Optional[str] = None
     rag_precheck_source: Optional[str] = None
-
     model_config = {"extra": "allow"}
 
 
@@ -55,7 +55,6 @@ class ApiQueueJob(BaseModel):
     msg_id: Optional[int] = None
     allow_web: bool = False
     enqueued_at: float
-
     model_config = {"extra": "allow"}
 
 
