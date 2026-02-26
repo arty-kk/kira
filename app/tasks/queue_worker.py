@@ -31,6 +31,7 @@ from app.clients import openai_client
 from app.services.responder import respond_to_user
 from app.services.responder.rag.keyword_filter import find_tag_hits
 from app.services.responder.rag.knowledge_proc import _get_query_embedding
+from app.services.responder.rag.query_embedding import normalize_query_embedding
 from app.services.addons.voice_generator import (
     maybe_tts_and_send, shutdown_tts,
     will_speak, is_tts_eligible_short
@@ -39,6 +40,7 @@ from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 from app.core.queue_recovery import requeue_processing_on_start
+from app.core.models import RagTagVector
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
 
 
@@ -1616,7 +1618,9 @@ async def handle_job(raw, processing_key: str) -> None:
                 try:
                     qraw = await _get_query_embedding(embedding_model, text)
                     if qraw is not None:
-                        query_embedding = qraw.tolist() if hasattr(qraw, "tolist") else list(qraw)
+                        expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+                        normalized = normalize_query_embedding(qraw, expected_dim=expected_dim)
+                        query_embedding = normalized
                 except Exception:
                     query_embedding = None
             

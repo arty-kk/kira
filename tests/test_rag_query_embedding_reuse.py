@@ -228,6 +228,35 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [])
         mocked_scope.assert_not_called()
 
+    async def test_keyword_filter_returns_empty_when_l2_output_cannot_be_cast_for_sql(self):
+        query = [1.0] + [0.0] * 3071
+        with (
+            mock.patch.object(keyword_filter, "_l2_normalize", return_value=object()),
+            mock.patch.object(keyword_filter, "session_scope") as mocked_scope,
+        ):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
+    async def test_keyword_filter_preflight_rejects_ragged_embedding_without_sql(self):
+        query = [[1.0] + [0.0] * 3071, [0.0] * 3070]
+        with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="m",
+                embedding_model="m",
+            )
+
+        self.assertEqual(hits, [])
+        mocked_scope.assert_not_called()
+
     async def test_keyword_filter_accepts_singleton_2d_query_embedding(self):
         captured = {}
 

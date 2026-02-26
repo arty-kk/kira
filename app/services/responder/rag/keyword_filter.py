@@ -160,7 +160,19 @@ async def find_tag_hits(
         qv = _l2_normalize(qv_src)
 
     # 2) hard-shape + finite
-    qv_sql = np.asarray(qv, dtype=np.float32).reshape(-1)
+    try:
+        qv_sql = np.asarray(qv, dtype=np.float32).reshape(-1)
+    except Exception:
+        logger.warning(
+            "keyword_filter: invalid query embedding for SQL reason=asarray-failed input_type=%s model=%s owner_id=%s kb_id=%s expected_dim=%s",
+            type(qv).__name__,
+            emb_model,
+            owner_id,
+            kb_id,
+            expected_dim,
+        )
+        return []
+
     current_len = int(qv_sql.shape[0])
     if current_len != expected_dim:
         logger.warning(
@@ -210,6 +222,36 @@ async def find_tag_hits(
             kb_id_int = None
     except Exception:
         kb_id_int = None
+
+    try:
+        arr = np.asarray(query_vec_sql_param, dtype=np.float32)
+    except Exception:
+        logger.warning(
+            "keyword_filter: invalid query embedding preflight input_type=%s arr_shape=%s arr_ndim=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
+            type(query_vec_sql_param).__name__,
+            None,
+            None,
+            expected_dim,
+            emb_model,
+            owner_id,
+            kb_id_int,
+        )
+        return []
+
+    if arr.ndim != 1 or arr.shape[0] != expected_dim or not np.isfinite(arr).all():
+        logger.warning(
+            "keyword_filter: invalid query embedding preflight input_type=%s arr_shape=%s arr_ndim=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
+            type(query_vec_sql_param).__name__,
+            arr.shape,
+            arr.ndim,
+            expected_dim,
+            emb_model,
+            owner_id,
+            kb_id_int,
+        )
+        return []
+
+    query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -292,8 +334,14 @@ async def find_tag_hits(
             root_exc = getattr(exc, "orig", None)
             root_type = type(root_exc).__name__ if root_exc is not None else "-"
             root_msg = str(root_exc or "")[:240]
+            query_vec_len = len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None
+            query_vec_sample_type = (
+                type(query_vec_sql_param[0]).__name__
+                if isinstance(query_vec_sql_param, list) and query_vec_sql_param
+                else None
+            )
             logger.error(
-                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s",
+                "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s query_vec_len=%s query_vec_type=%s query_vec_sample_type=%s",
                 type(exc).__name__,
                 root_type,
                 root_msg,
@@ -301,6 +349,9 @@ async def find_tag_hits(
                 owner_id,
                 kb_id_int,
                 expected_dim,
+                query_vec_len,
+                type(query_vec_sql_param).__name__,
+                query_vec_sample_type,
             )
             return []
 
