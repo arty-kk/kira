@@ -109,6 +109,25 @@ def _active_kb_cache_cleanup(now: float) -> None:
             except StopIteration:
                 break
 
+def invalidate_active_kb_cache(api_key_id: int | None = None) -> None:
+    global _ACTIVE_KB_LAST_CLEANUP_TS
+    try:
+        if api_key_id is None:
+            _ACTIVE_KB_CACHE.clear()
+            _ACTIVE_KB_LAST_CLEANUP_TS = 0.0
+            return
+        ak = int(api_key_id)
+        if ak <= 0:
+            return
+    except Exception:
+        return
+
+    try:
+        for k in list(_ACTIVE_KB_CACHE.keys()):
+            if k and k[0] == ak:
+                _ACTIVE_KB_CACHE.pop(k, None)
+    except Exception:
+        pass
 
 def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
     return not (group_mode or is_channel_post)
@@ -157,7 +176,7 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
                 do_cleanup = True
             else:
                 do_cleanup = (now - float(_ACTIVE_KB_LAST_CLEANUP_TS or 0.0)) >= float(_ACTIVE_KB_CLEANUP_INTERVAL_SEC)
-            if do_cleanup and len(_ACTIVE_KB_CACHE) > _ACTIVE_KB_CACHE_MAX:
+            if do_cleanup:
                 _ACTIVE_KB_LAST_CLEANUP_TS = now
                 _active_kb_cache_cleanup(now)
         except Exception:
