@@ -580,6 +580,32 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent_input[0]["type"], "image_url")
         self.assertNotIn("text", sent_input[0])
 
+    async def test_moderate_with_openai_flagged_false_with_high_score_stays_false(self) -> None:
+        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
+        response = types.SimpleNamespace(
+            results=[
+                types.SimpleNamespace(
+                    flagged=False,
+                    categories={"violence": False},
+                    category_scores={"violence": 0.99},
+                )
+            ]
+        )
+        create_mock = AsyncMock(return_value=response)
+        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_openai", return_value=client),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("neutral text")
+
+        self.assertFalse(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "")
+        cached_payload = redis.set.await_args.args[1]
+        self.assertIn('"flagged": false', str(cached_payload).lower())
+
     async def test_moderate_with_openai_mixed_payload_keeps_text_and_image(self) -> None:
         redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
         response = types.SimpleNamespace(

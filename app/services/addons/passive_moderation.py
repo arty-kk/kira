@@ -722,18 +722,6 @@ async def moderate_with_openai(
         _LAST_AI_MODERATION_CATEGORY.set(primary_category)
         return True
 
-    for category, score in category_scores_dump.items():
-        if isinstance(score, (int, float)) and score >= settings.MODERATION_TOXICITY_THRESHOLD:
-            logger.debug("moderation: flagged by %s=%.2f", category, score)
-            _LAST_AI_MODERATION_CATEGORY.set(str(category))
-            try:
-                ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
-                payload = json.dumps({"flagged": True, "category": str(category)}, ensure_ascii=False)
-                await redis.set(cache_key, payload, ex=ttl)
-            except Exception:
-                pass
-            return True
-
     _LAST_AI_MODERATION_CATEGORY.set("")
     return False
 
