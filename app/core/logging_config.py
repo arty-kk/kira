@@ -4,7 +4,7 @@ import os
 from logging.config import dictConfig
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-SQLALCHEMY_LOG_LEVEL = os.getenv("SQLALCHEMY_LOG_LEVEL", "WARNING").upper()
+SQLALCHEMY_LOG_LEVEL = os.getenv("SQLALCHEMY_LOG_LEVEL", "ERROR").upper()
 
 def setup_logging() -> None:
     
