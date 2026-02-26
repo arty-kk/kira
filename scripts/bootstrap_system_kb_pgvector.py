@@ -12,6 +12,7 @@ from sqlalchemy import delete, select, text
 from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
 from app.core.db import session_scope
+from app.core.embedding_utils import normalize_embedding_row
 from app.core.models import RagTagVector
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
     if not texts:
         return []
 
+    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
     vectors: List[List[float]] = []
     total = len(texts)
     for start in range(0, total, batch_size):
@@ -77,7 +79,15 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
         logger.info("embedding batch %d/%d: items=%d..%d model=%s", (start // batch_size) + 1, (total + batch_size - 1) // batch_size, start + 1, end, model)
         batch = texts[start:end]
         resp = await _call_openai_with_retry(endpoint="embeddings.create", model=model, input=batch, encoding_format="float")
-        batch_vectors = [[float(x) for x in d.embedding] for d in resp.data]
+        batch_vectors: List[List[float]] = []
+        for d in resp.data:
+            try:
+                batch_vectors.append(normalize_embedding_row(d.embedding, expected_dim=expected_dim))
+            except RuntimeError as exc:
+                msg = str(exc)
+                if "invalid embedding row shape=" in msg or "invalid embedding dim" in msg:
+                    raise RuntimeError(f"invalid embedding row shape/dim: {msg}") from exc
+                raise
         if len(batch_vectors) != len(batch):
             raise RuntimeError(f"embedding response size mismatch: requested={len(batch)} got={len(batch_vectors)}")
         vectors.extend(batch_vectors)

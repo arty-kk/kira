@@ -8,11 +8,10 @@ import html
 
 from typing import Any, Dict, List
 
-import numpy as np
-
 from sqlalchemy import select, delete
 
 from app.config import settings
+from app.core.embedding_utils import normalize_embedding_row
 from app.core.db import session_scope
 from app.core.models import ApiKey, ApiKeyKnowledge, RagTagVector
 from app.clients.openai_client import _call_openai_with_retry
@@ -28,16 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_embedding_row(raw: Any, *, expected_dim: int) -> List[float]:
-    arr = np.asarray(raw, dtype=np.float32)
-    if arr.ndim == 2 and arr.shape[0] == 1:
-        arr = arr[0]
-    if arr.ndim != 1:
-        raise RuntimeError(f"kb: invalid embedding row shape={arr.shape}")
-    if int(arr.shape[0]) != expected_dim:
-        raise RuntimeError(f"kb: invalid embedding dim got={int(arr.shape[0])} expected={expected_dim}")
-    if not np.isfinite(arr).all():
-        raise RuntimeError("kb: embedding contains non-finite values")
-    return [float(x) for x in arr]
+    return normalize_embedding_row(raw, expected_dim=expected_dim, error_prefix="kb: ")
 
 
 async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
