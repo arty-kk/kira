@@ -200,8 +200,8 @@ def main() -> None:
     parser.add_argument("--kb-file", default="app/services/responder/rag/knowledge_on.json")
     parser.add_argument("--model", default=settings.EMBEDDING_MODEL)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--batch-size", type=int, default=1280)
-    parser.add_argument("--flush-every", type=int, default=5000)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--flush-every", type=int, default=500)
     args = parser.parse_args()
     asyncio.run(_run(args))
 
