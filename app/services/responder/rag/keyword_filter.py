@@ -74,9 +74,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_halfvec_query_expr(*, dim: int):
-    query_vec_param = bindparam("query_vec", type_=HALFVEC(dim))
+    query_vec_param = bindparam("query_vec")
     halfvec_embedding_expr = cast(RagTagVector.embedding, HALFVEC(dim))
-    distance_expr = halfvec_embedding_expr.op("<=>")(query_vec_param).label("distance")
+    query_vec_half = cast(query_vec_param, HALFVEC(dim))
+    distance_expr = halfvec_embedding_expr.op("<=>")(query_vec_half).label("distance")
     return query_vec_param, distance_expr
 
 
