@@ -120,14 +120,12 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
     lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
 
-    qv_sql = np.asarray(qv, dtype=np.float32)
-    if qv_sql.ndim == 2 and qv_sql.shape[0] == 1:
-        qv_sql = qv_sql[0]
+    qv_sql = np.asarray(qv, dtype=np.float32).reshape(-1)
 
-    current_len = int(qv_sql.shape[0]) if qv_sql.ndim >= 1 else None
-    if qv_sql.ndim != 1 or current_len != expected_dim:
+    current_len = int(qv_sql.shape[0])
+    if current_len != expected_dim:
         logger.warning(
-            "keyword_filter: invalid query embedding for SQL reason=bad-shape shape=%s dtype=%s expected_dim=%s",
+            "keyword_filter: invalid query embedding for SQL reason=bad-len shape=%s dtype=%s expected_dim=%s",
             qv_sql.shape,
             qv_sql.dtype,
             expected_dim,
@@ -142,7 +140,7 @@ async def find_tag_hits(text: str, *, model: Optional[str] = None, limit: Option
         )
         return []
 
-    query_vec_sql_param = qv_sql.astype(np.float32, copy=False).tolist()
+    query_vec_sql_param = qv_sql.tolist()
     if not isinstance(query_vec_sql_param, list):
         query_vec_sql_param = [float(x) for x in list(query_vec_sql_param)]
 
