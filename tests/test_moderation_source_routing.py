@@ -666,6 +666,42 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         check_deep_mock.assert_not_awaited()
 
 
+    async def test_handle_passive_moderation_alert_includes_ai_category_for_toxic(self) -> None:
+        fake_redis = _FakeRedis()
+        send_alert_mock = AsyncMock()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATOR_ADMIN_CACHE_TTL_SECONDS=86400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "get_last_ai_moderation_category", return_value="hate"),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_send_alert_with_actions", send_alert_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-100200,
+                message=None,
+                text="hello",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=77,
+                is_comment_context=False,
+            )
+            await asyncio.sleep(0)
+
+        self.assertEqual(status, "flagged")
+        sent_text = send_alert_mock.await_args.kwargs["text"]
+        self.assertIn("AI moderation policy violation (hate)", sent_text)
+
+
     async def test_handle_passive_moderation_alert_includes_chat_name_and_generic_ai_reason(self) -> None:
         fake_redis = _FakeRedis()
         send_alert_mock = AsyncMock()

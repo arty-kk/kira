@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import contextlib
 import re
 import time
 import asyncio
@@ -11,6 +12,7 @@ import json
 
 from urllib.parse import urlparse
 from typing import Any, Literal, List, Optional
+from contextvars import ContextVar
 
 from redis.exceptions import RedisError
 from aiogram.enums import ChatType
@@ -27,6 +29,59 @@ MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
 MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
 DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
 _PIPELINE_TIMEOUT = float(getattr(settings, "REDIS_PIPELINE_TIMEOUT", 1.0))
+
+_LAST_AI_MODERATION_CATEGORY: ContextVar[str] = ContextVar("last_ai_moderation_category", default="")
+
+
+def get_last_ai_moderation_category() -> str:
+    return str(_LAST_AI_MODERATION_CATEGORY.get("") or "").strip()
+
+
+def _to_plain_dict(obj: Any) -> dict[str, Any]:
+    if obj is None:
+        return {}
+    if isinstance(obj, dict):
+        return obj
+    if hasattr(obj, "model_dump"):
+        with contextlib.suppress(Exception):
+            data = obj.model_dump()
+            if isinstance(data, dict):
+                return data
+    if hasattr(obj, "dict"):
+        with contextlib.suppress(Exception):
+            data = obj.dict()
+            if isinstance(data, dict):
+                return data
+    return {}
+
+
+def _primary_ai_category(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool) -> str:
+    scored: list[tuple[str, float]] = []
+    for key, value in category_scores.items():
+        if isinstance(value, (int, float)):
+            scored.append((str(key), float(value)))
+
+    threshold = float(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", 0.9) or 0.9)
+    flagged_candidates = [
+        (key, score)
+        for key, score in scored
+        if bool(categories.get(key, False)) or score >= threshold
+    ]
+    if flagged_candidates:
+        flagged_candidates.sort(key=lambda item: item[1], reverse=True)
+        return flagged_candidates[0][0]
+
+    if flagged and scored:
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored[0][0]
+
+    if flagged:
+        for key, value in categories.items():
+            if bool(value):
+                return str(key)
+
+    return ""
+
 
 TELEGRAM_DOMAINS = [d.lower() for d in getattr(
     settings, "MODERATION_TELEGRAM_DOMAINS",
@@ -538,6 +593,8 @@ async def moderate_with_openai(
     image_mime: Optional[str] = None,
 ) -> bool:
 
+    _LAST_AI_MODERATION_CATEGORY.set("")
+
     if not settings.ENABLE_AI_MODERATION:
         return False
 
@@ -567,11 +624,23 @@ async def moderate_with_openai(
         if cached is not None:
             if isinstance(cached, (bytes, bytearray)):
                 cached = cached.decode("utf-8", "ignore")
-            cached_flagged = str(cached) == "1"
+            cached_raw = str(cached).strip()
+
+            cached_flagged = cached_raw == "1"
+            cached_category = ""
+            if cached_raw.startswith("{"):
+                with contextlib.suppress(Exception):
+                    data = json.loads(cached_raw)
+                    if isinstance(data, dict):
+                        cached_flagged = bool(data.get("flagged", False))
+                        cached_category = str(data.get("category") or "").strip()
+
+            _LAST_AI_MODERATION_CATEGORY.set(cached_category if cached_flagged else "")
             logger.info(
-                "moderation result (cache): model=%s flagged=%s message_hash=%s message_len=%s",
+                "moderation result (cache): model=%s flagged=%s category=%s message_hash=%s message_len=%s",
                 settings.MODERATION_MODEL,
                 cached_flagged,
+                cached_category or "-",
                 msg_hash,
                 msg_len,
             )
@@ -615,23 +684,30 @@ async def moderate_with_openai(
     result = results[0]
     flagged = bool(getattr(result, "flagged", False))
 
+    categories_obj = getattr(result, "categories", None)
+    category_scores_obj = getattr(result, "category_scores", None)
+    categories_dump = _to_plain_dict(categories_obj)
+    category_scores_dump = _to_plain_dict(category_scores_obj)
+    primary_category = _primary_ai_category(categories_dump, category_scores_dump, flagged)
+
     try:
         ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
+        payload = json.dumps({
+            "flagged": bool(flagged),
+            "category": primary_category,
+        }, ensure_ascii=False)
         await asyncio.wait_for(
-            redis.set(cache_key, "1" if flagged else "0", ex=ttl, nx=True),
+            redis.set(cache_key, payload, ex=ttl, nx=True),
             timeout=0.5,
         )
     except Exception:
         logger.debug("moderate_with_openai: failed to cache result")
 
-    categories_obj = getattr(result, "categories", None)
-    category_scores_obj = getattr(result, "category_scores", None)
-    categories_dump = categories_obj.dict() if hasattr(categories_obj, "dict") else {}
-    category_scores_dump = category_scores_obj.dict() if hasattr(category_scores_obj, "dict") else {}
     logger.info(
-        "moderation result: model=%s flagged=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
+        "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
         settings.MODERATION_MODEL,
         flagged,
+        primary_category or "-",
         msg_hash,
         msg_len,
         categories_dump,
@@ -639,20 +715,22 @@ async def moderate_with_openai(
     )
 
     if flagged:
+        _LAST_AI_MODERATION_CATEGORY.set(primary_category)
         return True
 
-    scores = category_scores_obj
-    items = scores.dict().items() if hasattr(scores, "dict") else getattr(scores, "items", lambda: [])()
-    for category, score in items:
+    for category, score in category_scores_dump.items():
         if isinstance(score, (int, float)) and score >= settings.MODERATION_TOXICITY_THRESHOLD:
             logger.debug("moderation: flagged by %s=%.2f", category, score)
+            _LAST_AI_MODERATION_CATEGORY.set(str(category))
             try:
                 ttl = int(max(1, int(getattr(settings, "MODERATION_CACHE_TTL", 3600))))
-                await redis.set(cache_key, "1", ex=ttl)
+                payload = json.dumps({"flagged": True, "category": str(category)}, ensure_ascii=False)
+                await redis.set(cache_key, payload, ex=ttl)
             except Exception:
                 pass
             return True
 
+    _LAST_AI_MODERATION_CATEGORY.set("")
     return False
 
 
