@@ -7,7 +7,7 @@ from app.services.responder import core
 class ResponderPrecomputedRagTests(unittest.IsolatedAsyncioTestCase):
     async def test_precomputed_hits_and_embedding_skip_duplicate_precheck(self):
         precomputed_hits = [(0.91, "id-1", "chunk")]
-        precomputed_embedding = [0.1, 0.2, 0.3]
+        precomputed_embedding = [0.1] + [0.0] * 3071
 
         with patch.object(core, "is_relevant", AsyncMock(return_value=(False, None))) as is_relevant_mock, \
              patch.object(core, "_get_query_embedding", AsyncMock(return_value=[0.9, 0.8])) as get_embedding_mock:
@@ -26,7 +26,8 @@ class ResponderPrecomputedRagTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(on_topic_flag)
         self.assertEqual(on_topic_hits, precomputed_hits)
-        self.assertEqual(rag_ctx.query_embedding, precomputed_embedding)
+        self.assertEqual(len(rag_ctx.query_embedding or []), 3072)
+        self.assertAlmostEqual((rag_ctx.query_embedding or [0.0])[0], 0.1, places=6)
         self.assertEqual(rag_ctx.embedding_model, "text-embedding-3-large")
         self.assertEqual(rag_ctx.rag_query_source, "raw")
         self.assertEqual(rag_ctx.query_embedding_source, "queue_worker_tag_precheck")
@@ -246,15 +247,15 @@ class ResponderRequestEmbeddingContextTests(unittest.IsolatedAsyncioTestCase):
                 skip_user_push=True,
                 skip_assistant_push=True,
                 skip_persona_interaction=True,
-                query_embedding=[0.1, 0.2],
+                query_embedding=[0.1] + [0.0] * 3071,
                 embedding_model="text-embedding-3-large",
             )
 
         self.assertEqual(out, "")
-        self.assertEqual(len(persona.style_calls[0]["precomputed_embedding"]), 2)
+        self.assertEqual(len(persona.style_calls[0]["precomputed_embedding"]), 3072)
         self.assertAlmostEqual(persona.style_calls[0]["precomputed_embedding"][0], 0.1, places=6)
-        self.assertAlmostEqual(persona.style_calls[0]["precomputed_embedding"][1], 0.2, places=6)
-        self.assertEqual(len(compute_mock.await_args.kwargs["query_embedding"]), 2)
+        self.assertAlmostEqual(persona.style_calls[0]["precomputed_embedding"][1], 0.0, places=6)
+        self.assertEqual(len(compute_mock.await_args.kwargs["query_embedding"]), 3072)
 
         rag_log = None
         for call in logger_info.call_args_list:

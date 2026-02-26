@@ -9,7 +9,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 def test_alembic_upgrade_sql_works_without_redis_env_when_database_url_set():
     env = os.environ.copy()
-    env["DATABASE_URL"] = "postgresql+asyncpg://user:pass@localhost:5432/dbname"
+    env["DATABASE_URL"] = "postgresql+psycopg://user:pass@localhost:5432/dbname"
     env.pop("REDIS_URL", None)
     env.pop("REDIS_URL_QUEUE", None)
     env.pop("REDIS_URL_VECTOR", None)

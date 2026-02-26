@@ -144,7 +144,7 @@ Minimum env:
 Example:
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/appdb \
+DATABASE_URL=postgresql+psycopg://user:pass@db:5432/appdb \
 python -m alembic -c alembic/alembic.ini upgrade head
 ```
 
