@@ -1,9 +1,4 @@
-"""Shared RAG query embedding validator.
-
-Usage: call ``normalize_query_embedding(raw, expected_dim)`` before passing vectors to
-RAG relevance/filter paths; it returns ``None`` for invalid input.
-"""
-
+#app/services/responder/rag/query_embedding.py
 from __future__ import annotations
 
 from typing import Any
