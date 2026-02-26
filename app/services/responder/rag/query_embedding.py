@@ -11,6 +11,9 @@ def normalize_query_embedding(raw: Any, expected_dim: int) -> list[float] | None
     except Exception:
         return None
 
+    if isinstance(raw, (str, bytes, bytearray)):
+        return None
+    
     try:
         arr = np.asarray(raw, dtype=np.float32)
     except Exception:
