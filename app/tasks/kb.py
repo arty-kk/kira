@@ -255,11 +255,17 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
         for e in entries:
             eid = str(e.get("id", "") or "")
             etext = str(e.get("text", "") or "")
+            seen_item_tags: set[str] = set()
             for t in (e.get("tags") or []):
                 if not isinstance(t, str):
                     continue
                 ts = t.strip()
-                if not ts or ts not in tag_emb_map:
+                if not ts:
+                    continue
+                if ts in seen_item_tags:
+                    continue
+                seen_item_tags.add(ts)
+                if ts not in tag_emb_map:
                     continue
                 tag_rows.append({"external_id": eid, "text": etext, "tag": ts, "embedding": tag_emb_map[ts]})
 
