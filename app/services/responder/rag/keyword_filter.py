@@ -2,7 +2,6 @@
 import logging
 import time
 from typing import Dict, List, Optional, Tuple
-from sqlalchemy.sql.elements import BindParameter
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
@@ -113,8 +112,10 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    q: BindParameter = bindparam("query_vec", type_=Vector(dim))
-    return RagTagVector.embedding.op("<=>")(q).label("distance"), q
+    q = bindparam("query_vec", type_=Vector(dim))
+    distance_raw = RagTagVector.embedding.op("<=>")(q)
+    distance_sel = distance_raw.label("distance")
+    return distance_raw, distance_sel
 
 
 async def find_tag_hits(
@@ -191,7 +192,7 @@ async def find_tag_hits(
         return []
 
     # Keep a plain 1D float list for pgvector bind processing.
-    query_vec_sql_param = [float(x) for x in qv_sql.tolist()]
+    query_vec = np.asarray(qv_sql, dtype=np.float32).reshape(-1)
 
     # 3) thresholds
     thr = float(
@@ -213,7 +214,7 @@ async def find_tag_hits(
     knn_limit = max(candidate_limit, 1) * _KNN_PREFETCH_MULT
 
     # 4) SQL
-    distance_expr, _q_bind = _build_vector_distance_expr(dim=expected_dim)
+    distance_raw, distance_sel = _build_vector_distance_expr(dim=expected_dim)
 
     try:
         kb_id_int = int(kb_id) if kb_id is not None else None
@@ -222,23 +223,9 @@ async def find_tag_hits(
     except Exception:
         kb_id_int = None
 
-    try:
-        query_vec = np.asarray(query_vec_sql_param, dtype=np.float32).reshape(-1)
-    except Exception:
-        logger.warning(
-            "keyword_filter: query_vec coerce failed input_type=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
-            type(query_vec_sql_param).__name__,
-            expected_dim,
-            emb_model,
-            owner_id,
-            kb_id_int,
-        )
-        return []
-
     if query_vec.ndim != 1 or query_vec.shape[0] != expected_dim or not np.isfinite(query_vec).all():
         logger.warning(
-            "keyword_filter: invalid query_vec final-check input_type=%s shape=%s ndim=%s dtype=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
-            type(query_vec_sql_param).__name__,
+            "keyword_filter: invalid query_vec final-check shape=%s ndim=%s dtype=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
             getattr(query_vec, "shape", None),
             getattr(query_vec, "ndim", None),
             getattr(query_vec, "dtype", None),
@@ -274,12 +261,12 @@ async def find_tag_hits(
                 RagTagVector.text.label("text"),
                 RagTagVector.tag.label("tag"),
                 RagTagVector.embedding.label("embedding"),
-                (1.0 - distance_expr).label("similarity"),
-                distance_expr.label("distance")
+                (1.0 - distance_raw).label("similarity"),
+                distance_sel,
             )
             .where(*conditions)
-            .where(distance_expr <= max_distance)
-            .order_by(distance_expr.asc())
+            .where(distance_raw <= max_distance)
+            .order_by(distance_raw.asc())
             .limit(knn_limit)
             .cte("knn")
         )
