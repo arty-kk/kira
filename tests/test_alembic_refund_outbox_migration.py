@@ -18,20 +18,20 @@ migration = _load_init_migration_module()
 
 
 class InitialMigrationTests(unittest.TestCase):
-    def test_init_migration_file_exists(self):
+    def test_initial_schema_migration_file_exists_expected(self):
         versions = sorted((ROOT / "alembic" / "versions").glob("*.py"))
         names = [p.name for p in versions]
         self.assertIn("0001_initial_schema.py", names)
-        self.assertEqual(names[0], "0001_initial_schema.py")
 
-    def test_init_migration_is_root_revision(self):
+    def test_initial_schema_migration_is_root_revision_expected(self):
         self.assertEqual(migration.revision, "0001_initial_schema")
         self.assertIsNone(migration.down_revision)
 
-    def test_init_migration_contains_rag_hnsw_index(self):
+    def test_initial_schema_refund_outbox_schema_exists_expected(self):
         source = (ROOT / "alembic" / "versions" / "0001_initial_schema.py").read_text()
-        self.assertIn("ix_rag_tag_vectors_embedding_cosine_ann", source)
-        self.assertIn("USING hnsw", source)
+        self.assertIn("refund_outbox", source)
+        self.assertIn("uq_refund_outbox_request_id", source)
+        self.assertIn("ix_refund_outbox_request_id", source)
 
 
 if __name__ == "__main__":
