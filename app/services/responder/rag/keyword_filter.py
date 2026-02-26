@@ -2,6 +2,7 @@
 import logging
 import time
 from typing import Dict, List, Optional, Tuple
+from sqlalchemy.sql.elements import BindParameter
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
@@ -112,10 +113,8 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    # Single stable SQL path: plain pgvector cosine distance.
-    # Avoids halfvec cast/operator runtime incompatibilities.
-    query_vec_bind = bindparam("query_vec", type_=Vector(dim))
-    return RagTagVector.embedding.op("<=>")(query_vec_bind).label("distance")
+    q: BindParameter = bindparam("query_vec", type_=Vector(dim))
+    return RagTagVector.embedding.op("<=>")(q).label("distance"), q
 
 
 async def find_tag_hits(
@@ -214,7 +213,7 @@ async def find_tag_hits(
     knn_limit = max(candidate_limit, 1) * _KNN_PREFETCH_MULT
 
     # 4) SQL
-    distance_expr = _build_vector_distance_expr(dim=expected_dim)
+    distance_expr, _q_bind = _build_vector_distance_expr(dim=expected_dim)
 
     try:
         kb_id_int = int(kb_id) if kb_id is not None else None
@@ -224,13 +223,11 @@ async def find_tag_hits(
         kb_id_int = None
 
     try:
-        arr = np.asarray(query_vec_sql_param, dtype=np.float32)
+        query_vec = np.asarray(query_vec_sql_param, dtype=np.float32).reshape(-1)
     except Exception:
         logger.warning(
-            "keyword_filter: invalid query embedding preflight input_type=%s arr_shape=%s arr_ndim=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
+            "keyword_filter: query_vec coerce failed input_type=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
             type(query_vec_sql_param).__name__,
-            None,
-            None,
             expected_dim,
             emb_model,
             owner_id,
@@ -238,21 +235,19 @@ async def find_tag_hits(
         )
         return []
 
-    if arr.ndim != 1 or arr.shape[0] != expected_dim or not np.isfinite(arr).all():
+    if query_vec.ndim != 1 or query_vec.shape[0] != expected_dim or not np.isfinite(query_vec).all():
         logger.warning(
-            "keyword_filter: invalid query embedding preflight input_type=%s arr_shape=%s arr_ndim=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
+            "keyword_filter: invalid query_vec final-check input_type=%s shape=%s ndim=%s dtype=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
             type(query_vec_sql_param).__name__,
-            arr.shape,
-            arr.ndim,
+            getattr(query_vec, "shape", None),
+            getattr(query_vec, "ndim", None),
+            getattr(query_vec, "dtype", None),
             expected_dim,
             emb_model,
             owner_id,
             kb_id_int,
         )
         return []
-
-    query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
-    query_vec_bind = np.asarray(query_vec_sql_param, dtype=">f4")
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -329,16 +324,16 @@ async def find_tag_hits(
         )
 
         try:
-            rows = await db.execute(stmt, {"query_vec": query_vec_bind})
+            rows = await db.execute(stmt, {"query_vec": query_vec})
             payload = rows.all()
         except Exception as exc:
             root_exc = getattr(exc, "orig", None)
             root_type = type(root_exc).__name__ if root_exc is not None else "-"
             root_msg = str(root_exc or "")[:240]
-            query_vec_len = len(query_vec_bind) if hasattr(query_vec_bind, "__len__") else None
+            query_vec_len = len(query_vec) if hasattr(query_vec, "__len__") else None
             query_vec_sample_type = (
-                type(query_vec_bind[0]).__name__
-                if hasattr(query_vec_bind, "__len__") and len(query_vec_bind) > 0
+                type(query_vec[0]).__name__
+                if hasattr(query_vec, "__len__") and len(query_vec) > 0
                 else None
             )
             logger.error(
@@ -351,7 +346,7 @@ async def find_tag_hits(
                 kb_id_int,
                 expected_dim,
                 query_vec_len,
-                type(query_vec_bind).__name__,
+                type(query_vec).__name__,
                 query_vec_sample_type,
             )
             return []
