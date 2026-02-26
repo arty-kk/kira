@@ -20,6 +20,11 @@ _INDICES = {}
 _EMB_CACHE = {}
 
 MMR_CANDIDATES_TOP_N = 30
+try:
+    _KNN_PREFETCH_MULT = int(getattr(settings, "RAG_KNN_PREFETCH_MULT", 5) or 5)
+except Exception:
+    _KNN_PREFETCH_MULT = 5
+_KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
 
 
 def _norm_ws(s: str) -> str:
@@ -127,7 +132,7 @@ async def find_tag_hits(
     if not t:
         return []
 
-    emb_model = model or settings.EMBEDDING_MODEL
+    emb_model = (embedding_model or model or settings.EMBEDDING_MODEL)
     expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
 
     # 1) get query embedding
@@ -141,7 +146,7 @@ async def find_tag_hits(
             return []
         qv = _l2_normalize(qv_src)
     else:
-        qraw = await _get_query_embedding(embedding_model or emb_model, t)
+        qraw = await _get_query_embedding(emb_model, t)
         if qraw is None:
             return []
         qv_src = normalize_query_embedding(qraw, expected_dim=expected_dim)
@@ -194,6 +199,7 @@ async def find_tag_hits(
     )
     lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
     candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
+    knn_limit = max(candidate_limit, 1) * _KNN_PREFETCH_MULT
 
     # 4) SQL
     distance_expr = _build_vector_distance_expr(dim=expected_dim)
@@ -209,36 +215,17 @@ async def find_tag_hits(
         conditions = [RagTagVector.embedding_model == emb_model]
 
         if owner_id:
-            conditions.append(
-                (RagTagVector.scope == "global")
-                | (
-                    (RagTagVector.scope == "owner")
-                    & (RagTagVector.owner_id == int(owner_id))
-                    & (
-                        (RagTagVector.kb_id == kb_id_int)
-                        if kb_id_int is not None
-                        else True
-                    )
-                )
-            )
+            owner_cond = (RagTagVector.scope == "owner") & (RagTagVector.owner_id == int(owner_id))
+            if kb_id_int is not None:
+                owner_cond = owner_cond & (RagTagVector.kb_id == kb_id_int)
+            conditions.append((RagTagVector.scope == "global") | owner_cond)
         else:
             conditions.append(RagTagVector.scope == "global")
 
         sql_started = time.perf_counter()
         query_vec_source = "external query_embedding" if query_embedding is not None else "provider"
 
-        rn = over(
-            func.row_number(),
-            partition_by=(
-                RagTagVector.scope,
-                RagTagVector.owner_id,
-                RagTagVector.kb_id,
-                RagTagVector.external_id,
-            ),
-            order_by=distance_expr.asc(),
-        ).label("rn")
-
-        scored = (
+        knn = (
             select(
                 RagTagVector.scope.label("scope"),
                 RagTagVector.owner_id.label("owner_id"),
@@ -248,11 +235,34 @@ async def find_tag_hits(
                 RagTagVector.tag.label("tag"),
                 RagTagVector.embedding.label("embedding"),
                 (1.0 - distance_expr).label("similarity"),
-                distance_expr.label("distance"),
-                rn,
+                distance_expr.label("distance")
             )
             .where(*conditions)
             .where(distance_expr <= max_distance)
+            .order_by(distance_expr.asc())
+            .limit(knn_limit)
+            .cte("knn")
+        )
+
+        rn = over(
+            func.row_number(),
+            partition_by=(knn.c.scope, knn.c.owner_id, knn.c.kb_id, knn.c.external_id),
+            order_by=knn.c.distance.asc(),
+        ).label("rn")
+
+        scored = (
+            select(
+                knn.c.scope,
+                knn.c.owner_id,
+                knn.c.kb_id,
+                knn.c.external_id,
+                knn.c.text,
+                knn.c.tag,
+                knn.c.embedding,
+                knn.c.similarity,
+                knn.c.distance,
+                rn,
+            )
             .cte("scored")
         )
 
