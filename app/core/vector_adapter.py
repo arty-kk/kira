@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Iterable, List
 
 import numpy as np
-from pgvector.psycopg import Vector
+from pgvector.psycopg import HalfVector
 
 
 def normalize_vector_for_pg(
@@ -35,6 +35,6 @@ def adapt_vector_for_storage(
 ) -> object:
     """Centralized adapter for pgvector SQL binds/storage.
 
-    Rule: always use full-precision ``Vector`` for all dimensions/models.
+    Rule: use ``HalfVector`` for all RAG pgvector SQL binds/storage.
     """
-    return Vector(normalize_vector_for_pg(vec, expected_dim=expected_dim, model=model))
+    return HalfVector(normalize_vector_for_pg(vec, expected_dim=expected_dim, model=model))

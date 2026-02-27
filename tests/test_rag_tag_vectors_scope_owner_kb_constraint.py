@@ -31,8 +31,8 @@ def test_migration_has_expected_revision_and_constraint_sql():
     assert CONSTRAINT_NAME in source
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_global_item_tag" in source
     assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_owner_item_tag" in source
-    assert "ix_rag_tag_vectors_embedding_cosine_hnsw_small" in source
     assert "ix_rag_tag_vectors_embedding_cosine_hnsw_large" in source
+    assert "embedding halfvec_cosine_ops" in source
 
 
 @pytest.fixture()
@@ -90,5 +90,4 @@ def test_model_declares_same_named_check_constraint():
     source = (ROOT / "app" / "core" / "models.py").read_text()
     assert CONSTRAINT_NAME in source
     assert "scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL" in source
-    assert "ck_rag_tag_vectors_embedding_dim_positive" in source
-    assert "ck_rag_tag_vectors_embedding_dim_match" in source
+    assert "ck_rag_tag_vectors_embedding_dim_fixed_3072" in source

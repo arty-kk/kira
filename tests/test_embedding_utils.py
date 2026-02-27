@@ -16,13 +16,17 @@ class ResolveEmbeddingDimTests(unittest.TestCase):
 
 
 class GetRagEmbeddingModelTests(unittest.TestCase):
-    def test_explicit_model_has_priority(self):
+    def test_explicit_small_model_is_forced_to_large(self):
         with patch.object(embedding_utils, "settings", SimpleNamespace(EMBEDDING_MODEL="text-embedding-3-large")):
-            self.assertEqual(embedding_utils.get_rag_embedding_model("text-embedding-3-small"), "text-embedding-3-small")
+            self.assertEqual(embedding_utils.get_rag_embedding_model("text-embedding-3-small"), "text-embedding-3-large")
 
-    def test_fallbacks_to_global_embedding_model(self):
+    def test_fallback_small_global_model_is_forced_to_large(self):
         with patch.object(embedding_utils, "settings", SimpleNamespace(EMBEDDING_MODEL="text-embedding-3-small")):
-            self.assertEqual(embedding_utils.get_rag_embedding_model(), "text-embedding-3-small")
+            self.assertEqual(embedding_utils.get_rag_embedding_model(), "text-embedding-3-large")
+
+    def test_non_small_model_is_preserved(self):
+        with patch.object(embedding_utils, "settings", SimpleNamespace(EMBEDDING_MODEL="custom-embed-model")):
+            self.assertEqual(embedding_utils.get_rag_embedding_model(), "custom-embed-model")
 
 
 if __name__ == "__main__":

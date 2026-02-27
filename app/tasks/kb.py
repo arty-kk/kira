@@ -206,10 +206,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             return
 
         raw_items = kb.items or []
-        model = (
-            kb.embedding_model
-            or get_rag_embedding_model()
-        ).strip() or "text-embedding-3-large"
+        model = get_rag_embedding_model(kb.embedding_model)
 
         kb.status = "building"
         kb.error = None

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, List
 
 
 from app.config import settings
 from app.core.vector_adapter import normalize_vector_for_pg
+
+
+logger = logging.getLogger(__name__)
 
 
 _OPENAI_EMBED_DIMS = {
@@ -23,10 +27,18 @@ def resolve_embedding_dim(model: str | None, *, fallback_dim: int) -> int:
 
 
 def get_rag_embedding_model(explicit_model: str | None = None) -> str:
-    model = str(explicit_model or "").strip()
-    if model:
-        return model
-    return str(getattr(settings, "EMBEDDING_MODEL", "text-embedding-3-large") or "text-embedding-3-large").strip()
+    raw_model = str(explicit_model or "").strip()
+    if not raw_model:
+        raw_model = str(getattr(settings, "EMBEDDING_MODEL", "text-embedding-3-large") or "text-embedding-3-large").strip()
+
+    if raw_model.lower() == "text-embedding-3-small":
+        logger.warning(
+            "RAG storage contract is fixed to halfvec(3072); forcing embedding model from %s to text-embedding-3-large",
+            raw_model,
+        )
+        return "text-embedding-3-large"
+
+    return raw_model
 
 
 def normalize_embedding_row(raw: Any, *, expected_dim: int, error_prefix: str = "") -> List[float]:

@@ -6,9 +6,18 @@ from sqlalchemy import (
 )
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB
-from pgvector.sqlalchemy import Vector
+from sqlalchemy.types import UserDefinedType
 
 from app.core.db_base import Base
+
+
+class HalfVector(UserDefinedType):
+    def __init__(self, dim: int):
+        self.dim = int(dim)
+
+    def get_col_spec(self, **kw):
+        _ = kw
+        return f"halfvec({self.dim})"
 
 
 class User(Base):
@@ -198,7 +207,7 @@ class RagTagVector(Base):
     external_id = Column(String(255), nullable=False)
     text = Column(String, nullable=False)
     tag = Column(String(255), nullable=False)
-    embedding = Column(Vector(), nullable=False)
+    embedding = Column(HalfVector(3072), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (
@@ -208,11 +217,7 @@ class RagTagVector(Base):
             "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
             name="ck_rag_tag_vectors_scope_owner_kb_consistency",
         ),
-        CheckConstraint("embedding_dim > 0", name="ck_rag_tag_vectors_embedding_dim_positive"),
-        CheckConstraint(
-            "vector_dims(embedding) = embedding_dim",
-            name="ck_rag_tag_vectors_embedding_dim_match",
-        ),
+        CheckConstraint("embedding_dim = 3072", name="ck_rag_tag_vectors_embedding_dim_fixed_3072"),
     )
 
 class GiftPurchase(Base):
