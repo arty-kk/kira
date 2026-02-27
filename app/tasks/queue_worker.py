@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import signal
 import random
@@ -39,13 +40,23 @@ from app.services.addons.voice_generator import (
 from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
-from app.core.logging_config import setup_logging
 from app.core.queue_recovery import requeue_processing_on_start
 from app.core.models import RagTagVector
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
 
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_logging() -> None:
+    try:
+        module = importlib.import_module("app.core.logging_config")
+    except ModuleNotFoundError:
+        return
+
+    setup = getattr(module, "setup_logging", None)
+    if callable(setup):
+        setup()
 
 
 class ReplyTerminalError(Exception):
@@ -2228,7 +2239,7 @@ async def _async_main() -> None:
 
 
 def main() -> None:
-    setup_logging()
+    _setup_logging()
     asyncio.run(_async_main())
 
 if __name__ == "__main__":

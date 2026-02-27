@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -22,7 +23,6 @@ from app.core.media_limits import (
     clean_base64_payload,
     decode_base64_payload,
 )
-from app.core.logging_config import setup_logging
 from app.core.memory import get_redis_queue, close_redis_pools
 from app.core.queue_recovery import requeue_processing_on_start
 from app.services.responder import respond_to_user
@@ -74,6 +74,17 @@ INFLIGHT_STALE_AFTER_SEC = RESPOND_TIMEOUT + JOB_TTL_BUFFER_SEC + VOICE_TRANSCRI
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "API_REQUEUE_LOCK_TTL_SEC", 300))
 REDIS_RECOVERY_BACKOFF_MIN_SEC = float(getattr(settings, "API_REDIS_RECOVERY_BACKOFF_MIN_SEC", 1.0))
 REDIS_RECOVERY_BACKOFF_MAX_SEC = float(getattr(settings, "API_REDIS_RECOVERY_BACKOFF_MAX_SEC", 15.0))
+
+
+def _setup_logging() -> None:
+    try:
+        module = importlib.import_module("app.core.logging_config")
+    except ModuleNotFoundError:
+        return
+
+    setup = getattr(module, "setup_logging", None)
+    if callable(setup):
+        setup()
 
 
 def _recovery_jitter(base: float, spread: float = 0.35) -> float:
@@ -1237,7 +1248,7 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
 
 
 async def _async_main() -> None:
-    setup_logging()
+    _setup_logging()
 
     stop_evt = asyncio.Event()
     loop = asyncio.get_running_loop()
