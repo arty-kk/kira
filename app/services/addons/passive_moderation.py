@@ -8,7 +8,6 @@ import time
 import asyncio
 import hashlib
 import unicodedata
-import json
 
 from urllib.parse import urlparse
 from typing import Any, Literal, List, Optional
@@ -20,7 +19,7 @@ from aiogram.enums import ChatType
 from app.core.memory import load_context, get_redis
 from app.config import settings
 from app.clients.telegram_client import get_bot
-from app.clients.openai_client import get_openai, _call_openai_with_retry, _get_output_text
+from app.clients.openai_client import get_openai
 
 logger = logging.getLogger(__name__)
 
@@ -484,106 +483,46 @@ def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
     return True
 
 
-def _profile_nsfw_schema() -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "is_nude_female": {"type": "boolean"},
-            "is_sexualized": {"type": "boolean"},
-            "is_suggestive": {"type": "boolean"},
-            "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
-            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-            "answer": {"type": "string", "enum": ["yes", "no"]},
-        },
-        "required": [
-            "is_nude_female",
-            "is_sexualized",
-            "is_suggestive",
-            "risk_level",
-            "confidence",
-            "answer",
-        ],
-        "additionalProperties": False,
-    }
-
-
 async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image/jpeg") -> bool:
     payload = (image_b64 or "").strip()
     if not payload:
         return False
 
-    system_prompt = (
-        "Ты модератор аватаров. Оцени изображение по нескольким NSFW-сигналам: "
-        "1) явная женская обнаженность; "
-        "2) сексуализированная подача (эротические позы, акценты на интимных зонах); "
-        "3) suggestive-контент (белье/купальник любой расцветки) с сексуализированным контекстом. "
-        "Верни только JSON по схеме. "
-        "При сомнениях выбирай консервативный безопасный вариант: answer='no', risk_level='low', "
-        "is_nude_female=false, is_sexualized=false."
-    )
-    user_prompt = (
-        "Analyze the profile image and return JSON only. "
-        "Set is_nude_female/is_sexualized/is_suggestive and final answer (yes|no) with risk_level (low|medium|high)."
-    )
+    client = get_openai()
 
     try:
         resp = await asyncio.wait_for(
-            _call_openai_with_retry(
-                endpoint="responses.create",
-                model=str(getattr(settings, "MODERATION_PROFILE_NSFW_MODEL", "gpt-5-nano") or "gpt-5-nano"),
-                instructions=system_prompt,
+            client.moderations.create(
+                model=settings.MODERATION_MODEL,
                 input=[
                     {
-                        "role": "user",
-                        "content": [
-                            {"type": "input_text", "text": user_prompt},
-                            {"type": "input_image", "image_url": f"data:{image_mime};base64,{payload}"},
-                        ],
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image_mime};base64,{payload}"},
                     }
                 ],
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "profile_nsfw_label",
-                        "schema": _profile_nsfw_schema(),
-                        "strict": True,
-                    }
-                },
-                max_output_tokens=64,
-                reasoning={"effort": "low"},
             ),
             timeout=10.0,
         )
     except Exception:
-        logger.exception("classify_profile_nsfw_fast: openai call failed")
+        logger.exception("classify_profile_nsfw_fast: moderation API error")
         return False
 
-    raw = (_get_output_text(resp) or "").strip()
-    if not raw:
+    results = getattr(resp, "results", None)
+    if not results or not isinstance(results, list):
+        logger.error("classify_profile_nsfw_fast: unexpected response %r", resp)
         return False
 
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        logger.debug("classify_profile_nsfw_fast: invalid JSON output=%r", raw)
-        return False
+    result = results[0]
+    categories = _to_plain_dict(getattr(result, "categories", None))
+    category_scores = _to_plain_dict(getattr(result, "category_scores", None))
+    threshold = float(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", 0.9) or 0.9)
 
-    answer = str(obj.get("answer", "")).strip().lower()
-    if answer in ("да", "нет"):
-        answer = "yes" if answer == "да" else "no"
-    if answer not in ("yes", "no"):
-        return False
-
-    is_nude_female = bool(obj.get("is_nude_female", False))
-    if is_nude_female and answer == "yes":
-        return True
-
-    risk_level = str(obj.get("risk_level", "")).strip().lower()
-    if risk_level not in {"low", "medium", "high"}:
-        return False
-
-    is_sexualized = bool(obj.get("is_sexualized", False))
-    return risk_level == "high" and is_sexualized
+    sexual_flagged = bool(categories.get("sexual", False) or categories.get("sexual/minors", False))
+    sexual_score = max(
+        float(category_scores.get("sexual", 0.0) or 0.0),
+        float(category_scores.get("sexual/minors", 0.0) or 0.0),
+    )
+    return bool(sexual_flagged or sexual_score >= threshold)
 
 
 async def moderate_with_openai(

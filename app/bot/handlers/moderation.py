@@ -773,10 +773,6 @@ async def _restrict_user_write_safe(chat_id: int, user_id: int) -> bool:
         return False
 
 
-def _profile_nsfw_cache_key(user_id: int) -> str:
-    return f"mod:profile_nsfw:{int(user_id)}"
-
-
 def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
     return f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"
 
@@ -784,16 +780,6 @@ def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
 async def _is_profile_nsfw(user_id: int) -> bool:
     if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
         return False
-
-    key = _profile_nsfw_cache_key(user_id)
-    try:
-        cached = await redis_client.get(key)
-        if cached is not None:
-            if isinstance(cached, (bytes, bytearray)):
-                cached = cached.decode("utf-8", "ignore")
-            return str(cached).strip() == "1"
-    except Exception:
-        logger.debug("profile nsfw cache read failed", exc_info=True)
 
     flagged = False
     try:
@@ -812,12 +798,6 @@ async def _is_profile_nsfw(user_id: int) -> bool:
     except Exception:
         logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
         flagged = False
-
-    try:
-        ttl = int(max(60, int(getattr(settings, "MODERATION_PROFILE_NSFW_CACHE_SECONDS", 86_400))))
-        await redis_client.set(key, "1" if flagged else "0", ex=ttl)
-    except Exception:
-        logger.debug("profile nsfw cache write failed", exc_info=True)
 
     return flagged
 
