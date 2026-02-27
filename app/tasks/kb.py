@@ -9,11 +9,11 @@ import re
 
 from typing import Any, Dict, List
 
-from pgvector.psycopg import Vector
 from sqlalchemy import select, delete
 
 from app.config import settings
 from app.core.embedding_utils import get_rag_embedding_model, normalize_embedding_row, resolve_embedding_dim
+from app.core.vector_adapter import adapt_vector_for_storage
 from app.core.db import session_scope
 from app.core.models import ApiKey, ApiKeyKnowledge, RagTagVector
 from app.clients.openai_client import _call_openai_with_retry
@@ -30,9 +30,13 @@ logger = logging.getLogger(__name__)
 RAG_TAG_TEXT_MAX_LEN = 255
 
 
-def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
-    _ = expected_dim
-    return Vector(vec)
+def _embedding_param(
+    vec: List[float],
+    *,
+    expected_dim: int,
+    model: str | None = None,
+) -> object:
+    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model)
 
 
 def _normalize_embedding_row(raw: Any, *, expected_dim: int) -> List[float]:
@@ -347,7 +351,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                             external_id=row["external_id"],
                             text=row["text"],
                             tag=row["tag"],
-                            embedding=_embedding_param(row["embedding"], expected_dim=expected_dim),
+                            embedding=_embedding_param(row["embedding"], expected_dim=expected_dim, model=model),
                         )
                         for row in chunk
                     ])

@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from typing import Iterable, List
+
+import numpy as np
+from pgvector.psycopg import Vector
+
+
+def normalize_vector_for_pg(
+    vec: Iterable[float],
+    *,
+    expected_dim: int,
+    model: str | None = None,
+) -> List[float]:
+    """Normalize/validate a vector for pgvector SQL binds and storage."""
+    _ = model
+    try:
+        arr = np.asarray(vec, dtype=np.float32).reshape(-1)
+    except Exception as exc:
+        raise ValueError("invalid vector values") from exc
+    if arr.ndim != 1:
+        raise ValueError(f"invalid vector ndim={arr.ndim}")
+    if int(arr.shape[0]) != int(expected_dim):
+        raise ValueError(f"invalid vector dim={int(arr.shape[0])} expected={int(expected_dim)}")
+    if not np.isfinite(arr).all():
+        raise ValueError("vector contains non-finite values")
+    return arr.astype(np.float32, copy=False).tolist()
+
+
+def adapt_vector_for_storage(
+    vec: Iterable[float],
+    *,
+    expected_dim: int,
+    model: str | None = None,
+) -> object:
+    """Centralized adapter for pgvector SQL binds/storage.
+
+    Rule: always use full-precision ``Vector`` for all dimensions/models.
+    """
+    return Vector(normalize_vector_for_pg(vec, expected_dim=expected_dim, model=model))
