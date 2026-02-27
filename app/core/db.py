@@ -2,13 +2,17 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import event
+from pgvector.psycopg import register_vector, register_vector_async
 from sqlalchemy.pool import NullPool
 from app.config import settings
 from sqlalchemy import text
 from contextlib import asynccontextmanager, suppress
 from typing import AsyncIterator
+import logging
 
 from app.core.db_base import Base
+
+logger = logging.getLogger(__name__)
 
 pool_kwargs = {"pool_pre_ping": True}
 use_nullpool = (settings.DB_POOL_CLASS or "").lower() == "nullpool"
@@ -33,6 +37,7 @@ if app_name:
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
+    hide_parameters=True,
     connect_args=connect_args,
     **pool_kwargs,
 )
@@ -42,6 +47,28 @@ AsyncSessionLocal = sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+
+def _register_pgvector_adapters(dbapi_connection) -> None:
+    run_async = getattr(dbapi_connection, "run_async", None)
+    if callable(run_async):
+        run_async(register_vector_async)
+        return
+    register_vector(dbapi_connection)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _on_connect_register_pgvector(dbapi_connection, connection_record):
+    info = getattr(connection_record, "info", None)
+    if isinstance(info, dict) and info.get("pgvector_registered"):
+        return
+    try:
+        _register_pgvector_adapters(dbapi_connection)
+        if isinstance(info, dict):
+            info["pgvector_registered"] = True
+    except Exception:
+        logger.exception("failed to register pgvector adapters on db connection")
+        raise
 
 @asynccontextmanager
 async def get_db() -> AsyncIterator[AsyncSession]:

@@ -17,9 +17,6 @@ from .query_embedding import normalize_query_embedding
 
 logger = logging.getLogger(__name__)
 
-_INDICES = {}
-_EMB_CACHE = {}
-
 MMR_CANDIDATES_TOP_N = 30
 try:
     _KNN_PREFETCH_MULT = int(getattr(settings, "RAG_KNN_PREFETCH_MULT", 5) or 5)
@@ -29,8 +26,7 @@ _KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
 
 
 def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
-    if expected_dim > 2000:
-        return HalfVector(vec)
+    _ = expected_dim
     return PgVector(vec)
 
 
@@ -114,27 +110,12 @@ def _mmr_select_ids(
     return selected
 
 
-async def _ensure_index(model=None):
-    key = f"sys::{get_rag_embedding_model(model)}"
-    return _INDICES.get(
-        key,
-        {
-            "ready": True,
-            "E": np.zeros((0, 0), dtype=np.float32),
-            "row_to_eid": [],
-            "row_to_tag": [],
-            "row_to_text": [],
-            "model": get_rag_embedding_model(model),
-        },
-    )
-
-
 def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
     _ = owner_id
 
 
 def _build_vector_distance_expr(*, dim: int):
-    q = bindparam("query_vec")
+    q = bindparam("query_vec", type_=RagTagVector.embedding.type)
     dim_ok = func.vector_dims(RagTagVector.embedding) == dim
     distance_raw = case(
         (dim_ok, RagTagVector.embedding.op("<=>")(q)),
