@@ -89,12 +89,10 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         sql = str(captured["query"])
-        self.assertIn("CASE", sql)
         self.assertIn("<=>", sql)
         self.assertIn("ORDER BY scored.distance ASC", sql)
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
-        self.assertIn("vector_dims", sql)
         self.assertIn("scope", sql)
         self.assertTrue(captured["execute_called"])
         self.assertIsInstance(captured["params"], dict)
@@ -238,21 +236,41 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [])
         mocked_scope.assert_not_called()
 
-    async def test_keyword_filter_returns_empty_when_l2_output_cannot_be_cast_for_sql(self):
+    async def test_keyword_filter_sql_bind_uses_non_normalized_qv_src(self):
+        captured = {}
+
+        class _FakeResult:
+            def all(self):
+                return []
+
+        class _FakeSession:
+            async def execute(self, _query, params=None):
+                captured["params"] = params
+                return _FakeResult()
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
         query = [1.0] + [0.0] * 3071
         with (
-            mock.patch.object(keyword_filter, "_l2_normalize", return_value=object()),
-            mock.patch.object(keyword_filter, "session_scope") as mocked_scope,
+            mock.patch.object(keyword_filter, "_l2_normalize", return_value=[0.5] * 3072),
+            mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()),
         ):
-            hits = await keyword_filter.find_tag_hits(
+            await keyword_filter.find_tag_hits(
                 "q",
                 query_embedding=query,
                 model="m",
                 embedding_model="m",
             )
 
-        self.assertEqual(hits, [])
-        mocked_scope.assert_not_called()
+        self.assertIn("query_vec", captured["params"])
+        bound = captured["params"]["query_vec"].to_list()
+        self.assertNotEqual(bound, [0.5] * 3072)
+        self.assertEqual(bound, query)
 
     async def test_keyword_filter_preflight_rejects_ragged_embedding_without_sql(self):
         query = [[1.0] + [0.0] * 3071, [0.0] * 3070]
