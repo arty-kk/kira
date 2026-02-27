@@ -22,6 +22,7 @@ from app.core.media_limits import (
     clean_base64_payload,
     decode_base64_payload,
 )
+from app.core.logging_config import setup_logging
 from app.core.memory import get_redis_queue, close_redis_pools
 from app.core.queue_recovery import requeue_processing_on_start
 from app.services.responder import respond_to_user
@@ -1236,15 +1237,7 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
 
 
 async def _async_main() -> None:
-    level = os.environ.get("API_WORKER_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d  %(message)s",
-        force=True,
-    )
-    sqlalchemy_level_name = os.environ.get("SQLALCHEMY_LOG_LEVEL", "ERROR").upper()
-    sqlalchemy_level = getattr(logging, sqlalchemy_level_name, logging.ERROR)
-    logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
+    setup_logging()
 
     stop_evt = asyncio.Event()
     loop = asyncio.get_running_loop()

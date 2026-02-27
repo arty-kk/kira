@@ -442,7 +442,6 @@ class Settings:
     REDIS_URL: str = field(default_factory=lambda: _get_env("REDIS_URL", required=True))
     REDIS_URL_QUEUE: str = field(default_factory=lambda: _get_env("REDIS_URL_QUEUE", required=True))
     REDIS_URL_VECTOR: str = field(default_factory=lambda: _get_env("REDIS_URL_VECTOR", required=True))
-    QUEUE_LOG_LEVEL: str = field(default_factory=lambda: _get_env("QUEUE_LOG_LEVEL", "INFO"))
     REDIS_PASSWORD: str = field(default_factory=lambda: _get_env("REDIS_PASSWORD", ""))
     REDIS_USERNAME: str = field(default_factory=lambda: _get_env("REDIS_USERNAME", "default"))
     QUEUE_KEY: str = field(default_factory=lambda: _get_env("QUEUE_KEY", "queue:chat", conv=str))
