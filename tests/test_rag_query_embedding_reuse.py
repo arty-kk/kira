@@ -212,6 +212,49 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(hits, [])
 
+    async def test_keyword_filter_sql_error_log_is_sanitized(self):
+        class _FakeSession:
+            async def execute(self, _query, params=None):
+                vector_dump = ", ".join(f"{0.123456 + i * 0.0001:.6f}" for i in range(40))
+                raise ValueError(f"expected ndim to be 1, got payload [{vector_dump}]")
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 3071
+        with (
+            mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()),
+            mock.patch.object(keyword_filter.logger, "error") as mock_error,
+        ):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="m",
+                embedding_model="m",
+                owner_id=42,
+                kb_id=7,
+                limit=1,
+            )
+
+        self.assertEqual(hits, [])
+        mock_error.assert_called_once()
+        self.assertIn("err_type=%s", mock_error.call_args.args[0])
+        self.assertIn("db_err_type=%s", mock_error.call_args.args[0])
+        self.assertIn("model=%s", mock_error.call_args.args[0])
+        self.assertIn("owner_id=%s", mock_error.call_args.args[0])
+        self.assertIn("kb_id=%s", mock_error.call_args.args[0])
+        self.assertIn("expected_dim=%s", mock_error.call_args.args[0])
+        self.assertIn("query_vec_len=%s", mock_error.call_args.args[0])
+        self.assertIn("reason=%s", mock_error.call_args.args[0])
+        flattened_args = " ".join(str(v) for v in mock_error.call_args.args[1:])
+        self.assertNotIn("0.123456", flattened_args)
+        self.assertNotIn("[0.", flattened_args)
+        self.assertIn("vector_bind_error_retry_failed", flattened_args)
+
     async def test_keyword_filter_returns_empty_on_empty_query_embedding(self):
         with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
             hits = await keyword_filter.find_tag_hits("q", query_embedding=[], model="m", embedding_model="m")
