@@ -330,6 +330,20 @@ The script exits with a non-zero code if:
 
 Use `DEPLOY_VALIDATE_ONLY=1` to validate inputs and generated `--scale` arguments without running `git` or `docker` commands.
 
+## Logging level precedence for runtime services
+
+Runtime services (`main.py`, `worker-queue`, `worker-api`, and Celery workers) use a centralized logging setup from `app.core.logging_config`.
+Log level resolution order is:
+
+1. `PROCESS_SPECIFIC_LOG_LEVEL` (optional override for the current process)
+2. `LOG_LEVEL` (shared default for all processes)
+3. `INFO` (fallback)
+
+`SQLALCHEMY_LOG_LEVEL` is resolved separately and defaults to `CRITICAL` to suppress noisy SQL/vector query logs in runtime services.
+Raise it only for troubleshooting (`ERROR`/`WARNING`/`INFO`).
+
+In Docker Compose this usually requires no extra wiring because services already load `.env` via `env_file`.
+
 ## Celery worker tuning
 
 `worker-tasks`, `worker-media`, and `worker-moderation` read queue/concurrency/prefetch values from `.env`.

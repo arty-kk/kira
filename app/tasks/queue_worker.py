@@ -39,6 +39,7 @@ from app.services.addons.voice_generator import (
 from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
+from app.core.logging_config import setup_logging
 from app.core.queue_recovery import requeue_processing_on_start
 from app.core.models import RagTagVector
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
@@ -2227,15 +2228,7 @@ async def _async_main() -> None:
 
 
 def main() -> None:
-    level = os.environ.get("QUEUE_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s:%(lineno)d  %(message)s",
-        force=True,
-    )
-    sqlalchemy_level_name = os.environ.get("SQLALCHEMY_LOG_LEVEL", "ERROR").upper()
-    sqlalchemy_level = getattr(logging, sqlalchemy_level_name, logging.ERROR)
-    logging.getLogger("sqlalchemy.engine").setLevel(sqlalchemy_level)
+    setup_logging()
     asyncio.run(_async_main())
 
 if __name__ == "__main__":
