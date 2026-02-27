@@ -154,7 +154,6 @@ async def find_tag_hits(
                 type(query_embedding).__name__,
             )
             return []
-        qv = _l2_normalize(qv_src)
     else:
         qraw = await _get_query_embedding(emb_model, t)
         if qraw is None:
@@ -167,15 +166,14 @@ async def find_tag_hits(
                 expected_dim,
             )
             return []
-        qv = _l2_normalize(qv_src)
 
     # 2) hard-shape + finite + centralized normalization for SQL bind
     try:
-        query_vec_sql = normalize_vector_for_pg(qv, expected_dim=expected_dim, model=emb_model)
+        query_vec_sql = normalize_vector_for_pg(qv_src, expected_dim=expected_dim, model=emb_model)
     except ValueError:
         logger.warning(
             "keyword_filter: invalid query embedding for SQL input_type=%s model=%s owner_id=%s kb_id=%s expected_dim=%s",
-            type(qv).__name__,
+            type(qv_src).__name__,
             emb_model,
             owner_id,
             kb_id,
