@@ -3,6 +3,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from pgvector.psycopg import HalfVector, Vector as PgVector
 
 from app.services.responder.rag import keyword_filter
 from app.services.responder.rag import relevance
@@ -96,9 +97,11 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(captured["execute_called"])
         self.assertIsInstance(captured["params"], dict)
         self.assertIn("query_vec", captured["params"])
-        self.assertIsInstance(captured["params"]["query_vec"], list)
-        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
-        self.assertTrue(all(not isinstance(item, (list, tuple, np.ndarray)) for item in captured["params"]["query_vec"]))
+        self.assertIsInstance(captured["params"]["query_vec"], (HalfVector, PgVector))
+        self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
+        self.assertTrue(
+            all(not isinstance(item, (list, tuple, np.ndarray)) for item in captured["params"]["query_vec"].to_list())
+        )
         self.assertEqual(hits, [(0.99, "global:0:0:item-1", "text-1"), (0.91, "owner:42:0:item-2", "text-2")])
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
         self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
@@ -301,7 +304,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
         self.assertEqual(hits, [(0.95, "global:0:0:ok", "ok-text")])
-        self.assertEqual(len(captured["params"]["query_vec"]), 3072)
+        self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
 
     async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
         with mock.patch.object(keyword_filter, "session_scope") as mocked_scope:
