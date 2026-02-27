@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import bindparam, select, func
+from sqlalchemy import bindparam, select, func, case
 from sqlalchemy.sql import over
 
 from app.config import settings
@@ -114,7 +114,11 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 def _build_vector_distance_expr(*, dim: int):
     q = bindparam("query_vec", type_=Vector(dim))
-    distance_raw = RagTagVector.embedding.op("<=>")(q)
+    dim_ok = func.vector_dims(RagTagVector.embedding) == dim
+    distance_raw = case(
+        (dim_ok, RagTagVector.embedding.op("<=>")(q)),
+        else_=None,
+    )
     distance_sel = distance_raw.label("distance")
     return distance_raw, distance_sel
 
@@ -247,6 +251,7 @@ async def find_tag_hits(
         conditions = [
             RagTagVector.embedding_model == emb_model,
             RagTagVector.embedding_dim == expected_dim,
+            func.vector_dims(RagTagVector.embedding) == expected_dim,
         ]
 
         if owner_id:
