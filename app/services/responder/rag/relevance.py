@@ -60,9 +60,14 @@ async def is_relevant(
         keyword_thr_strict = float(getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", 0.70) or 0.70)
     except Exception:
         keyword_thr_strict = 0.70
-    keyword_thr_strict = max(0.0, min(1.0, keyword_thr_strict))
-    keyword_thr_direct = max(0.0, min(1.0, keyword_thr_strict / 2.0))
+
+    try:
+        keyword_thr_direct = float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
+    except Exception:
+        keyword_thr_direct = 0.28
+
     keyword_thr = keyword_thr_strict if strict_autoreply_gate else keyword_thr_direct
+    keyword_thr = max(0.0, min(1.0, keyword_thr))
 
     try:
         if query_embedding is not None and query_embedding_reuse_counter is not None:

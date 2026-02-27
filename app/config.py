@@ -663,7 +663,7 @@ class Settings:
     KNOWLEDGE_ON_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_ON_FILE", "knowledge_on.json", conv=str))
     #Hybrid Fallback Parameters
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
-    RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.4", conv=float))
+    RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.28", conv=float))
     KEYWORD_RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("KEYWORD_RELEVANCE_THRESHOLD", "0.70", conv=float))
     KEYWORD_RELEVANCE_CONFIRM_DELTA: float = field(default_factory=lambda: _get_env("KEYWORD_RELEVANCE_CONFIRM_DELTA", "0.05", conv=float))
     RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
