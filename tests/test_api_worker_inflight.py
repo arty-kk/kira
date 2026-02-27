@@ -193,6 +193,45 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(redis_queue.pipeline_calls, [])
         self.assertEqual(len(redis_queue.lrem_calls), 1)
 
+
+    async def test_handle_job_forwards_precomputed_rag_payload_to_responder(self) -> None:
+        now = 30_000
+        redis_queue = _FakeRedisQueue(existing_value="inflight:0")
+        precomputed_rag_hits = [[0.88, "id1", "chunk"]]
+        query_embedding = [0.11, 0.22]
+        job = {
+            "request_id": "req-777",
+            "result_key": "result:req-777",
+            "chat_id": 1,
+            "memory_uid": 2,
+            "persona_owner_id": 3,
+            "knowledge_owner_id": 7,
+            "persona_profile_id": "profile",
+            "msg_id": 4,
+            "text": "hello",
+            "precomputed_rag_hits": precomputed_rag_hits,
+            "query_embedding": query_embedding,
+            "embedding_model": "text-embedding-3-large",
+            "rag_precheck_source": "api_worker_tag_precheck",
+        }
+
+        with (
+            unittest.mock.patch.object(api_worker.time, "time", return_value=now),
+            unittest.mock.patch.object(
+                api_worker,
+                "respond_to_user",
+                new=unittest.mock.AsyncMock(return_value="ok"),
+            ) as responder_mock,
+        ):
+            await api_worker._handle_job(json.dumps(job), redis_queue)
+
+        responder_mock.assert_awaited_once()
+        kwargs = responder_mock.await_args.kwargs
+        self.assertEqual(kwargs.get("precomputed_rag_hits"), precomputed_rag_hits)
+        self.assertEqual(kwargs.get("query_embedding"), query_embedding)
+        self.assertEqual(kwargs.get("embedding_model"), "text-embedding-3-large")
+        self.assertEqual(kwargs.get("rag_precheck_source"), "api_worker_tag_precheck")
+
     async def test_two_workers_race_on_stale_inflight_only_first_claims(self) -> None:
         now = 20_000
         stale_ts = now - api_worker.INFLIGHT_STALE_AFTER_SEC - 20

@@ -568,11 +568,19 @@ async def _handle_job(raw: str, redis_queue) -> None:
     voice_b64 = job.get("voice_b64")
     voice_mime = (job.get("voice_mime") or "").lower() or None
     allow_web = bool(job.get("allow_web") or False)
+    precomputed_rag_hits = job.get("precomputed_rag_hits")
+    query_embedding = job.get("query_embedding")
+    embedding_model = job.get("embedding_model")
+    rag_precheck_source = job.get("rag_precheck_source")
     enqueued_at = job.get("enqueued_at")
     if isinstance(enqueued_at, (bytes, bytearray)):
         enqueued_at = enqueued_at.decode("utf-8", "ignore")
     if isinstance(persona_profile_id, (bytes, bytearray)):
         persona_profile_id = persona_profile_id.decode("utf-8", "ignore")
+    if isinstance(embedding_model, (bytes, bytearray)):
+        embedding_model = embedding_model.decode("utf-8", "ignore")
+    if isinstance(rag_precheck_source, (bytes, bytearray)):
+        rag_precheck_source = rag_precheck_source.decode("utf-8", "ignore")
     try:
         enqueued_at = float(enqueued_at) if enqueued_at is not None else None
     except (TypeError, ValueError):
@@ -867,6 +875,10 @@ async def _handle_job(raw: str, redis_queue) -> None:
                             persona_profile_id=persona_profile_id,
                             request_id=request_id,
                             metrics_out=responder_metrics,
+                            precomputed_rag_hits=precomputed_rag_hits,
+                            query_embedding=query_embedding,
+                            embedding_model=embedding_model,
+                            rag_precheck_source=rag_precheck_source,
                         ),
                         timeout=RESPOND_TIMEOUT,
                     )
