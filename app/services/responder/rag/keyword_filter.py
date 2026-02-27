@@ -223,23 +223,11 @@ async def find_tag_hits(
     except Exception:
         kb_id_int = None
 
-    if query_vec.ndim != 1 or query_vec.shape[0] != expected_dim or not np.isfinite(query_vec).all():
-        logger.warning(
-            "keyword_filter: invalid query_vec final-check shape=%s ndim=%s dtype=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
-            getattr(query_vec, "shape", None),
-            getattr(query_vec, "ndim", None),
-            getattr(query_vec, "dtype", None),
-            expected_dim,
-            emb_model,
-            owner_id,
-            kb_id_int,
-        )
-        return []
-
+    arr = np.asarray(query_vec, dtype=np.float32).reshape(-1)
     if arr.ndim != 1 or arr.shape[0] != expected_dim or not np.isfinite(arr).all():
         logger.warning(
             "keyword_filter: invalid query embedding preflight input_type=%s arr_shape=%s arr_ndim=%s expected_dim=%s model=%s owner_id=%s kb_id=%s",
-            type(query_vec_sql_param).__name__,
+            type(query_vec).__name__,
             arr.shape,
             arr.ndim,
             expected_dim,
@@ -250,8 +238,7 @@ async def find_tag_hits(
         return []
 
     query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
-    query_vec_bind = np.asarray(query_vec_sql_param, dtype=">f4").reshape(-1)
-    query_vec_bind_fallback = [float(x) for x in query_vec_bind.tolist()]
+    query_vec_bind_fallback = [float(x) for x in query_vec_sql_param]
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -328,7 +315,7 @@ async def find_tag_hits(
         )
 
         try:
-            rows = await db.execute(stmt, {"query_vec": query_vec})
+            rows = await db.execute(stmt, {"query_vec": query_vec_sql_param})
             payload = rows.all()
         except Exception as exc:
             root_exc = getattr(exc, "orig", None)
@@ -358,10 +345,10 @@ async def find_tag_hits(
                     db_err = None
 
             if db_err is not None:
-                query_vec_len = len(query_vec_bind) if hasattr(query_vec_bind, "__len__") else None
+                query_vec_len = len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None
                 query_vec_sample_type = (
-                    type(query_vec_bind[0]).__name__
-                    if hasattr(query_vec_bind, "__len__") and len(query_vec_bind) > 0
+                    type(query_vec_sql_param[0]).__name__
+                    if hasattr(query_vec_sql_param, "__len__") and len(query_vec_sql_param) > 0
                     else None
                 )
                 logger.error(
@@ -374,7 +361,7 @@ async def find_tag_hits(
                     kb_id_int,
                     expected_dim,
                     query_vec_len,
-                    type(query_vec_bind).__name__,
+                    type(query_vec_sql_param).__name__,
                     query_vec_sample_type,
                 )
                 return []
