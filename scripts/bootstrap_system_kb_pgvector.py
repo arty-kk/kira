@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from pgvector.psycopg import Vector
 from sqlalchemy import delete, select, text
 
 from app.clients.openai_client import _call_openai_with_retry
@@ -17,6 +18,11 @@ from app.core.models import RagTagVector
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
+    _ = expected_dim
+    return Vector(vec)
 
 
 def _load_items(path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
@@ -183,7 +189,7 @@ async def _run(args: argparse.Namespace) -> None:
                         external_id=item["id"],
                         text=item["text"],
                         tag=tag,
-                        embedding=emb,
+                        embedding=_embedding_param(emb, expected_dim=expected_dim),
                     )
                 )
                 if len(pending) >= flush_every:
