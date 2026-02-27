@@ -82,6 +82,15 @@ def _parse_int_csv_env(name: str) -> tuple[List[int], List[str]]:
 
 
 
+def _default_embed_dim_from_model() -> int:
+    model = str(os.getenv("EMBEDDING_MODEL", "text-embedding-3-large") or "").strip().lower()
+    if model == "text-embedding-3-small":
+        return 1536
+    if model == "text-embedding-3-large":
+        return 3072
+    return 3072
+
+
 def _normalize_comment_link_policy(value: str) -> str:
     normalized = str(value or "").strip().lower()
     allowed = {"group_default", "relaxed"}
@@ -164,7 +173,7 @@ class Settings:
     EMBEDDING_TIMEOUT: int = field(default_factory=lambda: _get_env("EMBEDDING_TIMEOUT", "60", conv=int))
     EMBEDDING_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("EMBEDDING_MAX_CONCURRENCY", "100", conv=int))
     EMBED_BATCH_SIZE: int = field(default_factory=lambda: _get_env("EMBED_BATCH_SIZE", "128", conv=int))
-    RAG_VECTOR_DIM: int = field(default_factory=lambda: _get_env("RAG_VECTOR_DIM", "3072", conv=int))
+    RAG_VECTOR_DIM: int = field(default_factory=lambda: _get_env("RAG_VECTOR_DIM", str(_default_embed_dim_from_model()), conv=int))
 
     # ─── Telegram ───────────────────────────────────────
     TELEGRAM_BOT_TOKEN: str = field(default_factory=lambda: _get_env("TELEGRAM_BOT_TOKEN"))
@@ -454,7 +463,7 @@ class Settings:
     FORGET_THRESHOLD: float = field(default_factory=lambda: _get_env("FORGET_THRESHOLD", "0.35", conv=float))
     CONSOLIDATION_AGE: int = field(default_factory=lambda: _get_env("CONSOLIDATION_AGE", str(7*86400), conv=int))
     MEMORY_MAINTENANCE_INTERVAL: int = field(default_factory=lambda: _get_env("MEMORY_MAINTENANCE_INTERVAL", "600", conv=int))
-    EMBED_DIM: int = field(default_factory=lambda: _get_env("EMBED_DIM", "3072", conv=int))
+    EMBED_DIM: int = field(default_factory=lambda: _get_env("EMBED_DIM", str(_default_embed_dim_from_model()), conv=int))
     DUPLICATE_DISTANCE_MAX: float = field(default_factory=lambda: _get_env("DUPLICATE_DISTANCE_MAX", "0.1", conv=float))
     MIN_MEMORY_SIMILARITY: float = field(default_factory=lambda: _get_env("MIN_MEMORY_SIMILARITY", "0.32", conv=float))
     # Per-category similarity thresholds

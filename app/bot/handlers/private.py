@@ -29,6 +29,7 @@ from sqlalchemy.sql import func
 from app.api.api_keys import cache_active_key, create_key, deactivate_key, list_keys_for_user
 from app.bot.components.constants import WELCOME_MESSAGES, redis_client
 from app.bot.components.dispatcher import dp
+from app.core.embedding_utils import get_rag_embedding_model
 from app.core.media_utils import (
     MAX_IMAGE_BYTES,
     download_to_tmp as media_download_to_tmp,
@@ -1196,7 +1197,7 @@ async def _handle_kb_json_upload(message: Message, doc) -> None:
         last_ver = res.scalar_one_or_none() or 0
         new_ver = last_ver + 1
 
-        emb_model = getattr(settings, "EMBEDDING_MODEL", "text-embedding-3-large")
+        emb_model = get_rag_embedding_model()
         kb = ApiKeyKnowledge(
             api_key_id=api_key_id,
             version=new_ver,
@@ -2312,6 +2313,7 @@ async def _show_kb_main_panel(cb: CallbackQuery, key: ApiKey, kb: ApiKeyKnowledg
     l_version = await tr(uid, "kb.field.version", "Version")
     l_items = await tr(uid, "kb.field.items", "Items")
     l_chunks = await tr(uid, "kb.field.chunks", "Chunks")
+    l_embedding_model = await tr(uid, "kb.field.embedding_model", "Embedding model")
 
     if kb:
         status = (kb.status or "unknown").lower()
@@ -2327,6 +2329,8 @@ async def _show_kb_main_panel(cb: CallbackQuery, key: ApiKey, kb: ApiKeyKnowledg
         chunks_count = 0
         version = 0
 
+    active_embedding_model = (kb.embedding_model if kb and kb.embedding_model else get_rag_embedding_model())
+
     lines = [
         title,
         "",
@@ -2335,6 +2339,7 @@ async def _show_kb_main_panel(cb: CallbackQuery, key: ApiKey, kb: ApiKeyKnowledg
         f"{l_version}: {version}",
         f"{l_items}: {items_count}",
         f"{l_chunks}: {chunks_count}",
+        f"{l_embedding_model}: <code>{active_embedding_model}</code>",
     ]
 
     kb_rows: list[list[InlineKeyboardButton]] = [

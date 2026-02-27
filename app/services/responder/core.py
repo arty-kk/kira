@@ -41,6 +41,7 @@ from app.prompts_base import (
     RESPONDER_REPLY_CONTEXT_USER_PREV_PING_TEMPLATE,
 )
 from app.core.db import session_scope
+from app.core.embedding_utils import get_rag_embedding_model, resolve_embedding_dim
 from app.core.models import RagTagVector, User, ApiKeyKnowledge
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import needs_coref, resolve_coref
@@ -159,7 +160,7 @@ async def _resolve_active_kb_id(*, api_key_id: int | None, embedding_model: str 
     if ak <= 0:
         return None
 
-    emb_model = (embedding_model or settings.EMBEDDING_MODEL)
+    emb_model = get_rag_embedding_model(embedding_model)
     cache_key = (ak, emb_model)
     if _ACTIVE_KB_CACHE_TTL_SEC > 0:
         try:
@@ -231,7 +232,11 @@ async def _compute_on_topic_relevance(
     on_topic_flag = False
     on_topic_hits = None
     rag_query_context = RagQueryContext(query=query_to_model, rag_query_source=rag_query_source)
-    expected_rag_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+    effective_embedding_model = get_rag_embedding_model(embedding_model)
+    expected_rag_dim = resolve_embedding_dim(
+        effective_embedding_model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
     if query_embedding is not None:
         normalized_query_embedding = normalize_query_embedding(query_embedding, expected_dim=expected_rag_dim)
         if normalized_query_embedding is None:
@@ -242,7 +247,7 @@ async def _compute_on_topic_relevance(
             )
         else:
             rag_query_context.query_embedding = normalized_query_embedding
-            rag_query_context.embedding_model = embedding_model or settings.EMBEDDING_MODEL
+            rag_query_context.embedding_model = effective_embedding_model
             rag_query_context.query_embedding_source = rag_precheck_source or "external_precomputed"
     if precomputed_rag_hits is not None:
         on_topic_hits = precomputed_rag_hits
@@ -251,7 +256,7 @@ async def _compute_on_topic_relevance(
     reuse_counter = [0]
     if rag_query_context.query_embedding is None:
         try:
-            emb_model = settings.EMBEDDING_MODEL
+            emb_model = effective_embedding_model
             qraw = await _get_query_embedding(emb_model, query_to_model)
             if qraw is not None:
                 qvec_raw = normalize_query_embedding(qraw, expected_dim=expected_rag_dim)
@@ -279,7 +284,7 @@ async def _compute_on_topic_relevance(
         try:
             on_topic_flag, on_topic_hits = await is_relevant(
                 query_to_model,
-                model=settings.EMBEDDING_MODEL,
+                model=effective_embedding_model,
                 threshold=settings.RELEVANCE_THRESHOLD,
                 return_hits=True,
                 persona_owner_id=persona_owner_id,
@@ -1162,7 +1167,10 @@ async def respond_to_user(
             logger.info("   ↳ process_interaction END (t=%.3fs)", time.time() - t0)
 
     query = _strip_bot_mention_prefix(text, is_group=(chat_id != user_id or group_mode or is_channel_post)).strip()
-    expected_rag_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+    expected_rag_dim = resolve_embedding_dim(
+        get_rag_embedding_model(embedding_model),
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
     normalized_request_embedding = normalize_query_embedding(query_embedding, expected_dim=expected_rag_dim)
     if query_embedding is not None and normalized_request_embedding is None:
         logger.info(
@@ -1644,7 +1652,7 @@ async def respond_to_user(
         if active_kb_id is None and knowledge_owner_id is not None:
             active_kb_id = await _resolve_active_kb_id(
                 api_key_id=knowledge_owner_id,
-                embedding_model=(request_embedding_context.embedding_model or settings.EMBEDDING_MODEL),
+                embedding_model=get_rag_embedding_model(request_embedding_context.embedding_model),
             )
         on_topic_flag, on_topic_hits, rag_query_context = await _compute_on_topic_relevance(
             chat_id=chat_id,
@@ -1743,7 +1751,7 @@ async def respond_to_user(
                 top_k = 1
         top_k = max(1, top_k)
         if on_topic_flag and on_topic_hits:
-            emb_model = settings.EMBEDDING_MODEL
+            emb_model = get_rag_embedding_model()
             hits = on_topic_hits[:top_k]
             logger.info(
                 "RAG: on_topic; trigger=%s top_k=%d hits=%d; top_scores=%s",

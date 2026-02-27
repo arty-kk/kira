@@ -24,6 +24,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.config import settings
+from app.core.embedding_utils import get_rag_embedding_model
 from app.bot.utils.debouncer import compute_typing_delay
 import app.bot.components.constants as consts
 from app.clients.telegram_client import get_bot
@@ -1593,7 +1594,7 @@ async def handle_job(raw, processing_key: str) -> None:
 
             if is_group and trigger == "check_on_topic":
                 try:
-                    embedding_model = settings.EMBEDDING_MODEL
+                    embedding_model = get_rag_embedding_model()
                     precomputed_rag_hits = await find_tag_hits(
                         text,
                         model=embedding_model,
