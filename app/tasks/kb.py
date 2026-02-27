@@ -11,7 +11,7 @@ from typing import Any, Dict, List
 from sqlalchemy import select, delete
 
 from app.config import settings
-from app.core.embedding_utils import normalize_embedding_row
+from app.core.embedding_utils import get_rag_embedding_model, normalize_embedding_row, resolve_embedding_dim
 from app.core.db import session_scope
 from app.core.models import ApiKey, ApiKeyKnowledge, RagTagVector
 from app.clients.openai_client import _call_openai_with_retry
@@ -42,7 +42,10 @@ async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
     if bs <= 0:
         bs = 128
 
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    expected_dim = resolve_embedding_dim(
+        api_model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
     result: List[List[float]] = []
     overall_start = time.perf_counter()
 
@@ -178,7 +181,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
         raw_items = kb.items or []
         model = (
             kb.embedding_model
-            or getattr(settings, "EMBEDDING_MODEL", "text-embedding-3-large")
+            or get_rag_embedding_model()
         ).strip() or "text-embedding-3-large"
 
         kb.status = "building"
@@ -218,7 +221,10 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
         await _notify_kb_status(api_key_id, kb_id, status="failed", error="No non-empty items to embed")
         return
 
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    expected_dim = resolve_embedding_dim(
+        model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
 
     try:
         tag_rows: List[Dict[str, Any]] = []

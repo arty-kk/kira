@@ -12,7 +12,7 @@ from sqlalchemy import delete, select, text
 from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
 from app.core.db import session_scope
-from app.core.embedding_utils import normalize_embedding_row
+from app.core.embedding_utils import get_rag_embedding_model, normalize_embedding_row, resolve_embedding_dim
 from app.core.models import RagTagVector
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,10 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
     if not texts:
         return []
 
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    expected_dim = resolve_embedding_dim(
+        model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
     vectors: List[List[float]] = []
     total = len(texts)
     for start in range(0, total, batch_size):
@@ -99,7 +102,10 @@ async def _run(args: argparse.Namespace) -> None:
     kb_path = Path(args.kb_file)
     kb_items, load_stats = _load_items(kb_path)
     model = args.model
-    expected_dim = int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072)
+    expected_dim = resolve_embedding_dim(
+        model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
     batch_size = max(1, int(args.batch_size))
 
     logger.info("bootstrap start: kb_file=%s items=%d model=%s batch_size=%d", kb_path, len(kb_items), model, batch_size)
@@ -198,7 +204,7 @@ async def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build system KB vectors directly into PostgreSQL/pgvector")
     parser.add_argument("--kb-file", default="app/services/responder/rag/knowledge_on.json")
-    parser.add_argument("--model", default=settings.EMBEDDING_MODEL)
+    parser.add_argument("--model", default=get_rag_embedding_model())
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--flush-every", type=int, default=500)

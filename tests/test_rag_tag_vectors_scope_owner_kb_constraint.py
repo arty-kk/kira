@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-MIGRATION_PATH = ROOT / "alembic" / "versions" / "0005_rag_scope_owner_ck.py"
+MIGRATION_PATH = ROOT / "alembic" / "versions" / "0001_initial_schema.py"
 CONSTRAINT_NAME = "ck_rag_tag_vectors_scope_owner_kb_consistency"
 CONSISTENCY_RULE_SQL = (
     "(scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
@@ -16,7 +16,7 @@ CONSISTENCY_RULE_SQL = (
 
 
 def _load_migration_module():
-    spec = importlib.util.spec_from_file_location("mig_0005_under_test", MIGRATION_PATH)
+    spec = importlib.util.spec_from_file_location("mig_0001_under_test", MIGRATION_PATH)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -26,12 +26,13 @@ def test_migration_has_expected_revision_and_constraint_sql():
     migration = _load_migration_module()
     source = MIGRATION_PATH.read_text()
 
-    assert migration.revision == "0005_rag_scope_owner_ck"
-    assert migration.down_revision == "0004_fix_rag_unique_indexes"
+    assert migration.revision == "0001_initial_schema"
+    assert migration.down_revision is None
     assert CONSTRAINT_NAME in source
-    assert "SELECT COUNT(*) FROM rag_tag_vectors WHERE NOT" in source
-    assert "DELETE FROM rag_tag_vectors WHERE NOT" in source
-    assert "ADD CONSTRAINT" in source
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_global_item_tag" in source
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_owner_item_tag" in source
+    assert "ix_rag_tag_vectors_embedding_cosine_hnsw_small" in source
+    assert "ix_rag_tag_vectors_embedding_cosine_hnsw_large" in source
 
 
 @pytest.fixture()

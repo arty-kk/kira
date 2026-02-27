@@ -197,7 +197,7 @@ class RagTagVector(Base):
     external_id = Column(String(255), nullable=False)
     text = Column(String, nullable=False)
     tag = Column(String(255), nullable=False)
-    embedding = Column(Vector(3072), nullable=False)
+    embedding = Column(Vector(), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (

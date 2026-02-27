@@ -9,6 +9,7 @@ from sqlalchemy import bindparam, select, func
 from sqlalchemy.sql import over
 
 from app.config import settings
+from app.core.embedding_utils import get_rag_embedding_model, resolve_embedding_dim
 from app.core.db import session_scope
 from app.core.models import RagTagVector
 from .knowledge_proc import _get_query_embedding
@@ -93,7 +94,7 @@ def _mmr_select_ids(
 
 
 async def _ensure_index(model=None):
-    key = f"sys::{model or settings.EMBEDDING_MODEL}"
+    key = f"sys::{get_rag_embedding_model(model)}"
     return _INDICES.get(
         key,
         {
@@ -102,7 +103,7 @@ async def _ensure_index(model=None):
             "row_to_eid": [],
             "row_to_tag": [],
             "row_to_text": [],
-            "model": model or settings.EMBEDDING_MODEL,
+            "model": get_rag_embedding_model(model),
         },
     )
 
@@ -112,7 +113,7 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    q = bindparam("query_vec", type_=Vector(dim))
+    q = bindparam("query_vec", type_=Vector())
     distance_raw = RagTagVector.embedding.op("<=>")(q)
     distance_sel = distance_raw.label("distance")
     return distance_raw, distance_sel
@@ -132,8 +133,11 @@ async def find_tag_hits(
     if not t:
         return []
 
-    emb_model = (embedding_model or model or settings.EMBEDDING_MODEL)
-    expected_dim = int(getattr(RagTagVector.embedding.type, "dim", 3072) or 3072)
+    emb_model = get_rag_embedding_model(embedding_model or model)
+    expected_dim = resolve_embedding_dim(
+        emb_model,
+        fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
+    )
 
     # 1) get query embedding
     if query_embedding is not None:

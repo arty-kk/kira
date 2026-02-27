@@ -186,9 +186,14 @@ def upgrade():
         sa.Column("external_id", sa.String(length=255), nullable=False),
         sa.Column("text", sa.String(), nullable=False),
         sa.Column("tag", sa.String(length=255), nullable=False),
-        sa.Column("embedding", Vector(3072), nullable=False),
+        sa.Column("embedding", Vector(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
+        sa.CheckConstraint(
+            "((scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
+            "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
+            name="ck_rag_tag_vectors_scope_owner_kb_consistency",
+        ),
     )
     op.create_index("ix_rag_tag_vectors_scope", "rag_tag_vectors", ["scope"])
     op.create_index("ix_rag_tag_vectors_owner_id", "rag_tag_vectors", ["owner_id"])
@@ -196,8 +201,28 @@ def upgrade():
     op.create_index("ix_rag_tag_vectors_embedding_model", "rag_tag_vectors", ["embedding_model"])
     op.create_index("ix_rag_tag_vectors_created_at", "rag_tag_vectors", ["created_at"])
     op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_ann "
-        "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(3072))) halfvec_cosine_ops);"
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_global_item_tag "
+        "ON rag_tag_vectors (embedding_model, external_id, tag) "
+        "WHERE scope = 'global';"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_owner_item_tag "
+        "ON rag_tag_vectors (embedding_model, owner_id, kb_id, external_id, tag) "
+        "WHERE scope = 'owner';"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_filter "
+        "ON rag_tag_vectors (embedding_model, scope, owner_id, kb_id);"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_small "
+        "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(1536))) halfvec_cosine_ops) "
+        "WHERE embedding_model = 'text-embedding-3-small' AND vector_dims(embedding) = 1536;"
+    )
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_large "
+        "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(3072))) halfvec_cosine_ops) "
+        "WHERE embedding_model = 'text-embedding-3-large' AND vector_dims(embedding) = 3072;"
     )
 
     op.create_table(
@@ -261,7 +286,11 @@ def downgrade():
     op.drop_table("payment_receipts")
     op.drop_table("gift_purchases")
 
-    op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_embedding_cosine_ann;")
+    op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_large;")
+    op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_small;")
+    op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_filter;")
+    op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_owner_item_tag;")
+    op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_global_item_tag;")
     op.drop_index("ix_rag_tag_vectors_created_at", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_embedding_model", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_kb_id", table_name="rag_tag_vectors")

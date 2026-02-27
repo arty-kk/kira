@@ -62,7 +62,7 @@ class KbRebuildTagDedupTests(unittest.IsolatedAsyncioTestCase):
         def _fake_session_scope(*args, **kwargs):
             return _SessionScopeCtx(db_queue.pop(0))
 
-        embed_mock = AsyncMock(return_value=[[0.1, 0.2, 0.3]])
+        embed_mock = AsyncMock(return_value=[[0.1] * 3072])
 
         with (
             patch.object(kb, "session_scope", side_effect=_fake_session_scope),
