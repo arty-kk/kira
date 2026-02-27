@@ -4,7 +4,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from pgvector.sqlalchemy import Vector
+from pgvector.psycopg import HalfVector, Vector as PgVector
 from sqlalchemy import bindparam, select, func, case
 from sqlalchemy.sql import over
 
@@ -26,6 +26,27 @@ try:
 except Exception:
     _KNN_PREFETCH_MULT = 5
 _KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
+
+
+def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
+    if expected_dim > 2000:
+        return HalfVector(vec)
+    return PgVector(vec)
+
+
+def _normalize_embedding(raw: object) -> List[float]:
+    if raw is None:
+        return []
+    if isinstance(raw, (HalfVector, PgVector)):
+        return [float(x) for x in raw.to_list()]
+    if hasattr(raw, "tolist"):
+        return [float(x) for x in raw.tolist()]
+    if isinstance(raw, (list, tuple)):
+        return [float(x) for x in raw]
+    try:
+        return [float(x) for x in list(raw)]
+    except TypeError:
+        return [float(raw)]
 
 
 def _norm_ws(s: str) -> str:
@@ -113,7 +134,7 @@ def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
 
 
 def _build_vector_distance_expr(*, dim: int):
-    q = bindparam("query_vec", type_=Vector(dim))
+    q = bindparam("query_vec")
     dim_ok = func.vector_dims(RagTagVector.embedding) == dim
     distance_raw = case(
         (dim_ok, RagTagVector.embedding.op("<=>")(q)),
@@ -199,7 +220,7 @@ async def find_tag_hits(
         )
         return []
 
-    # Keep a plain 1D float list for pgvector bind processing.
+    # Keep a plain 1D float vector before adapting to pgvector bind object.
     query_vec = np.asarray(qv_sql, dtype=np.float32).reshape(-1)
 
     # 3) thresholds
@@ -245,7 +266,7 @@ async def find_tag_hits(
         )
         return []
 
-    query_vec_sql_param = arr.astype(np.float32, copy=False).tolist()
+    query_vec_sql_param = _embedding_param(arr.astype(np.float32, copy=False).tolist(), expected_dim=expected_dim)
 
     async with session_scope(read_only=True) as db:
         conditions = [
@@ -369,7 +390,7 @@ async def find_tag_hits(
     for scope, oid, kb_id, ext_id, txt, tag, emb, similarity, distance in payload:
         score_f = float(similarity)
 
-        vec = np.asarray(emb if emb is not None else [], dtype=np.float32).reshape(-1)
+        vec = np.asarray(_normalize_embedding(emb), dtype=np.float32).reshape(-1)
         if int(vec.shape[0]) != expected_dim:
             continue
 

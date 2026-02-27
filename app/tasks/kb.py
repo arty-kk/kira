@@ -8,6 +8,7 @@ import html
 
 from typing import Any, Dict, List
 
+from pgvector.psycopg import HalfVector, Vector
 from sqlalchemy import select, delete
 
 from app.config import settings
@@ -24,6 +25,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 logger = logging.getLogger(__name__)
+
+
+def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
+    if expected_dim > 2000:
+        return HalfVector(vec)
+    return Vector(vec)
 
 
 def _normalize_embedding_row(raw: Any, *, expected_dim: int) -> List[float]:
@@ -283,7 +290,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                         external_id=row["external_id"],
                         text=row["text"],
                         tag=row["tag"],
-                        embedding=row["embedding"],
+                        embedding=_embedding_param(row["embedding"], expected_dim=expected_dim),
                     )
                     for row in tag_rows
                 ])
