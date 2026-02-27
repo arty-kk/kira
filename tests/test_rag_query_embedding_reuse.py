@@ -1,4 +1,5 @@
 import types
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -8,6 +9,7 @@ from pgvector.psycopg import HalfVector, Vector as PgVector
 from app.services.responder.rag import keyword_filter
 from app.services.responder.rag import relevance
 from app.services.responder.rag import knowledge_proc
+from app.tasks import kb
 
 
 class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
@@ -369,6 +371,129 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             arr = await knowledge_proc._get_query_embedding("m", "q")
 
         self.assertIsNone(arr)
+
+
+    async def test_keyword_filter_vector_bind_and_distance_sql_for_small_dim(self):
+        captured = {}
+
+        class _FakeResult:
+            def all(self):
+                return [(
+                    "global", None, None, "item-small", "text-small", None,
+                    np.asarray([1.0] + [0.0] * 1535, dtype=np.float32), 0.97, 0.03,
+                )]
+
+        class _FakeSession:
+            async def execute(self, query, params=None):
+                captured["query"] = query
+                captured["params"] = params
+                return _FakeResult()
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 1535
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="text-embedding-3-small",
+                embedding_model="text-embedding-3-small",
+                limit=1,
+            )
+
+        self.assertEqual(hits, [(0.97, "global:0:0:item-small", "text-small")])
+        self.assertIsInstance(captured["params"]["query_vec"], PgVector)
+        self.assertEqual(len(captured["params"]["query_vec"].to_list()), 1536)
+        sql = str(captured["query"])
+        self.assertIn("<=>", sql)
+        self.assertIn("rag_tag_vectors.embedding", sql)
+
+    async def test_keyword_filter_vector_bind_and_distance_sql_for_large_dim(self):
+        captured = {}
+
+        class _FakeResult:
+            def all(self):
+                return [(
+                    "global", None, None, "item-large", "text-large", None,
+                    np.asarray([1.0] + [0.0] * 3071, dtype=np.float32), 0.98, 0.02,
+                )]
+
+        class _FakeSession:
+            async def execute(self, query, params=None):
+                captured["query"] = query
+                captured["params"] = params
+                return _FakeResult()
+
+        class _FakeScope:
+            async def __aenter__(self):
+                return _FakeSession()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        query = [1.0] + [0.0] * 3071
+        with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
+            hits = await keyword_filter.find_tag_hits(
+                "q",
+                query_embedding=query,
+                model="text-embedding-3-large",
+                embedding_model="text-embedding-3-large",
+                limit=1,
+            )
+
+        self.assertEqual(hits, [(0.98, "global:0:0:item-large", "text-large")])
+        self.assertIsInstance(captured["params"]["query_vec"], PgVector)
+        self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
+        sql = str(captured["query"])
+        self.assertIn("<=>", sql)
+        self.assertNotIn("CAST(rag_tag_vectors.embedding AS halfvec", sql)
+
+
+    def test_embedding_param_consistent_vector_type_for_small_and_large_dims(self):
+        small = [0.1] * 1536
+        large = [0.1] * 3072
+
+        kb_small = kb._embedding_param(small, expected_dim=1536)
+        kb_large = kb._embedding_param(large, expected_dim=3072)
+        qf_small = keyword_filter._embedding_param(small, expected_dim=1536)
+        qf_large = keyword_filter._embedding_param(large, expected_dim=3072)
+
+        self.assertIsInstance(kb_small, PgVector)
+        self.assertIsInstance(kb_large, PgVector)
+        self.assertIsInstance(qf_small, PgVector)
+        self.assertIsInstance(qf_large, PgVector)
+        self.assertEqual(len(kb_small.to_list()), 1536)
+        self.assertEqual(len(kb_large.to_list()), 3072)
+
+    def test_build_vector_distance_expr_uses_column_type_bind(self):
+        distance_raw, _distance_sel = keyword_filter._build_vector_distance_expr(dim=1536)
+        sql = str(distance_raw)
+
+        self.assertIn('rag_tag_vectors.embedding <=>', sql)
+
+
+    def test_rag_vector_contour_schema_query_and_bind_are_aligned(self):
+        schema_text = Path("alembic/versions/0001_initial_schema.py").read_text()
+
+        self.assertIn("embedding vector_cosine_ops", schema_text)
+        self.assertNotIn("halfvec_cosine_ops", schema_text)
+        self.assertNotIn("CAST(embedding AS halfvec", schema_text)
+
+        self.assertEqual(type(keyword_filter.RagTagVector.embedding.type), type(kb.RagTagVector.embedding.type))
+        self.assertEqual(keyword_filter.RagTagVector.embedding.type.__class__.__name__, "VECTOR")
+
+        vec_1536 = [0.1] * 1536
+        bind_write = kb._embedding_param(vec_1536, expected_dim=1536, model="text-embedding-3-small")
+        bind_query = keyword_filter._embedding_param(vec_1536, expected_dim=1536, model="text-embedding-3-small")
+
+        self.assertIsInstance(bind_write, PgVector)
+        self.assertIsInstance(bind_query, PgVector)
+        self.assertEqual(bind_write.to_list(), bind_query.to_list())
 
 
 if __name__ == "__main__":
