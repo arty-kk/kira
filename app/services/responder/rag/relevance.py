@@ -57,6 +57,14 @@ async def is_relevant(
         kb_id_int = None
 
     try:
+        keyword_thr_strict = float(getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", 0.70) or 0.70)
+    except Exception:
+        keyword_thr_strict = 0.70
+    keyword_thr_strict = max(0.0, min(1.0, keyword_thr_strict))
+    keyword_thr_direct = max(0.0, min(1.0, keyword_thr_strict / 2.0))
+    keyword_thr = keyword_thr_strict if strict_autoreply_gate else keyword_thr_direct
+
+    try:
         if query_embedding is not None and query_embedding_reuse_counter is not None:
             query_embedding_reuse_counter[0] += 1
         tag_hits = await find_tag_hits(
@@ -67,6 +75,7 @@ async def is_relevant(
             kb_id=kb_id_int,
             query_embedding=query_embedding,
             embedding_model=(embedding_model or model),
+            min_similarity=keyword_thr,
         )
     except Exception as exc:
         query_embedding_len = len(query_embedding) if query_embedding is not None and hasattr(query_embedding, "__len__") else None
