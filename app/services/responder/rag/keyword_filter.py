@@ -144,6 +144,12 @@ async def find_tag_hits(
         emb_model,
         fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
     )
+    if expected_dim != 3072:
+        logger.warning(
+            "keyword_filter: expected_dim=%s differs from halfvec(3072) storage contract model=%s",
+            expected_dim,
+            emb_model,
+        )
 
     # 1) get query embedding
     if query_embedding is not None:

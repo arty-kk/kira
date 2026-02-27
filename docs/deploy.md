@@ -105,8 +105,8 @@ Retry/fail policy:
 - `BOOTSTRAP_RAG_SCALE=0` is rejected because `bootstrap-rag` is a mandatory deploy gate.
 
 Operational note for tag-search performance:
-- Tag-search executes SQL distance preselect with symmetric `HALFVEC(3072)` casts in distance expression: `CAST(rag_tag_vectors.embedding AS HALFVEC(3072)) <=> CAST(:query_vec AS HALFVEC(3072))`, while stored embeddings remain `vector(3072)`.
-- RAG tag-search expects a pgvector ANN HNSW expression index on `CAST(rag_tag_vectors.embedding AS HALFVEC(3072))` with `halfvec_cosine_ops` (migration revision `0001_initial_schema`).
+- Tag-search executes SQL distance preselect directly on `halfvec(3072)` column values using `<=>` with `HalfVector` query binds.
+- RAG tag-search expects a pgvector ANN HNSW index `ON rag_tag_vectors USING hnsw (embedding halfvec_cosine_ops)` (migration revision `0001_initial_schema`).
 - Verify query plans with `EXPLAIN (ANALYZE, BUFFERS)` in the target environment.
 - Monitor logs after release:
   - `keyword_filter: sql stage complete ... duration_ms=... candidate_size=...`;
@@ -116,7 +116,7 @@ Operational note for tag-search performance:
 
 ### RAG tag vectors: dimension integrity check and safe rebuild
 
-- Model schema uses `vector(3072)` for `rag_tag_vectors.embedding`; monitor rows with mismatched dimensions using SQL check `vector_dims(embedding) <> 3072`.
+- Model schema uses `halfvec(3072)` for `rag_tag_vectors.embedding`.
 - If mismatches are detected, clear only the affected target dataset (do not wipe unrelated KB/owner scopes), then run the standard rebuild path already used in operations: `bootstrap-rag` (or the project's штатный rebuild process for the same target).
 
 Success criterion:

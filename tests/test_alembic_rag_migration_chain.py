@@ -41,14 +41,13 @@ class RagMigrationChainTests(unittest.TestCase):
         migrations = _load_all_migrations()
         upgrade_source = _upgrade_block(migrations["0001_initial_schema"]["path"].read_text())
 
-        self.assertIn("ix_rag_tag_vectors_embedding_cosine_hnsw_small", upgrade_source)
         self.assertIn("ix_rag_tag_vectors_embedding_cosine_hnsw_large", upgrade_source)
+        self.assertIn("embedding halfvec_cosine_ops", upgrade_source)
         self.assertIn("uq_rag_tag_vectors_global_item_tag", upgrade_source)
         self.assertIn("uq_rag_tag_vectors_owner_item_tag", upgrade_source)
         self.assertIn("ck_rag_tag_vectors_scope_owner_kb_consistency", upgrade_source)
         self.assertIn("embedding_dim", upgrade_source)
-        self.assertIn("ck_rag_tag_vectors_embedding_dim_positive", upgrade_source)
-        self.assertIn("ck_rag_tag_vectors_embedding_dim_match", upgrade_source)
+        self.assertIn("ck_rag_tag_vectors_embedding_dim_fixed_3072", upgrade_source)
 
 
 if __name__ == "__main__":

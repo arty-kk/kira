@@ -391,7 +391,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(arr)
 
 
-    async def test_keyword_filter_vector_bind_and_distance_sql_for_small_dim(self):
+    async def test_keyword_filter_small_model_is_forced_to_large_and_rejects_1536_query(self):
         captured = {}
 
         class _FakeResult:
@@ -424,12 +424,8 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
                 limit=1,
             )
 
-        self.assertEqual(hits, [(0.97, "global:0:0:item-small", "text-small")])
-        self.assertIsInstance(captured["params"]["query_vec"], PgVector)
-        self.assertEqual(len(captured["params"]["query_vec"].to_list()), 1536)
-        sql = str(captured["query"])
-        self.assertIn("<=>", sql)
-        self.assertIn("rag_tag_vectors.embedding", sql)
+        self.assertEqual(hits, [])
+        self.assertNotIn("params", captured)
 
     async def test_keyword_filter_vector_bind_and_distance_sql_for_large_dim(self):
         captured = {}
@@ -465,11 +461,12 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(hits, [(0.98, "global:0:0:item-large", "text-large")])
-        self.assertIsInstance(captured["params"]["query_vec"], PgVector)
+        self.assertIsInstance(captured["params"]["query_vec"], HalfVector)
         self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
         sql = str(captured["query"])
         self.assertIn("<=>", sql)
-        self.assertNotIn("CAST(rag_tag_vectors.embedding AS halfvec", sql)
+        self.assertNotIn("CAST(rag_tag_vectors.embedding AS halfvec(3072))", sql)
+        self.assertNotIn("CAST(:query_vec AS halfvec(3072))", sql)
 
 
     def test_embedding_param_consistent_vector_type_for_small_and_large_dims(self):
@@ -481,10 +478,10 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         qf_small = keyword_filter._embedding_param(small, expected_dim=1536)
         qf_large = keyword_filter._embedding_param(large, expected_dim=3072)
 
-        self.assertIsInstance(kb_small, PgVector)
-        self.assertIsInstance(kb_large, PgVector)
-        self.assertIsInstance(qf_small, PgVector)
-        self.assertIsInstance(qf_large, PgVector)
+        self.assertIsInstance(kb_small, HalfVector)
+        self.assertIsInstance(kb_large, HalfVector)
+        self.assertIsInstance(qf_small, HalfVector)
+        self.assertIsInstance(qf_large, HalfVector)
         self.assertEqual(len(kb_small.to_list()), 1536)
         self.assertEqual(len(kb_large.to_list()), 3072)
 
@@ -498,21 +495,23 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
     def test_rag_vector_contour_schema_query_and_bind_are_aligned(self):
         schema_text = Path("alembic/versions/0001_initial_schema.py").read_text()
 
-        self.assertIn("(embedding::vector(1536)) vector_cosine_ops", schema_text)
-        self.assertIn("(embedding::vector(3072)) vector_cosine_ops", schema_text)
-        self.assertNotIn("halfvec_cosine_ops", schema_text)
-        self.assertNotIn("CAST(embedding AS halfvec", schema_text)
+        self.assertIn("embedding halfvec_cosine_ops", schema_text)
+        self.assertNotIn("vector_cosine_ops", schema_text)
 
         self.assertEqual(type(keyword_filter.RagTagVector.embedding.type), type(kb.RagTagVector.embedding.type))
-        self.assertEqual(keyword_filter.RagTagVector.embedding.type.__class__.__name__, "VECTOR")
+        self.assertEqual(keyword_filter.RagTagVector.embedding.type.__class__.__name__, "HalfVector")
 
         vec_1536 = [0.1] * 1536
         bind_write = kb._embedding_param(vec_1536, expected_dim=1536, model="text-embedding-3-small")
         bind_query = keyword_filter._embedding_param(vec_1536, expected_dim=1536, model="text-embedding-3-small")
 
-        self.assertIsInstance(bind_write, PgVector)
-        self.assertIsInstance(bind_query, PgVector)
+        self.assertIsInstance(bind_write, HalfVector)
+        self.assertIsInstance(bind_query, HalfVector)
         self.assertEqual(bind_write.to_list(), bind_query.to_list())
+
+        distance_raw, _distance_sel = keyword_filter._build_vector_distance_expr(dim=3072)
+        distance_sql = str(distance_raw)
+        self.assertIn("rag_tag_vectors.embedding <=>", distance_sql)
 
 
 if __name__ == "__main__":

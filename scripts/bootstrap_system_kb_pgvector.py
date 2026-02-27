@@ -106,7 +106,7 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
 async def _run(args: argparse.Namespace) -> None:
     kb_path = Path(args.kb_file)
     kb_items, load_stats = _load_items(kb_path)
-    model = args.model
+    model = get_rag_embedding_model(args.model)
     expected_dim = resolve_embedding_dim(
         model,
         fallback_dim=int(getattr(settings, "RAG_VECTOR_DIM", 3072) or 3072),
