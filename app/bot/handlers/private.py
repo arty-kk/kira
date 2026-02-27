@@ -85,6 +85,7 @@ UI_SECRET_MSG_TTL = int(getattr(settings, "UI_SECRET_MSG_TTL_SEC", 60))
 MAIN_MENU_HINT_TTL = int(getattr(settings, "MAIN_MENU_HINT_TTL_SEC", 5))
 
 MAX_KB_JSON_BYTES = int(getattr(settings, "MAX_KB_JSON_BYTES", 5 * 1024 * 1024))
+KB_TAG_TEXT_MAX_LEN = 255
 
 MAX_VOICE_BYTES = int(getattr(settings, "MAX_VOICE_BYTES", 25 * 1024 * 1024))
 MAX_VOICE_DURATION = int(getattr(settings, "MAX_VOICE_DURATION_SEC", 300))
@@ -1148,19 +1149,54 @@ async def _handle_kb_json_upload(message: Message, doc) -> None:
         return
 
     items: list[dict] = []
+    dropped_external_id = 0
+    truncated_external_id = 0
+    dropped_tag = 0
+    truncated_tag = 0
+
     for idx, it in enumerate(data):
         if not isinstance(it, dict):
             continue
         text_val = (it.get("text") or "").strip()
         if not text_val:
             continue
-        eid = str(it.get("id") or (idx + 1))
+        eid_raw = str(it.get("id") or (idx + 1)).strip()
+        if not eid_raw:
+            dropped_external_id += 1
+            continue
+        eid = eid_raw
+        if len(eid) > KB_TAG_TEXT_MAX_LEN:
+            eid = eid[:KB_TAG_TEXT_MAX_LEN]
+            truncated_external_id += 1
         category = (it.get("category") or "default").strip() or "default"
         tags_val = it.get("tags") or []
         if not isinstance(tags_val, list):
             tags_val = []
-        tags = [str(x).strip() for x in tags_val if isinstance(x, str) and x.strip()]
+        tags: list[str] = []
+        for x in tags_val:
+            if not isinstance(x, str):
+                continue
+            tag_raw = x.strip()
+            if not tag_raw:
+                dropped_tag += 1
+                continue
+            tag_norm = tag_raw
+            if len(tag_norm) > KB_TAG_TEXT_MAX_LEN:
+                tag_norm = tag_norm[:KB_TAG_TEXT_MAX_LEN]
+                truncated_tag += 1
+            tags.append(tag_norm)
         items.append({"id": eid, "text": text_val, "category": category, "tags": tags})
+
+    if dropped_external_id or truncated_external_id or dropped_tag or truncated_tag:
+        logger.info(
+            "kb upload normalization user_id=%s api_key_id=%s dropped_external_id=%s truncated_external_id=%s dropped_tag=%s truncated_tag=%s",
+            user_id,
+            api_key_id,
+            dropped_external_id,
+            truncated_external_id,
+            dropped_tag,
+            truncated_tag,
+        )
 
     if not items:
         txt = await tr(user_id, "kb.upload.no_items", "No valid items were found in the JSON file.")

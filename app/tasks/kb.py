@@ -5,10 +5,11 @@ import asyncio
 import logging
 import time
 import html
+import re
 
 from typing import Any, Dict, List
 
-from pgvector.psycopg import HalfVector, Vector
+from pgvector.psycopg import Vector
 from sqlalchemy import select, delete
 
 from app.config import settings
@@ -26,10 +27,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
+RAG_TAG_TEXT_MAX_LEN = 255
+
 
 def _embedding_param(vec: List[float], *, expected_dim: int) -> object:
-    if expected_dim > 2000:
-        return HalfVector(vec)
+    _ = expected_dim
     return Vector(vec)
 
 
@@ -112,6 +114,20 @@ async def _embed_texts(texts: List[str], model: str) -> List[List[float]]:
     )
     return result
 
+
+
+
+def _sanitize_error_message(exc: Exception, *, max_len: int = 300) -> str:
+    etype = type(exc).__name__
+    raw = str(exc or "")
+    compact = " ".join(raw.split())
+    compact = re.sub(r"\[[^\]]{16,}\]", "[redacted]", compact)
+    compact = re.sub(r"(?i)embedding[_-]?(dump|vector|values?)", "redacted", compact)
+    if not compact:
+        compact = "unknown error"
+    if len(compact) > max_len:
+        compact = compact[: max_len - 1].rstrip() + "…"
+    return f"{etype}: {compact}"
 
 async def _notify_kb_status(api_key_id: int, kb_id: int, status: str, error: str | None = None) -> None:
 
@@ -241,7 +257,11 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             for t in (e.get("tags") or []):
                 if isinstance(t, str):
                     ts = t.strip()
-                    if ts and ts not in tag_seen:
+                    if not ts:
+                        continue
+                    if len(ts) > RAG_TAG_TEXT_MAX_LEN:
+                        ts = ts[:RAG_TAG_TEXT_MAX_LEN]
+                    if ts not in tag_seen:
                         tag_seen.add(ts)
                         tag_strings.append(ts)
 
@@ -255,22 +275,49 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                     raise RuntimeError(f"Invalid tag embedding dim: got={len(vec)} expected={expected_dim}")
                 tag_emb_map[ts] = [float(x) for x in vec]
 
+        dropped_external_id = 0
+        truncated_external_id = 0
+        dropped_tag = 0
+        truncated_tag = 0
         for e in entries:
-            eid = str(e.get("id", "") or "")
+            eid_raw = str(e.get("id", "") or "").strip()
+            if not eid_raw:
+                dropped_external_id += 1
+                continue
+            eid = eid_raw
+            if len(eid) > RAG_TAG_TEXT_MAX_LEN:
+                eid = eid[:RAG_TAG_TEXT_MAX_LEN]
+                truncated_external_id += 1
             etext = str(e.get("text", "") or "")
             seen_item_tags: set[str] = set()
             for t in (e.get("tags") or []):
                 if not isinstance(t, str):
                     continue
-                ts = t.strip()
-                if not ts:
+                ts_raw = t.strip()
+                if not ts_raw:
+                    dropped_tag += 1
                     continue
+                ts = ts_raw
+                if len(ts) > RAG_TAG_TEXT_MAX_LEN:
+                    ts = ts[:RAG_TAG_TEXT_MAX_LEN]
+                    truncated_tag += 1
                 if ts in seen_item_tags:
                     continue
                 seen_item_tags.add(ts)
                 if ts not in tag_emb_map:
                     continue
                 tag_rows.append({"external_id": eid, "text": etext, "tag": ts, "embedding": tag_emb_map[ts]})
+
+        if dropped_external_id or truncated_external_id or dropped_tag or truncated_tag:
+            logger.info(
+                "kb: tag_rows normalization api_key_id=%s kb_id=%s dropped_external_id=%s truncated_external_id=%s dropped_tag=%s truncated_tag=%s",
+                api_key_id,
+                kb_id,
+                dropped_external_id,
+                truncated_external_id,
+                dropped_tag,
+                truncated_tag,
+            )
 
         async with session_scope() as db:
             kb = await db.get(ApiKeyKnowledge, kb_id)
@@ -280,20 +327,41 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             await db.execute(delete(RagTagVector).where(RagTagVector.kb_id == kb_id))
 
             if tag_rows:
-                db.add_all([
-                    RagTagVector(
-                        scope="owner",
-                        owner_id=api_key_id,
-                        kb_id=kb_id,
-                        embedding_model=model,
-                        embedding_dim=expected_dim,
-                        external_id=row["external_id"],
-                        text=row["text"],
-                        tag=row["tag"],
-                        embedding=_embedding_param(row["embedding"], expected_dim=expected_dim),
+                try:
+                    batch_size = int(getattr(settings, "KB_TAG_INSERT_BATCH_SIZE", 200) or 200)
+                except Exception:
+                    batch_size = 200
+                if batch_size <= 0:
+                    batch_size = 200
+
+                inserted_total = 0
+                for batch_index, start in enumerate(range(0, len(tag_rows), batch_size), start=1):
+                    chunk = tag_rows[start : start + batch_size]
+                    db.add_all([
+                        RagTagVector(
+                            scope="owner",
+                            owner_id=api_key_id,
+                            kb_id=kb_id,
+                            embedding_model=model,
+                            embedding_dim=expected_dim,
+                            external_id=row["external_id"],
+                            text=row["text"],
+                            tag=row["tag"],
+                            embedding=_embedding_param(row["embedding"], expected_dim=expected_dim),
+                        )
+                        for row in chunk
+                    ])
+                    await db.flush()
+                    inserted_total += len(chunk)
+                    logger.info(
+                        "kb: batch insert progress api_key_id=%s kb_id=%s batch_index=%s batch_size=%s inserted_total=%s tag_rows_total=%s",
+                        api_key_id,
+                        kb_id,
+                        batch_index,
+                        len(chunk),
+                        inserted_total,
+                        len(tag_rows),
                     )
-                    for row in tag_rows
-                ])
 
             kb.status = "ready"
             kb.error = None
@@ -315,15 +383,23 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                     await db.execute(delete(ApiKeyKnowledge).where(ApiKeyKnowledge.id.in_(stale_ids)))
             await db.flush()
     except Exception as e:
-        logger.exception("kb: failed DB persistence for api_key_id=%s kb_id=%s", api_key_id, kb_id)
+        safe_error = _sanitize_error_message(e)
+        logger.error(
+            "kb: failed DB persistence api_key_id=%s kb_id=%s tag_rows_count=%s err_type=%s err_msg=%s",
+            api_key_id,
+            kb_id,
+            len(tag_rows),
+            type(e).__name__,
+            safe_error,
+        )
         async with session_scope() as db:
             kb = await db.get(ApiKeyKnowledge, kb_id)
             if kb:
                 kb.status = "failed"
-                kb.error = str(e)
+                kb.error = safe_error
                 kb.chunks_count = 0
             await db.flush()
-        await _notify_kb_status(api_key_id, kb_id, status="failed", error=str(e))
+        await _notify_kb_status(api_key_id, kb_id, status="failed", error=safe_error)
         return
 
     await _notify_kb_status(api_key_id, kb_id, status="ready")
