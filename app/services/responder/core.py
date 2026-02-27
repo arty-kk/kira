@@ -1538,7 +1538,10 @@ async def respond_to_user(
                 resolved = query
 
     safe_resolved = resolved
-    is_empty_after_strip = not (safe_resolved or "").strip()
+    effective_user_text = (safe_resolved or "").strip() or (query or "").strip()
+    rewrite_changed = bool((safe_resolved or "").strip() and (safe_resolved or "") != (query or ""))
+    rewrite_applied = bool(rewrite_changed and effective_user_text)
+    is_empty_after_strip = not effective_user_text
 
     if is_empty_after_strip and not is_channel_post and not image_b64:
         logger.info("Empty message after stripping mentions/whitespace — skip responding.")
@@ -1570,7 +1573,7 @@ async def respond_to_user(
             if image_b64:
                 if not is_empty_after_strip:
                     await push_message(
-                        chat_id, "user", safe_resolved,
+                        chat_id, "user", effective_user_text,
                         user_id=memory_uid, speaker_id=int(user_id), namespace=mem_ns
                     )
                 else:
@@ -1580,13 +1583,13 @@ async def respond_to_user(
                     )
             elif not is_empty_after_strip:
                 await push_message(
-                    chat_id, "user", safe_resolved,
+                    chat_id, "user", effective_user_text,
                     user_id=memory_uid, speaker_id=int(user_id), namespace=mem_ns
                 )
                 if chat_id != user_id and not is_api:
                     try:
                         asyncio.create_task(
-                            push_group_stm(chat_id, "user", safe_resolved, user_id=user_id)
+                            push_group_stm(chat_id, "user", effective_user_text, user_id=user_id)
                         )
                     except Exception:
                         logger.debug("push_group_stm (user) failed chat=%s", chat_id, exc_info=True)
@@ -1614,8 +1617,8 @@ async def respond_to_user(
                 if not (last_user_in_ctx and _n(last_user_in_ctx.get("content", "")) == _n(marker)):
                     history.append({"role": "user", "content": marker})
             elif (not is_empty_after_strip) and (not image_b64):
-                if not (last_user_in_ctx and _n(last_user_in_ctx.get("content", "")) == _n(resolved)):
-                    history.append({"role": "user", "content": resolved})
+                if not (last_user_in_ctx and _n(last_user_in_ctx.get("content", "")) == _n(effective_user_text)):
+                    history.append({"role": "user", "content": effective_user_text})
 
     if is_channel_post:
         safe_ch = _meta_one_line(channel_title, max_len=150)
@@ -1623,10 +1626,13 @@ async def respond_to_user(
         ctx_sys_blocks.append(RESPONDER_FORWARDED_CHANNEL_POST_TEMPLATE.format(channel_desc=channel_desc))
 
     rag_query_raw = query
-    rag_query_for_relevance = rag_query_raw
-    rag_query_source = "raw"
+    rag_query_for_relevance = effective_user_text if rewrite_applied else rag_query_raw
+    rag_query_source = "rewritten" if rewrite_applied else "raw"
+    rag_embedding_for_relevance = None if rewrite_applied else request_embedding_context.query_embedding
+    rag_hits_for_relevance = None if rewrite_applied else precomputed_rag_hits
+    rag_precheck_source_for_relevance = None if rewrite_applied else rag_precheck_source
 
-    query_to_model = safe_resolved
+    query_to_model = effective_user_text
     reply = None
     ltm_frags_t = None
     ltm_text_t = None
@@ -1661,10 +1667,10 @@ async def respond_to_user(
             persona_owner_id=persona_owner_id,
             knowledge_owner_id=knowledge_owner_id,
             knowledge_kb_id=active_kb_id,
-            precomputed_rag_hits=precomputed_rag_hits,
-            query_embedding=request_embedding_context.query_embedding,
+            precomputed_rag_hits=rag_hits_for_relevance,
+            query_embedding=rag_embedding_for_relevance,
             embedding_model=request_embedding_context.embedding_model,
-            rag_precheck_source=rag_precheck_source,
+            rag_precheck_source=rag_precheck_source_for_relevance,
             rag_query_source=rag_query_source,
         )
         logger.info(
@@ -2038,7 +2044,7 @@ async def respond_to_user(
                 system_prompt_content,
                 history_llm,
                 kb_chunks=(chunks or None),
-                user_text=(query_to_model or "").strip() or None,
+                user_text=effective_user_text or None,
                 image_data_url=data_url,
                 extra_system_blocks=extra_sys or None,
                 meta_hint=meta_hint,
@@ -2068,7 +2074,7 @@ async def respond_to_user(
                 system_prompt_content,
                 history_llm,
                 kb_chunks=(chunks or None),
-                user_text=(query_to_model or "").strip() or None,
+                user_text=effective_user_text or None,
                 extra_system_blocks=extra_sys or None,
                 meta_hint=meta_hint,
             )
@@ -2140,6 +2146,8 @@ async def respond_to_user(
         metrics["llm_call_ms"] = int(llm_call_ms)
         metrics["total_ms"] = int((time.perf_counter() - perf_start) * 1000)
         metrics["consistency"] = consistency_issue or {"flag": False}
+        metrics["rewrite_changed"] = rewrite_changed
+        metrics["rewrite_applied"] = rewrite_applied
                 
     assistant_allowed = True
     assistant_guard_key = None
