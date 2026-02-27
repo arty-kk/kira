@@ -27,7 +27,7 @@ _KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
 
 
 def _embedding_param(vec: List[float], *, expected_dim: int, model: str | None = None) -> object:
-    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model)
+    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model, l2_normalize=True)
 
 
 def _normalize_embedding(raw: object) -> List[float]:
@@ -178,7 +178,12 @@ async def find_tag_hits(
 
     # 2) hard-shape + finite + centralized normalization for SQL bind
     try:
-        query_vec_sql = normalize_vector_for_pg(qv_src, expected_dim=expected_dim, model=emb_model)
+        query_vec_sql = normalize_vector_for_pg(
+            qv_src,
+            expected_dim=expected_dim,
+            model=emb_model,
+            l2_normalize=True,
+        )
     except ValueError:
         logger.warning(
             "keyword_filter: invalid query embedding for SQL input_type=%s model=%s owner_id=%s kb_id=%s expected_dim=%s",
@@ -336,13 +341,12 @@ async def find_tag_hits(
     )
 
     # 5) build candidates + MMR
+    query_vec_n = _l2_normalize_np(np.asarray(query_vec_sql, dtype=np.float32).reshape(-1))
     scores_by_id: Dict[str, float] = {}
     vec_by_id: Dict[str, List[float]] = {}
     text_by_id: Dict[str, str] = {}
 
-    for scope, oid, kb_id, ext_id, txt, tag, emb, similarity, distance in payload:
-        score_f = float(similarity)
-
+    for scope, oid, kb_id, ext_id, txt, tag, emb, _similarity, _distance in payload:
         vec = np.asarray(_normalize_embedding(emb), dtype=np.float32).reshape(-1)
         if int(vec.shape[0]) != expected_dim:
             continue
@@ -350,9 +354,10 @@ async def find_tag_hits(
         rid = f"{scope}:{int(oid or 0)}:{int(kb_id or 0)}:{str(ext_id)}"
 
         prev = scores_by_id.get(rid)
+        vec_n = _l2_normalize_np(vec)
+        score_f = float(np.dot(vec_n, query_vec_n))
         if prev is None or score_f > prev:
             scores_by_id[rid] = score_f
-            vec_n = _l2_normalize_np(vec)
             vec_by_id[rid] = [float(x) for x in vec_n.tolist()]
             text_by_id[rid] = str(txt or "")
 

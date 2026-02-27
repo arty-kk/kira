@@ -13,7 +13,7 @@ from app.clients.openai_client import _call_openai_with_retry
 from app.config import settings
 from app.core.db import session_scope
 from app.core.embedding_utils import get_rag_embedding_model, normalize_embedding_row, resolve_embedding_dim
-from app.core.vector_adapter import adapt_vector_for_storage
+from app.core.vector_adapter import adapt_vector_for_storage, normalize_vector_for_pg
 from app.core.models import RagTagVector
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 
 def _embedding_param(vec: List[float], *, expected_dim: int, model: str | None = None) -> object:
-    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model)
+    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model, l2_normalize=True)
 
 
 def _load_items(path: Path) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
@@ -90,7 +90,10 @@ async def _embed_texts_batched(texts: List[str], model: str, batch_size: int) ->
         batch_vectors: List[List[float]] = []
         for d in resp.data:
             try:
-                batch_vectors.append(normalize_embedding_row(d.embedding, expected_dim=expected_dim))
+                vec = normalize_embedding_row(d.embedding, expected_dim=expected_dim)
+                batch_vectors.append(
+                    normalize_vector_for_pg(vec, expected_dim=expected_dim, model=model, l2_normalize=True)
+                )
             except RuntimeError as exc:
                 msg = str(exc)
                 if "invalid embedding row shape=" in msg or "invalid embedding dim" in msg:
@@ -165,7 +168,10 @@ async def _run(args: argparse.Namespace) -> None:
     for vec in tag_embs:
         if len(vec) != expected_dim:
             raise RuntimeError(f"invalid tag embedding dim: got={len(vec)} expected={expected_dim}")
-    tag_map = {tag: emb for tag, emb in zip(tag_vocab, tag_embs)}
+    tag_map = {
+        tag: normalize_vector_for_pg(emb, expected_dim=expected_dim, model=model, l2_normalize=True)
+        for tag, emb in zip(tag_vocab, tag_embs)
+    }
 
     async with session_scope() as db:
         await db.execute(delete(RagTagVector).where(RagTagVector.scope == "global", RagTagVector.embedding_model == model))

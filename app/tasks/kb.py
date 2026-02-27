@@ -36,7 +36,7 @@ def _embedding_param(
     expected_dim: int,
     model: str | None = None,
 ) -> object:
-    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model)
+    return adapt_vector_for_storage(vec, expected_dim=expected_dim, model=model, l2_normalize=True)
 
 
 def _normalize_embedding_row(raw: Any, *, expected_dim: int) -> List[float]:
@@ -274,7 +274,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
             for ts, vec in zip(tag_strings, tag_embs):
                 if len(vec) != expected_dim:
                     raise RuntimeError(f"Invalid tag embedding dim: got={len(vec)} expected={expected_dim}")
-                tag_emb_map[ts] = [float(x) for x in vec]
+                tag_emb_map[ts] = _normalize_embedding_row(vec, expected_dim=expected_dim)
 
         dropped_external_id = 0
         truncated_external_id = 0
