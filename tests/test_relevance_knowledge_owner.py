@@ -100,7 +100,7 @@ class RelevanceKnowledgeOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [(0.10, "tag", "tag-hit")])
 
 
-    async def test_is_relevant_uses_strict_keyword_threshold_for_autoreply(self) -> None:
+    async def test_is_relevant_uses_keyword_threshold_for_autoreply(self) -> None:
         captured = {}
 
         async def _fake_find_tag_hits(*_args, **kwargs):
@@ -120,7 +120,7 @@ class RelevanceKnowledgeOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok)
         self.assertAlmostEqual(captured["min_similarity"], 0.70)
 
-    async def test_is_relevant_uses_half_keyword_threshold_for_direct(self) -> None:
+    async def test_is_relevant_uses_relevance_threshold_for_direct(self) -> None:
         captured = {}
 
         async def _fake_find_tag_hits(*_args, **kwargs):
@@ -138,7 +138,7 @@ class RelevanceKnowledgeOwnerTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(ok)
-        self.assertAlmostEqual(captured["min_similarity"], 0.35)
+        self.assertAlmostEqual(captured["min_similarity"], 0.28)
 
     async def test_is_relevant_returns_false_without_tag_hits(self) -> None:
         async def _fake_find_tag_hits(*_args, **_kwargs):
