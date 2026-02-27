@@ -498,7 +498,8 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
     def test_rag_vector_contour_schema_query_and_bind_are_aligned(self):
         schema_text = Path("alembic/versions/0001_initial_schema.py").read_text()
 
-        self.assertIn("embedding vector_cosine_ops", schema_text)
+        self.assertIn("(embedding::vector(1536)) vector_cosine_ops", schema_text)
+        self.assertIn("(embedding::vector(3072)) vector_cosine_ops", schema_text)
         self.assertNotIn("halfvec_cosine_ops", schema_text)
         self.assertNotIn("CAST(embedding AS halfvec", schema_text)
 

@@ -220,12 +220,12 @@ def upgrade():
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_small "
-        "ON rag_tag_vectors USING hnsw (embedding vector_cosine_ops) "
+        "ON rag_tag_vectors USING hnsw ((embedding::vector(1536)) vector_cosine_ops) "
         "WHERE embedding_model = 'text-embedding-3-small' AND embedding_dim = 1536;"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_large "
-        "ON rag_tag_vectors USING hnsw (embedding vector_cosine_ops) "
+        "ON rag_tag_vectors USING hnsw ((embedding::vector(3072)) vector_cosine_ops) "
         "WHERE embedding_model = 'text-embedding-3-large' AND embedding_dim = 3072;"
     )
 
