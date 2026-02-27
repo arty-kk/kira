@@ -99,6 +99,47 @@ class RelevanceKnowledgeOwnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok)
         self.assertEqual(hits, [(0.10, "tag", "tag-hit")])
 
+
+    async def test_is_relevant_uses_strict_keyword_threshold_for_autoreply(self) -> None:
+        captured = {}
+
+        async def _fake_find_tag_hits(*_args, **kwargs):
+            captured["min_similarity"] = kwargs.get("min_similarity")
+            return [(0.95, "tag", "tag-hit")]
+
+        with unittest.mock.patch.object(relevance, "find_tag_hits", _fake_find_tag_hits):
+            ok, _hits = await relevance.is_relevant(
+                "hello",
+                model="test-model",
+                threshold=0.50,
+                return_hits=False,
+                knowledge_owner_id=None,
+                strict_autoreply_gate=True,
+            )
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(captured["min_similarity"], 0.70)
+
+    async def test_is_relevant_uses_half_keyword_threshold_for_direct(self) -> None:
+        captured = {}
+
+        async def _fake_find_tag_hits(*_args, **kwargs):
+            captured["min_similarity"] = kwargs.get("min_similarity")
+            return [(0.35, "tag", "tag-hit")]
+
+        with unittest.mock.patch.object(relevance, "find_tag_hits", _fake_find_tag_hits):
+            ok, _hits = await relevance.is_relevant(
+                "hello",
+                model="test-model",
+                threshold=0.50,
+                return_hits=False,
+                knowledge_owner_id=None,
+                strict_autoreply_gate=False,
+            )
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(captured["min_similarity"], 0.35)
+
     async def test_is_relevant_returns_false_without_tag_hits(self) -> None:
         async def _fake_find_tag_hits(*_args, **_kwargs):
             return []

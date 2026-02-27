@@ -137,6 +137,7 @@ async def find_tag_hits(
     kb_id: Optional[int] = None,
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
+    min_similarity: Optional[float] = None,
 ) -> List[Tuple[float, str, str]]:
     t = _norm_ws(text)
     if not t:
@@ -196,13 +197,17 @@ async def find_tag_hits(
         return []
 
     # 3) thresholds
-    thr = float(
-        getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", None)
-        or (
-            float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
-            + float(getattr(settings, "RELEVANCE_MARGIN", 0.07) or 0.07)
+    if min_similarity is not None:
+        thr = float(min_similarity)
+    else:
+        thr = float(
+            getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", None)
+            or (
+                float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
+                + float(getattr(settings, "RELEVANCE_MARGIN", 0.07) or 0.07)
+            )
         )
-    )
+    thr = max(0.0, min(1.0, thr))
     max_distance = 1.0 - thr
 
     top_k = (
