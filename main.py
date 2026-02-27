@@ -18,6 +18,7 @@ from app.clients.http_client import http_client
 from app.bot import start_bot
 from app.api.app import create_app
 from app.core.tls import resolve_tls_server_files
+from app.core.db import initialize_postgres
 
 
 async def _preinit_persona_memory() -> PersonaMemory:
@@ -96,6 +97,11 @@ async def main() -> None:
         logging.info("⏱️ Scheduler disabled")
         def get_scheduler_fn():
             return None
+
+    try:
+        await initialize_postgres()
+    except Exception:
+        logging.exception("⚠️ PostgreSQL initialization failed")
 
     try:
         await _preinit_persona_memory()

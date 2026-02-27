@@ -75,7 +75,8 @@ def _mmr_select_ids(
     if top_k <= 0 or not cand_ids:
         return []
     selected: List[str] = []
-    remaining = set(cand_ids)
+    # Keep candidate order deterministic (score-sorted upstream).
+    remaining = list(dict.fromkeys(cand_ids))
 
     first = max(remaining, key=lambda i: scores_by_id.get(i, 0.0))
     selected.append(first)
@@ -84,11 +85,13 @@ def _mmr_select_ids(
     while len(selected) < top_k and remaining:
         best_id = None
         best_score = -1e9
-        for rid in list(remaining):
+        for rid in remaining:
             v_r = vecs_by_id.get(rid)
             if not v_r:
                 continue
-            max_sim = 0.0
+            # Cosine similarity is in [-1, 1]. Start from -1.0 to keep
+            # the true maximum even when all pairwise sims are negative.
+            max_sim = -1.0
             v_r_np = np.asarray(v_r, dtype=np.float32).reshape(-1)
 
             for sid in selected:

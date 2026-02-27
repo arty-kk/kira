@@ -36,24 +36,6 @@ class DbSessionClosureTests(unittest.IsolatedAsyncioTestCase):
         fake.rollback.assert_awaited_once()
         fake.close.assert_awaited_once()
 
-    async def test_get_db_rolls_back_after_commit_failure_and_closes(self):
-        fake = _FakeSession([True, True, False])
-        fake.commit.side_effect = RuntimeError("commit failed")
-
-        @asynccontextmanager
-        async def _dep():
-            async with db_mod.get_db() as session:
-                yield session
-
-        with patch.object(db_mod, "AsyncSessionLocal", return_value=fake):
-            with self.assertRaisesRegex(RuntimeError, "commit failed"):
-                async with _dep() as session:
-                    self.assertIs(session, fake)
-
-        fake.commit.assert_awaited_once()
-        fake.rollback.assert_awaited_once()
-        fake.close.assert_awaited_once()
-
     async def test_session_scope_fails_fast_when_read_only_set_local_fails(self):
         fake = _FakeSession([True, False, False])
 

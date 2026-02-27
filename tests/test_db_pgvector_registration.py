@@ -45,8 +45,7 @@ class PgvectorRegistrationTests(unittest.IsolatedAsyncioTestCase):
     def test_on_connect_marks_connection_record_and_skips_repeat_registration(self):
         captured = {"calls": 0}
 
-        class _FakeConn:
-            pass
+        _FakeConn = type("_FakeConn", (), {"__module__": "psycopg.fake"})
 
         class _FakeRecord:
             def __init__(self):
