@@ -64,7 +64,7 @@ if __name__ == "__main__":
     unittest.main()
 
 class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_respond_to_user_uses_raw_query_for_rag_even_if_coref_rewrites(self):
+    async def test_respond_to_user_uses_rewritten_query_for_rag_when_coref_rewrites(self):
         class _Persona:
             def __init__(self):
                 self.state = {}
@@ -123,10 +123,10 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(out, "")
         compute_mock.assert_awaited_once()
-        self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "What about it?")
-        self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "raw")
+        self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "rewritten query")
+        self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "rewritten")
 
-    async def test_respond_to_user_does_not_fallback_to_resolved_when_raw_query_empty(self):
+    async def test_respond_to_user_uses_rewritten_query_for_rag_when_raw_query_empty(self):
         class _Persona:
             def __init__(self):
                 self.state = {}
@@ -157,7 +157,7 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
             },
         )()
 
-        compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="", rag_query_source="raw")))
+        compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="rewritten query", rag_query_source="rewritten")))
 
         with patch.object(core, "get_redis", return_value=redis_stub), \
              patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
@@ -186,9 +186,76 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(out, "")
         compute_mock.assert_awaited_once()
-        self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "")
-        self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "raw")
+        self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "rewritten query")
+        self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "rewritten")
 
+
+    async def test_respond_to_user_does_not_reuse_raw_embedding_or_hits_when_rewritten_query_used(self):
+        class _Persona:
+            def __init__(self):
+                self.state = {}
+
+            async def ready(self, timeout=5.0):
+                return True
+
+            async def process_interaction(self, *_args, **_kwargs):
+                return None
+
+            async def summary(self):
+                return "summary"
+
+            async def style_guidelines(self, *_args, **_kwargs):
+                return "guidelines"
+
+            async def style_modifiers(self):
+                return {}
+
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "hgetall": AsyncMock(return_value={}),
+                "get": AsyncMock(return_value=None),
+                "set": AsyncMock(return_value=True),
+                "delete": AsyncMock(return_value=1),
+            },
+        )()
+
+        compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="rewritten query", rag_query_source="rewritten")))
+
+        with patch.object(core, "get_redis", return_value=redis_stub), \
+             patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
+             patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
+             patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
+             patch.object(core, "load_context", AsyncMock(return_value=[])), \
+             patch.object(core, "record_context", AsyncMock(return_value=None)), \
+             patch.object(core, "needs_coref", AsyncMock(return_value=True)), \
+             patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
+             patch.object(core, "_compute_on_topic_relevance", compute_mock), \
+             patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
+             patch.object(core, "get_ltm_text", AsyncMock(return_value="")), \
+             patch.object(core, "get_all_mtm_texts", AsyncMock(return_value=[])):
+
+            out = await core.respond_to_user(
+                text="What about it?",
+                chat_id=1,
+                user_id=2,
+                trigger="api",
+                enforce_on_topic=True,
+                skip_user_push=True,
+                skip_assistant_push=True,
+                skip_persona_interaction=True,
+                query_embedding=[0.1] + [0.0] * 3071,
+                precomputed_rag_hits=[(0.93, "id-1", "chunk")],
+                rag_precheck_source="queue_worker_tag_precheck",
+            )
+
+        self.assertEqual(out, "")
+        compute_mock.assert_awaited_once()
+        self.assertIsNone(compute_mock.await_args.kwargs.get("query_embedding"))
+        self.assertIsNone(compute_mock.await_args.kwargs.get("precomputed_rag_hits"))
+        self.assertIsNone(compute_mock.await_args.kwargs.get("rag_precheck_source"))
+        self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "rewritten")
 
 class ResponderRequestEmbeddingContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_request_embedding_context_reused_by_persona_and_rag(self):
