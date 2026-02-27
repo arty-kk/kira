@@ -90,3 +90,5 @@ def test_model_declares_same_named_check_constraint():
     source = (ROOT / "app" / "core" / "models.py").read_text()
     assert CONSTRAINT_NAME in source
     assert "scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL" in source
+    assert "ck_rag_tag_vectors_embedding_dim_positive" in source
+    assert "ck_rag_tag_vectors_embedding_dim_match" in source

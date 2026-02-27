@@ -179,6 +179,7 @@ async def _run(args: argparse.Namespace) -> None:
                         owner_id=None,
                         kb_id=None,
                         embedding_model=model,
+                        embedding_dim=expected_dim,
                         external_id=item["id"],
                         text=item["text"],
                         tag=tag,

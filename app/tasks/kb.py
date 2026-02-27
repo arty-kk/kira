@@ -279,6 +279,7 @@ async def _rebuild_for_api_key_async(api_key_id: int, kb_id: int) -> None:
                         owner_id=api_key_id,
                         kb_id=kb_id,
                         embedding_model=model,
+                        embedding_dim=expected_dim,
                         external_id=row["external_id"],
                         text=row["text"],
                         tag=row["tag"],
