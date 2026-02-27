@@ -86,10 +86,12 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
             )
 
         sql = str(captured["query"])
+        self.assertIn("CASE", sql)
         self.assertIn("<=>", sql)
         self.assertIn("ORDER BY scored.distance ASC", sql)
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
+        self.assertIn("vector_dims", sql)
         self.assertIn("scope", sql)
         self.assertTrue(captured["execute_called"])
         self.assertIsInstance(captured["params"], dict)
