@@ -882,6 +882,20 @@ def _history_tail_for_plan(history_llm: List[Dict[str, str]], limit: int = 8) ->
     return "\n".join(lines).strip()
 
 
+def _build_stm_context_block(history_msgs: List[Dict]) -> str:
+    compact_history = _compact_for_llm(history_msgs or [])
+    if not compact_history:
+        return ""
+
+    lines: List[str] = []
+    for msg in compact_history:
+        role = "USER" if msg.get("role") == "user" else "ASSISTANT"
+        content = (msg.get("content") or "").strip()
+        if content:
+            lines.append(f"- {role}: {content}")
+    return "\n".join(lines).strip()
+
+
 def _should_include_meta_hint(
     *, is_api: bool, group_mode: bool, is_channel_post: bool, reply_to: int | None,
     voice_in: bool, expect_voice_out: bool, has_image: bool, allow_web: bool, enforce_on_topic: bool
@@ -1790,6 +1804,7 @@ async def respond_to_user(
         try:
             ltm_snippets = ""
             mtm_snippets = ""
+            stm_context = ""
             mtm_lines = []
             group_snippets = ""
             tail_lines: List[str] = []
@@ -1817,6 +1832,8 @@ async def respond_to_user(
                     except Exception:
                         pass
             if getattr(settings, "LAYERED_MEMORY_ENABLED", True):
+                stm_context = _build_stm_context_block(history)
+
                 async def _group_snip(topic: str) -> tuple[str, list[str]]:
                     try:
                         tail = await get_group_stm_tail(
@@ -1931,6 +1948,12 @@ async def respond_to_user(
                         except Exception:
                             pass
 
+            if (stm_context or "").strip():
+                extra_sys.append(
+                    "SHORT-TERM MEMORY CONTEXT\n"
+                    "- STM is your (Assistant) current conversation history with the user (User). Use STM to understand the flow of the dialogue and personalize your responses to the user.\n"
+                    + stm_context
+                )
             if (mtm_snippets or "").strip():
                 extra_sys.append(
                     "MID-TERM MEMORY SNIPPETS\n"
