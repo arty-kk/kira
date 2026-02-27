@@ -46,6 +46,9 @@ class RagMigrationChainTests(unittest.TestCase):
         self.assertIn("uq_rag_tag_vectors_global_item_tag", upgrade_source)
         self.assertIn("uq_rag_tag_vectors_owner_item_tag", upgrade_source)
         self.assertIn("ck_rag_tag_vectors_scope_owner_kb_consistency", upgrade_source)
+        self.assertIn("embedding_dim", upgrade_source)
+        self.assertIn("ck_rag_tag_vectors_embedding_dim_positive", upgrade_source)
+        self.assertIn("ck_rag_tag_vectors_embedding_dim_match", upgrade_source)
 
 
 if __name__ == "__main__":

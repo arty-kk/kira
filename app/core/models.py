@@ -194,6 +194,7 @@ class RagTagVector(Base):
     owner_id = Column(BigInteger, ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True, index=True)
     kb_id = Column(BigInteger, ForeignKey("api_key_knowledge.id", ondelete="CASCADE"), nullable=True, index=True)
     embedding_model = Column(String(128), nullable=False, index=True)
+    embedding_dim = Column(Integer, nullable=False, index=True)
     external_id = Column(String(255), nullable=False)
     text = Column(String, nullable=False)
     tag = Column(String(255), nullable=False)
@@ -206,6 +207,11 @@ class RagTagVector(Base):
             "((scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
             "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
             name="ck_rag_tag_vectors_scope_owner_kb_consistency",
+        ),
+        CheckConstraint("embedding_dim > 0", name="ck_rag_tag_vectors_embedding_dim_positive"),
+        CheckConstraint(
+            "vector_dims(embedding) = embedding_dim",
+            name="ck_rag_tag_vectors_embedding_dim_match",
         ),
     )
 

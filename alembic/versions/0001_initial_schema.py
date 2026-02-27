@@ -183,6 +183,7 @@ def upgrade():
         sa.Column("owner_id", sa.BigInteger(), sa.ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=True),
         sa.Column("kb_id", sa.BigInteger(), sa.ForeignKey("api_key_knowledge.id", ondelete="CASCADE"), nullable=True),
         sa.Column("embedding_model", sa.String(length=128), nullable=False),
+        sa.Column("embedding_dim", sa.Integer(), nullable=False),
         sa.Column("external_id", sa.String(length=255), nullable=False),
         sa.Column("text", sa.String(), nullable=False),
         sa.Column("tag", sa.String(length=255), nullable=False),
@@ -194,35 +195,38 @@ def upgrade():
             "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
             name="ck_rag_tag_vectors_scope_owner_kb_consistency",
         ),
+        sa.CheckConstraint("embedding_dim > 0", name="ck_rag_tag_vectors_embedding_dim_positive"),
+        sa.CheckConstraint("vector_dims(embedding) = embedding_dim", name="ck_rag_tag_vectors_embedding_dim_match"),
     )
     op.create_index("ix_rag_tag_vectors_scope", "rag_tag_vectors", ["scope"])
     op.create_index("ix_rag_tag_vectors_owner_id", "rag_tag_vectors", ["owner_id"])
     op.create_index("ix_rag_tag_vectors_kb_id", "rag_tag_vectors", ["kb_id"])
-    op.create_index("ix_rag_tag_vectors_embedding_model", "rag_tag_vectors", ["embedding_model"])
+    op.create_index("ix_rag_tag_vectors_embedding_model", "rag_tag_vectors", ["embedding_model", "embedding_dim"])
     op.create_index("ix_rag_tag_vectors_created_at", "rag_tag_vectors", ["created_at"])
+    op.create_index("ix_rag_tag_vectors_embedding_dim", "rag_tag_vectors", ["embedding_dim"])
     op.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_global_item_tag "
-        "ON rag_tag_vectors (embedding_model, external_id, tag) "
+        "ON rag_tag_vectors (embedding_model, embedding_dim, external_id, tag) "
         "WHERE scope = 'global';"
     )
     op.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_owner_item_tag "
-        "ON rag_tag_vectors (embedding_model, owner_id, kb_id, external_id, tag) "
+        "ON rag_tag_vectors (embedding_model, embedding_dim, owner_id, kb_id, external_id, tag) "
         "WHERE scope = 'owner';"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_filter "
-        "ON rag_tag_vectors (embedding_model, scope, owner_id, kb_id);"
+        "ON rag_tag_vectors (embedding_model, embedding_dim, scope, owner_id, kb_id);"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_small "
         "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(1536))) halfvec_cosine_ops) "
-        "WHERE embedding_model = 'text-embedding-3-small' AND vector_dims(embedding) = 1536;"
+        "WHERE embedding_model = 'text-embedding-3-small' AND embedding_dim = 1536;"
     )
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_large "
         "ON rag_tag_vectors USING hnsw ((CAST(embedding AS halfvec(3072))) halfvec_cosine_ops) "
-        "WHERE embedding_model = 'text-embedding-3-large' AND vector_dims(embedding) = 3072;"
+        "WHERE embedding_model = 'text-embedding-3-large' AND embedding_dim = 3072;"
     )
 
     op.create_table(
@@ -292,6 +296,7 @@ def downgrade():
     op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_owner_item_tag;")
     op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_global_item_tag;")
     op.drop_index("ix_rag_tag_vectors_created_at", table_name="rag_tag_vectors")
+    op.drop_index("ix_rag_tag_vectors_embedding_dim", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_embedding_model", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_kb_id", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_owner_id", table_name="rag_tag_vectors")
