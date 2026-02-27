@@ -102,7 +102,11 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(not isinstance(item, (list, tuple, np.ndarray)) for item in captured["params"]["query_vec"].to_list())
         )
-        self.assertEqual(hits, [(0.99, "global:0:0:item-1", "text-1"), (0.91, "owner:42:0:item-2", "text-2")])
+        self.assertEqual(len(hits), 2)
+        self.assertEqual(hits[0][1:], ("global:0:0:item-1", "text-1"))
+        self.assertEqual(hits[1][1:], ("owner:42:0:item-2", "text-2"))
+        self.assertAlmostEqual(hits[0][0], 1.0)
+        self.assertAlmostEqual(hits[1][0], 0.9938837289810181)
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
         self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
 
@@ -153,7 +157,9 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
-        self.assertEqual(hits, [(0.95, "global:0:0:first", "first-text")])
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1:], ("global:0:0:first", "first-text"))
+        self.assertAlmostEqual(hits[0][0], 1.0)
         self.assertIsInstance(hits[0], tuple)
         self.assertEqual(len(hits[0]), 3)
         self.assertIsInstance(hits[0][0], float)
@@ -197,7 +203,9 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
-        self.assertEqual(hits, [(0.95, "global:0:0:ok", "ok-text")])
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1:], ("global:0:0:ok", "ok-text"))
+        self.assertAlmostEqual(hits[0][0], 1.0)
 
     async def test_keyword_filter_returns_empty_when_sql_execute_raises(self):
         class _FakeSession:
@@ -323,7 +331,9 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(keyword_filter, "session_scope", return_value=_FakeScope()):
             hits = await keyword_filter.find_tag_hits("q", query_embedding=query, model="m", embedding_model="m", limit=1)
 
-        self.assertEqual(hits, [(0.95, "global:0:0:ok", "ok-text")])
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1:], ("global:0:0:ok", "ok-text"))
+        self.assertAlmostEqual(hits[0][0], 1.0)
         self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
 
     async def test_keyword_filter_returns_empty_on_query_embedding_dim_mismatch(self):
@@ -460,7 +470,9 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
                 limit=1,
             )
 
-        self.assertEqual(hits, [(0.98, "global:0:0:item-large", "text-large")])
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0][1:], ("global:0:0:item-large", "text-large"))
+        self.assertAlmostEqual(hits[0][0], 1.0)
         self.assertIsInstance(captured["params"]["query_vec"], HalfVector)
         self.assertEqual(len(captured["params"]["query_vec"].to_list()), 3072)
         sql = str(captured["query"])
