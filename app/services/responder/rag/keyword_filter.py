@@ -1,5 +1,6 @@
 # app/services/responder/rag/keyword_filter.py
 import logging
+import re
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -30,6 +31,24 @@ _KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
 
 def _norm_ws(s: str) -> str:
     return " ".join((s or "").strip().casefold().split())
+
+
+def _sanitize_exception_message(message: object, *, max_len: int = 120) -> str:
+    text = _norm_ws(str(message or ""))
+    if not text:
+        return "error details unavailable"
+
+    text = re.sub(r"\[(?:[^\[\]]|\[[^\[\]]*\])*\]", "[list]", text)
+    text = re.sub(r"\([^()]{24,}\)", "(args)", text)
+    text = re.sub(r"\b(?:\d+(?:\.\d+)?(?:e[+-]?\d+)?[\s,;:|]{1,}){5,}\d+(?:\.\d+)?(?:e[+-]?\d+)?\b", "[numbers]", text)
+    text = re.sub(r"\d{6,}", "#", text)
+    text = re.sub(r"(?:\b\d+\.\d+\b\s*){4,}", "[numbers] ", text)
+    text = _norm_ws(text)
+    text = text[:max_len].rstrip(" ,.;:-")
+
+    if len(text) < 8 or text in {"[list]", "[numbers]", "(args)", "#"}:
+        return "error details unavailable"
+    return text
 
 
 def _l2_normalize(vec: List[float]) -> List[float]:
@@ -325,9 +344,11 @@ async def find_tag_hits(
             root_exc = getattr(exc, "orig", None)
             db_err = root_exc or exc
             root_type = type(db_err).__name__ if db_err is not None else "-"
-            root_msg = str(db_err or "")
+            err_msg = _sanitize_exception_message(db_err)
+            reason = "sql_execute_error"
 
-            if root_type == "ValueError" and "expected ndim to be 1" in root_msg:
+            if root_type == "ValueError" and "expected ndim to be 1" in err_msg:
+                reason = "vector_bind_error"
                 try:
                     rows = await db.execute(stmt, {"query_vec": query_vec_bind_fallback})
                     payload = rows.all()
@@ -343,30 +364,23 @@ async def find_tag_hits(
                     root_exc = getattr(exc, "orig", None)
                     db_err = root_exc or exc
                     root_type = type(db_err).__name__ if db_err is not None else "-"
-                    root_msg = str(db_err or "")
+                    reason = "vector_bind_error_retry_failed"
                 else:
                     root_exc = None
                     db_err = None
 
             if db_err is not None:
                 query_vec_len = len(query_vec_sql_param) if hasattr(query_vec_sql_param, "__len__") else None
-                query_vec_sample_type = (
-                    type(query_vec_sql_param[0]).__name__
-                    if hasattr(query_vec_sql_param, "__len__") and len(query_vec_sql_param) > 0
-                    else None
-                )
                 logger.error(
-                    "keyword_filter: sql stage failed err_type=%s db_err_type=%s db_err=%r model=%s owner_id=%s kb_id=%s expected_dim=%s query_vec_len=%s query_vec_type=%s query_vec_sample_type=%s",
+                    "keyword_filter: sql stage failed err_type=%s db_err_type=%s model=%s owner_id=%s kb_id=%s expected_dim=%s query_vec_len=%s reason=%s",
                     type(exc).__name__,
                     root_type,
-                    root_msg[:240],
                     emb_model,
                     owner_id,
                     kb_id_int,
                     expected_dim,
                     query_vec_len,
-                    type(query_vec_sql_param).__name__,
-                    query_vec_sample_type,
+                    reason,
                 )
                 return []
 
