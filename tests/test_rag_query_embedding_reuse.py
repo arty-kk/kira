@@ -27,7 +27,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits[0][1], "tag-1")
 
     async def test_keyword_filter_uses_sql_distance_order_limit_and_output_contract(self):
-        captured = {}
+        captured = {"execute_called": False}
 
         class _FakeResult:
             def __init__(self, rows):
@@ -38,6 +38,7 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
 
         class _FakeSession:
             async def execute(self, query, params=None):
+                captured["execute_called"] = True
                 captured["query"] = query
                 captured["params"] = params
                 rows = [
@@ -90,9 +91,12 @@ class RagTagsOnlyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("LIMIT", sql)
         self.assertIn("embedding_model", sql)
         self.assertIn("scope", sql)
+        self.assertTrue(captured["execute_called"])
         self.assertIsInstance(captured["params"], dict)
         self.assertIn("query_vec", captured["params"])
+        self.assertIsInstance(captured["params"]["query_vec"], list)
         self.assertEqual(len(captured["params"]["query_vec"]), 3072)
+        self.assertTrue(all(not isinstance(item, (list, tuple, np.ndarray)) for item in captured["params"]["query_vec"]))
         self.assertEqual(hits, [(0.99, "global:0:0:item-1", "text-1"), (0.91, "owner:42:0:item-2", "text-2")])
         self.assertTrue(all(isinstance(hit, tuple) and len(hit) == 3 for hit in hits))
         self.assertTrue(all(isinstance(hit[0], float) and isinstance(hit[1], str) and isinstance(hit[2], str) for hit in hits))
