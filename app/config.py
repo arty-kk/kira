@@ -694,6 +694,7 @@ class Settings:
     RELEVANCE_MARGIN: float = field(default_factory=lambda: _get_env("RELEVANCE_MARGIN", "0.05", conv=float))
     RELEVANCE_GAP_MIN: float = field(default_factory=lambda: _get_env("RELEVANCE_GAP_MIN", "0.05", conv=float))
     MMR_LAMBDA: float = field(default_factory=lambda: _get_env("MMR_LAMBDA", "0.2", conv=float))
+    RAG_MMR_CANDIDATES_TOP_N: int = field(default_factory=lambda: _get_env("RAG_MMR_CANDIDATES_TOP_N", "200", conv=int))
     KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("KNOWLEDGE_TOP_K", "3", conv=int))
     AUTOREPLY_KNOWLEDGE_TOP_K: int = field(default_factory=lambda: _get_env("AUTOREPLY_KNOWLEDGE_TOP_K", "3", conv=int))
 
