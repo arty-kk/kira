@@ -23,7 +23,7 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, ENABLE_AI_MODERATION=True, MODERATION_SPAM_LINK_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=True)) as flooding_mock,
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as toxic_mock,

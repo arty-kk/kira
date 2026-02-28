@@ -36,6 +36,11 @@ from app.bot.handlers.moderation_context import resolve_message_moderation_conte
 
 logger = logging.getLogger(__name__)
 
+
+class ModerationSignalPersistenceError(RuntimeError):
+    """Raised when passive moderation cannot persist status signal required by queue worker."""
+
+
 bot = get_bot()
 
 def get_targets() -> list[int]:
@@ -667,8 +672,16 @@ async def handle_passive_moderation(
                     await redis_client.zrem(f"last_ping_zset:{chat_id}", str(uid))
                 except Exception:
                     pass
-        except Exception:
-            logger.exception("Failed to persist moderation status to Redis")
+        except Exception as exc:
+            logger.exception(
+                "Failed to persist moderation status to Redis: chat_id=%s msg_id=%s status=%s",
+                chat_id,
+                _mid,
+                status,
+            )
+            raise ModerationSignalPersistenceError(
+                f"mod:msg persistence failed for chat_id={chat_id} msg_id={_mid} status={status}"
+            ) from exc
 
         if status == "clean" and not targets:
             uid_log = getattr(getattr(message, "from_user", None), "id", user_id)
@@ -682,6 +695,8 @@ async def handle_passive_moderation(
         except Exception:
             logger.debug("analytics(record_moderation) failed", exc_info=True)
 
+    except ModerationSignalPersistenceError:
+        raise
     except Exception:
         error_reason = "internal_error"
         fallback_mid = int(getattr(message, "message_id", message_id or 0))
@@ -1085,6 +1100,52 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if is_trusted_sender_chat:
         return False
 
+    if context == "comment" and bool(getattr(settings, "COMMENT_MODERATION_REQUIRE_REGISTERED_ACTOR", False)):
+        registered_ids = {
+            int(x)
+            for x in (getattr(settings, "COMMENT_MODERATION_REGISTERED_IDS", []) or [])
+            if str(x).strip()
+        }
+        registered_usernames = {
+            str(x).lstrip("@").strip().lower()
+            for x in (getattr(settings, "COMMENT_MODERATION_REGISTERED_USERNAMES", []) or [])
+            if str(x).strip()
+        }
+        allowed_comment_sources = {
+            int(x)
+            for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+            if str(x).strip()
+        }
+
+        actor_allowed = False
+        actor_user = getattr(message, "from_user", None)
+        if actor_user is not None:
+            with contextlib.suppress(Exception):
+                actor_uid = int(getattr(actor_user, "id", 0) or 0)
+                if actor_uid and actor_uid in registered_ids:
+                    actor_allowed = True
+            if not actor_allowed:
+                uname = str(getattr(actor_user, "username", "") or "").lstrip("@").strip().lower()
+                if uname and uname in registered_usernames:
+                    actor_allowed = True
+
+        if not actor_allowed:
+            sender_chat_local = getattr(message, "sender_chat", None)
+            with contextlib.suppress(Exception):
+                sender_chat_id_local = int(getattr(sender_chat_local, "id", 0) or 0)
+                if sender_chat_id_local and sender_chat_id_local in allowed_comment_sources:
+                    actor_allowed = True
+
+        if not actor_allowed:
+            await _flag(
+                chat_id,
+                message.message_id,
+                action="delete",
+                reason=_ctx_reason("comment_unregistered_actor"),
+                user_id=int(getattr(getattr(message, "from_user", None), "id", 0) or 0),
+            )
+            return await _delete_and_handle("comment_unregistered_actor")
+
     is_automatic_forward = bool(getattr(message, "is_automatic_forward", False))
     has_forward_origin = bool(
         getattr(message, "forward_from", None)
@@ -1238,6 +1299,81 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
+
+    if bool(getattr(settings, "MODERATION_DELETE_NON_MEMBER_MENTIONS", False)):
+        def _norm_uname(uname: str | None) -> str:
+            return (uname or "").lstrip("@").strip().lower()
+
+        async def _resolve_mention_member_id(entity) -> int | None:
+            t = entity.type.value if hasattr(entity.type, "value") else entity.type
+            t = str(t).lower()
+            if t == "text_mention":
+                with contextlib.suppress(Exception):
+                    ent_user = getattr(entity, "user", None)
+                    if ent_user and getattr(ent_user, "id", None):
+                        return int(ent_user.id)
+                return None
+            if t != "mention":
+                return None
+
+            try:
+                uname = _norm_uname(raw[entity.offset : entity.offset + entity.length])
+            except Exception:
+                return None
+            if not uname:
+                return None
+
+            try:
+                cached_uid = await redis_client.hget(f"user_map:{chat_id}", uname)
+                if cached_uid is not None:
+                    if isinstance(cached_uid, (bytes, bytearray)):
+                        cached_uid = cached_uid.decode("utf-8", "ignore")
+                    return int(str(cached_uid).strip())
+            except Exception:
+                logger.debug("mention membership: user_map lookup failed chat=%s uname=%s", chat_id, uname, exc_info=True)
+
+            try:
+                resolved_chat = await bot.get_chat(f"@{uname}")
+                resolved_id = int(getattr(resolved_chat, "id", 0) or 0)
+                return resolved_id if resolved_id else None
+            except Exception:
+                logger.debug("mention membership: get_chat failed chat=%s uname=%s", chat_id, uname, exc_info=True)
+                return None
+
+        async def _is_member_or_unknown(member_id: int | None) -> bool:
+            if not member_id:
+                return True
+            try:
+                member = await bot.get_chat_member(chat_id, int(member_id))
+                status = getattr(member, "status", None)
+                if hasattr(status, "value"):
+                    status = status.value
+                return str(status or "").strip().lower() not in {"left", "kicked"}
+            except Exception as exc:
+                err = str(exc).lower()
+                if any(token in err for token in ("user not found", "not participant", "participant")):
+                    return False
+                logger.warning(
+                    "mention membership: get_chat_member transient failure chat=%s user_id=%s error=%s",
+                    chat_id,
+                    member_id,
+                    exc,
+                )
+                return True
+
+        for e in ents:
+            member_id = await _resolve_mention_member_id(e)
+            if member_id is None:
+                continue
+            if not await _is_member_or_unknown(member_id):
+                await _flag(
+                    chat_id,
+                    message.message_id,
+                    action="delete",
+                    reason=_ctx_reason("mention_non_member"),
+                    user_id=int(getattr(u, "id", 0) or 0),
+                )
+                return await _delete_and_handle("mention_non_member")
 
     if not settings.MODERATION_ALLOW_MENTIONS:
         for e in ents:

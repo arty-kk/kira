@@ -121,13 +121,11 @@ RESPOND_TIMEOUT = int(getattr(settings, "RESPOND_TIMEOUT", 150))
 JOB_PROCESSING_TTL = max(int(getattr(settings, "JOB_PROCESSING_TTL", 0)), RESPOND_TIMEOUT + 30)
 TTS_REPLY_TO_VOICE_IN_GROUPS = bool(getattr(
     settings, "TTS_REPLY_TO_VOICE_IN_GROUPS", os.environ.get("TTS_REPLY_TO_VOICE_IN_GROUPS", "0") not in ("0","false","False")))
-MODERATION_STATUS_WAIT_SEC = float(getattr(settings, "MODERATION_STATUS_WAIT_SEC", 1.2))
-MODERATION_STATUS_POLL_SEC = float(getattr(settings, "MODERATION_STATUS_POLL_SEC", 0.1))
-MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 3))
-MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC = int(getattr(settings, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 60))
-MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC = int(
-    getattr(settings, "MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC", MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC)
-)
+MODERATION_STATUS_WAIT_SEC = float(settings.MODERATION_STATUS_WAIT_SEC)
+MODERATION_STATUS_POLL_SEC = float(settings.MODERATION_STATUS_POLL_SEC)
+MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS = int(settings.MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS)
+MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC = int(settings.MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC)
+MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC = int(settings.MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC)
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
@@ -1503,18 +1501,15 @@ async def handle_job(raw, processing_key: str) -> None:
                                 exc,
                             )
 
-                        inflight_wait_cap = max(0, int(MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC))
-                        inflight_wait_limit_hit = inflight_wait_cap > 0 and elapsed_sec >= inflight_wait_cap
-                        force_requeue_for_inflight = (
-                            inflight and (hit_attempt_limit or hit_wait_limit) and not inflight_wait_limit_hit
-                        )
-                        should_requeue = not tracking_failed and (
-                            force_requeue_for_inflight or not (hit_attempt_limit or hit_wait_limit)
+                        # For trusted moderation wait, prefer elapsed wait-limit over attempt-limit to avoid
+                        # premature terminal timeouts caused by short Redis/Celery scheduling jitter.
+                        # If wait-limit is explicitly disabled (<=0), keep attempt-limit as a hard safety cap.
+                        wait_limit_enabled = MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC > 0
+                        should_requeue = (not tracking_failed) and (
+                            (not hit_wait_limit) if wait_limit_enabled else (not hit_attempt_limit)
                         )
 
                         if should_requeue:
-                            if force_requeue_for_inflight:
-                                await asyncio.sleep(random.uniform(0.1, 0.3))
 
                             logger.warning(
                                 "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s inflight=%s",

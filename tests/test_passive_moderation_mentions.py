@@ -69,7 +69,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=2)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])) as mentions_mock,
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))) as mentions_mock,
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
@@ -102,11 +102,13 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            first = await passive_moderation.extract_external_mentions(1, text, entities)
-            second = await passive_moderation.extract_external_mentions(1, text, entities)
+            first_external, first_unresolved = await passive_moderation.extract_external_mentions(1, text, entities)
+            second_external, second_unresolved = await passive_moderation.extract_external_mentions(1, text, entities)
 
-        self.assertEqual(first, [])
-        self.assertEqual(second, [])
+        self.assertEqual(first_external, [])
+        self.assertFalse(first_unresolved)
+        self.assertEqual(second_external, [])
+        self.assertFalse(second_unresolved)
         bot.get_chat.assert_awaited_once_with("@known")
 
 
@@ -131,9 +133,10 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            external = await passive_moderation.extract_external_mentions(1, text, entities)
+            external, unresolved = await passive_moderation.extract_external_mentions(1, text, entities)
 
         self.assertEqual(external, [])
+        self.assertFalse(unresolved)
         bot.get_chat.assert_not_awaited()
 
     async def test_check_light_does_not_flag_own_bot_mention_as_link_violation(self) -> None:
@@ -186,11 +189,12 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         ):
-            external = await passive_moderation.extract_external_mentions(1, text, entities)
+            external, unresolved = await passive_moderation.extract_external_mentions(1, text, entities)
 
         self.assertEqual(external, [])
+        self.assertTrue(unresolved)
 
-    async def test_check_light_does_not_flag_link_violation_on_mention_resolve_error(self) -> None:
+    async def test_check_light_flags_link_violation_on_mention_resolve_error_when_flag_enabled(self) -> None:
         text = "hello @Broken"
         entities = [{"type": "mention", "offset": 6, "length": 7}]
 
@@ -201,6 +205,42 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 types.SimpleNamespace(
                     ENABLE_MODERATION=True,
                     MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    MODERATION_DELETE_UNRESOLVED_MENTIONS=True,
+                    TELEGRAM_BOT_USERNAME="kiragame_aibot",
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(
+                passive_moderation,
+                "get_bot",
+                return_value=types.SimpleNamespace(get_chat=AsyncMock(side_effect=RuntimeError("telegram api timeout"))),
+            ),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "link_violation")
+
+    async def test_check_light_keeps_clean_on_mention_resolve_error_when_flag_disabled(self) -> None:
+        text = "hello @Broken"
+        entities = [{"type": "mention", "offset": 6, "length": 7}]
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    MODERATION_DELETE_UNRESOLVED_MENTIONS=False,
                     TELEGRAM_BOT_USERNAME="kiragame_aibot",
                     MOD_MENTION_RESOLVE_TIMEOUT=0.2,
                     MOD_MENTION_RESOLVE_CONCURRENCY=2,
@@ -299,7 +339,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
@@ -316,7 +356,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
@@ -334,7 +374,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
@@ -351,7 +391,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
@@ -368,7 +408,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
             patch.object(passive_moderation, "extract_urls", return_value=[]),
-            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=[])),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
             patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(passive_moderation, "url_is_unwanted", return_value=False),
             patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),

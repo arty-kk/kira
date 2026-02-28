@@ -335,10 +335,10 @@ async def extract_external_mentions(
     chat_id: int,
     text: str,
     entities: List[dict] | None = None,
-) -> List[str]:
-    """Return @usernames that resolve to external channels/bots."""
+) -> tuple[List[str], bool]:
+    """Return (external_mentions, has_unresolved_mentions)."""
     if not text or not entities:
-        return []
+        return [], False
 
     def _norm_uname(u: str) -> str:
         return (u or "").lstrip("@").strip().lower()
@@ -347,6 +347,7 @@ async def extract_external_mentions(
     bot = get_bot()
     own_bot_username = str(getattr(settings, "TELEGRAM_BOT_USERNAME", "") or "").lstrip("@").strip().lower()
     external: list[str] = []
+    has_unresolved = False
     usernames: list[str] = []
 
     for ent in entities:
@@ -368,7 +369,7 @@ async def extract_external_mentions(
 
     usernames = list(dict.fromkeys(usernames))
     if not usernames:
-        return []
+        return [], False
 
     resolve_timeout = float(getattr(settings, "MOD_MENTION_RESOLVE_TIMEOUT", 1.5))
     resolve_concurrency = int(max(1, int(getattr(settings, "MOD_MENTION_RESOLVE_CONCURRENCY", 3))))
@@ -433,6 +434,7 @@ async def extract_external_mentions(
     outcomes = await asyncio.gather(*(_resolve_outcome(uname) for uname in usernames), return_exceptions=True)
     for uname, outcome in zip(usernames, outcomes):
         if isinstance(outcome, Exception):
+            has_unresolved = True
             logger.warning(
                 "extract_external_mentions: unknown_error gather exception chat_id=%s uname=%s",
                 chat_id,
@@ -442,8 +444,10 @@ async def extract_external_mentions(
             continue
         if outcome in {"channel", "bot"}:
             external.append(uname)
+        elif outcome == "unknown_error":
+            has_unresolved = True
 
-    return external
+    return external, has_unresolved
 
 
 def contains_any_link_obfuscated(text: str) -> bool:
@@ -643,10 +647,14 @@ async def check_light(
         return "spam_links"
 
     external_mentions: list[str] = []
+    has_unresolved_mentions = False
     if links_blocked:
-        external_mentions = await extract_external_mentions(chat_id, text or "", entities)
+        external_mentions, has_unresolved_mentions = await extract_external_mentions(chat_id, text or "", entities)
         if external_mentions:
             logger.debug("check_light: external_mentions=%r", external_mentions)
+            return "link_violation"
+        if has_unresolved_mentions and bool(getattr(settings, "MODERATION_DELETE_UNRESOLVED_MENTIONS", False)):
+            logger.debug("check_light: unresolved_mentions link_violation")
             return "link_violation"
 
     if links_blocked and contains_telegram_obfuscated(text or ""):
