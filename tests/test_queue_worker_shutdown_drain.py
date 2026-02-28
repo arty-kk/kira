@@ -59,6 +59,11 @@ def _load_queue_worker():
         OPENAI_MAX_CONCURRENT_REQUESTS=4,
         QUEUE_KEY="q:in",
         RESPOND_TIMEOUT=5,
+        MODERATION_STATUS_WAIT_SEC=1.2,
+        MODERATION_STATUS_POLL_SEC=0.1,
+        MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS=3,
+        MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC=60,
+        MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC=60,
     )
 
     fake_bot_debouncer.compute_typing_delay = lambda *_args, **_kwargs: 0.0
