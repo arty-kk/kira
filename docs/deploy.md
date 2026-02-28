@@ -359,6 +359,19 @@ This allows changing worker tuning without rebuilding images: update `.env` and 
   - `CELERY_TASKS_CONCURRENCY`, `CELERY_TASKS_PREFETCH` (+ optional `CELERY_TASKS_POOL`, `CELERY_TASKS_LOGLEVEL`).
   - `CELERY_MEDIA_CONCURRENCY`, `CELERY_MEDIA_PREFETCH`.
   - `CELERY_MODERATION_CONCURRENCY`, `CELERY_MODERATION_PREFETCH`.
+- Bot moderation rollout toggle:
+  - `MODERATION_DELETE_NON_MEMBER_MENTIONS` (default `true`) — when enabled, group moderation deletes messages with `@mention`/`text_mention` that resolve to non-members (`left`/`kicked`/not participant).
+  - `MODERATION_DELETE_UNRESOLVED_MENTIONS` (default `false`) — when enabled, unresolved `@mention` resolution errors in light moderation are treated as `link_violation` under blocked link policy.
+- Comment actor registration policy:
+  - `COMMENT_MODERATION_REQUIRE_REGISTERED_ACTOR` (default `false`) — enforce registered actor check for `comment` moderation context.
+  - `COMMENT_MODERATION_REGISTERED_IDS` (default empty CSV) — allowed `from_user.id` list for comment context.
+  - `COMMENT_MODERATION_REGISTERED_USERNAMES` (default empty CSV) — allowed usernames for comment context (normalized lowercase, `@` ignored).
+- `worker-queue` moderation wait tuning:
+  - `MODERATION_STATUS_WAIT_SEC` (default `1.2`) — per-attempt local wait for `mod:msg:*` status before trusted requeue decision.
+  - `MODERATION_STATUS_POLL_SEC` (default `0.1`) — poll interval while waiting for moderation status.
+  - `MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS` (default `3`) — trusted timeout prioritizes elapsed wait limit; if wait limit is disabled (`<=0`), this becomes the hard safety cap.
+  - `MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC` (default `60`) — trusted moderation-wait terminal threshold by elapsed seconds.
+  - `MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC` (default `60`) — compatibility knob for existing env; keep aligned with wait limit unless specific incident tuning is required.
 
 `CELERY_BROKER_URL` already has a compose default via `redis_kv` for current services, but it can still be overridden through `.env`.
 

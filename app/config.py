@@ -80,6 +80,15 @@ def _parse_int_csv_env(name: str) -> tuple[List[int], List[str]]:
     return values, invalid_tokens
 
 
+def _parse_username_csv_env(name: str) -> List[str]:
+    raw = (_get_env(name, "", conv=str) or "")
+    values: List[str] = []
+    for token in str(raw).split(","):
+        cleaned = token.strip().lstrip("@").lower()
+        if cleaned:
+            values.append(cleaned)
+    return list(dict.fromkeys(values))
+
 
 
 def _default_embed_dim_from_model() -> int:
@@ -242,6 +251,8 @@ class Settings:
         self.COMMENT_SOURCE_CHANNEL_IDS, self._COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS = _parse_int_csv_env(
             "COMMENT_SOURCE_CHANNEL_IDS"
         )
+        self.COMMENT_MODERATION_REGISTERED_IDS, _ = _parse_int_csv_env("COMMENT_MODERATION_REGISTERED_IDS")
+        self.COMMENT_MODERATION_REGISTERED_USERNAMES = _parse_username_csv_env("COMMENT_MODERATION_REGISTERED_USERNAMES")
         self.MODERATOR_IDS, self._MODERATOR_IDS_INVALID_TOKENS = _parse_int_csv_env("MODERATOR_IDS")
         validate_settings_config(self)
 
@@ -297,6 +308,11 @@ class Settings:
     COMMENT_MODERATION_LINK_POLICY: str = field(
         default_factory=lambda: _get_env("COMMENT_MODERATION_LINK_POLICY", "group_default", conv=str)
     )
+    COMMENT_MODERATION_REQUIRE_REGISTERED_ACTOR: bool = field(
+        default_factory=lambda: _get_env("COMMENT_MODERATION_REQUIRE_REGISTERED_ACTOR", "false", conv=_parse_bool)
+    )
+    COMMENT_MODERATION_REGISTERED_IDS: List[int] = field(default_factory=list)
+    COMMENT_MODERATION_REGISTERED_USERNAMES: List[str] = field(default_factory=list)
     COMMENT_TARGET_CHAT_IDS: List[int] = field(default_factory=list)
     COMMENT_SOURCE_CHANNEL_IDS: List[int] = field(default_factory=list)
     _COMMENT_TARGET_CHAT_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
@@ -367,6 +383,13 @@ class Settings:
     MOD_PERIOD_SECONDS: int = field(default_factory=lambda: _get_env("MOD_PERIOD_SECONDS", "5", conv=int))
     MOD_MAX_MESSAGES: int = field(default_factory=lambda: _get_env("MOD_MAX_MESSAGES", "5", conv=int))
     MOD_ALERT_THROTTLE_SECONDS: int = field(default_factory=lambda: _get_env("MOD_ALERT_THROTTLE_SECONDS", "60", conv=int))
+    MODERATION_STATUS_WAIT_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_WAIT_SEC", "1.2", conv=float))
+    MODERATION_STATUS_POLL_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_POLL_SEC", "0.1", conv=float))
+    MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS: int = field(default_factory=lambda: _get_env("MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", "3", conv=int))
+    MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC: int = field(default_factory=lambda: _get_env("MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", "60", conv=int))
+    MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC: int = field(
+        default_factory=lambda: _get_env("MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC", _get_env("MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", "60"), conv=int)
+    )
     SUSPICIOUS_THRESHOLD: int = field(default_factory=lambda: _get_env("SUSPICIOUS_THRESHOLD", "2", conv=int))
     SUSPICIOUS_WINDOW_SEC: int = field(default_factory=lambda: _get_env("SUSPICIOUS_WINDOW_SEC", "60", conv=int))
     # Combot-style moderation toggles
@@ -403,6 +426,8 @@ class Settings:
     # allows
     MODERATION_ALLOW_STICKERS:         bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_STICKERS",         "true",  conv=_parse_bool))
     MODERATION_ALLOW_MENTIONS:         bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_MENTIONS",         "true",  conv=_parse_bool))
+    MODERATION_DELETE_NON_MEMBER_MENTIONS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_NON_MEMBER_MENTIONS", "true", conv=_parse_bool))
+    MODERATION_DELETE_UNRESOLVED_MENTIONS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_UNRESOLVED_MENTIONS", "false", conv=_parse_bool))
     MODERATION_ALLOW_GAMES:            bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_GAMES",            "true",  conv=_parse_bool))
     MODERATION_ALLOW_DICE:             bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_DICE",             "true",  conv=_parse_bool))
     MODERATION_ALLOW_CUSTOM_EMOJI:     bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_CUSTOM_EMOJI",     "true",  conv=_parse_bool))
