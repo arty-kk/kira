@@ -19,11 +19,6 @@ from .query_embedding import normalize_query_embedding
 logger = logging.getLogger(__name__)
 
 MMR_CANDIDATES_TOP_N = 30
-try:
-    _KNN_PREFETCH_MULT = int(getattr(settings, "RAG_KNN_PREFETCH_MULT", 5) or 5)
-except Exception:
-    _KNN_PREFETCH_MULT = 5
-_KNN_PREFETCH_MULT = max(1, min(25, _KNN_PREFETCH_MULT))
 
 
 def _embedding_param(vec: List[float], *, expected_dim: int, model: str | None = None) -> object:
@@ -111,6 +106,10 @@ def _mmr_select_ids(
         remaining.remove(best_id)
 
     return selected
+
+
+def _sort_ids_by_similarity(scores_by_id: Dict[str, float]) -> List[str]:
+    return sorted(scores_by_id.keys(), key=lambda i: scores_by_id[i], reverse=True)
 
 
 def invalidate_tags_index(owner_id: Optional[int] = None) -> None:
@@ -216,8 +215,13 @@ async def find_tag_hits(
         else int(getattr(settings, "KNOWLEDGE_TOP_K", 3) or 3)
     )
     lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
-    candidate_limit = max(top_k, MMR_CANDIDATES_TOP_N)
-    knn_limit = max(candidate_limit, 1) * _KNN_PREFETCH_MULT
+    try:
+        mmr_candidates_top_n = int(getattr(settings, "RAG_MMR_CANDIDATES_TOP_N", MMR_CANDIDATES_TOP_N) or MMR_CANDIDATES_TOP_N)
+    except Exception:
+        mmr_candidates_top_n = MMR_CANDIDATES_TOP_N
+    mmr_candidates_top_n = max(1, mmr_candidates_top_n)
+
+    candidate_limit = max(top_k, mmr_candidates_top_n)
 
     # 4) SQL
     distance_raw, distance_sel = _build_vector_distance_expr(dim=expected_dim)
@@ -263,7 +267,6 @@ async def find_tag_hits(
             .where(*conditions)
             .where(distance_raw <= max_distance)
             .order_by(distance_raw.asc())
-            .limit(knn_limit)
             .cte("knn")
         )
 
@@ -375,8 +378,6 @@ async def find_tag_hits(
         )
         return []
 
-    cand_ids = sorted(scores_by_id.keys(), key=lambda i: scores_by_id[i], reverse=True)[
-        :MMR_CANDIDATES_TOP_N
-    ]
+    cand_ids = _sort_ids_by_similarity(scores_by_id)
     picked = _mmr_select_ids(cand_ids, vec_by_id, scores_by_id, top_k=top_k, lam=lam)
     return [(scores_by_id[i], i, text_by_id.get(i, "")) for i in picked]
