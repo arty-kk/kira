@@ -42,7 +42,7 @@ from app.prompts_base import (
 )
 from app.core.db import session_scope
 from app.core.embedding_utils import get_rag_embedding_model, resolve_embedding_dim
-from app.core.models import RagTagVector, User, ApiKeyKnowledge
+from app.core.models import User, ApiKeyKnowledge
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import needs_coref, resolve_coref
 from .gender import detect_gender
@@ -282,19 +282,63 @@ async def _compute_on_topic_relevance(
     )
     if should_run_relevance:
         try:
-            on_topic_flag, on_topic_hits = await is_relevant(
-                query_to_model,
-                model=effective_embedding_model,
-                threshold=settings.RELEVANCE_THRESHOLD,
-                return_hits=True,
-                persona_owner_id=persona_owner_id,
-                knowledge_owner_id=knowledge_owner_id,
-                knowledge_kb_id=knowledge_kb_id,
-                strict_autoreply_gate=(trigger == "check_on_topic"),
-                query_embedding=rag_query_context.query_embedding,
-                embedding_model=rag_query_context.embedding_model,
-                query_embedding_reuse_counter=reuse_counter,
-            )
+            disable_mmr_for_autoreply = bool(getattr(settings, "RAG_DISABLE_MMR_FOR_AUTOREPLY", True))
+            apply_mmr = not (trigger == "check_on_topic" and disable_mmr_for_autoreply)
+
+            if trigger == "check_on_topic":
+                trigger_threshold = float(
+                    getattr(settings, "AUTOREPLY_GENERATION_RELEVANCE_THRESHOLD", settings.RELEVANCE_THRESHOLD)
+                    or settings.RELEVANCE_THRESHOLD
+                )
+                generation_threshold = float(
+                    getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28
+                )
+                on_topic_flag, on_topic_hits = await is_relevant(
+                    query_to_model,
+                    model=effective_embedding_model,
+                    threshold=trigger_threshold,
+                    return_hits=True,
+                    persona_owner_id=persona_owner_id,
+                    knowledge_owner_id=knowledge_owner_id,
+                    knowledge_kb_id=knowledge_kb_id,
+                    strict_autoreply_gate=True,
+                    query_embedding=rag_query_context.query_embedding,
+                    embedding_model=rag_query_context.embedding_model,
+                    query_embedding_reuse_counter=reuse_counter,
+                    apply_mmr=apply_mmr,
+                )
+                if on_topic_flag:
+                    _flag, generation_hits = await is_relevant(
+                        query_to_model,
+                        model=effective_embedding_model,
+                        threshold=generation_threshold,
+                        return_hits=True,
+                        persona_owner_id=persona_owner_id,
+                        knowledge_owner_id=knowledge_owner_id,
+                        knowledge_kb_id=knowledge_kb_id,
+                        strict_autoreply_gate=False,
+                        query_embedding=rag_query_context.query_embedding,
+                        embedding_model=rag_query_context.embedding_model,
+                        query_embedding_reuse_counter=reuse_counter,
+                        apply_mmr=apply_mmr,
+                    )
+                    if generation_hits:
+                        on_topic_hits = generation_hits
+            else:
+                on_topic_flag, on_topic_hits = await is_relevant(
+                    query_to_model,
+                    model=effective_embedding_model,
+                    threshold=settings.RELEVANCE_THRESHOLD,
+                    return_hits=True,
+                    persona_owner_id=persona_owner_id,
+                    knowledge_owner_id=knowledge_owner_id,
+                    knowledge_kb_id=knowledge_kb_id,
+                    strict_autoreply_gate=False,
+                    query_embedding=rag_query_context.query_embedding,
+                    embedding_model=rag_query_context.embedding_model,
+                    query_embedding_reuse_counter=reuse_counter,
+                    apply_mmr=apply_mmr,
+                )
             rag_query_context.query_embedding_reuse_count = int(reuse_counter[0])
         except Exception:
             logger.exception("is_relevant error for chat_id=%s", chat_id, exc_info=True)
@@ -426,7 +470,7 @@ def _last_ts(history: list[dict], role: str) -> float:
             best = t
     return best
 
-def _history_tail_for_coref(history: List[Dict], max_messages: int = 10) -> List[Dict[str, str]]:
+def _history_tail_for_coref(history: List[Dict], max_messages: int = 6) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
     for m in (history or []):
         role = (m.get("role") or "").strip()
@@ -489,6 +533,7 @@ def _group_coref_source_from_tail(
     user_id: int,
 ) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
+    include_peer_messages = bool(getattr(settings, "COREF_GROUP_INCLUDE_PEERS", True))
     g_re = re.compile(r"^\[(\d+)\]\s*\(([^)]+)\)\s*\[u:(\d+)\]\s*(.*)$")
     for ln in g_tail or []:
         m = g_re.match((ln or "").strip())
@@ -507,8 +552,13 @@ def _group_coref_source_from_tail(
             out.append({"role": "assistant", "content": txt})
             continue
 
-        if role_raw == "user" and speaker_id == int(user_id):
+        if role_raw != "user":
+            continue
+
+        if speaker_id == int(user_id):
             out.append({"role": "user", "content": txt})
+        elif include_peer_messages:
+            out.append({"role": "assistant", "content": f"[peer_context] {txt}"})
 
     return out
 
@@ -1285,7 +1335,6 @@ async def respond_to_user(
     )
 
     # Build initial history from STM only
-    coref_gate_t = asyncio.create_task(needs_coref(query))
     if getattr(settings, "LLM_AUDIT", False):
         logger.info("[TRACE] raw=%r query=%r", text[:200], query[:200])
 
@@ -1502,7 +1551,35 @@ async def respond_to_user(
     else:
         pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((query or "").strip()))
         try:
-            need_coref_flag = await coref_gate_t
+            _coref_src: list[dict] = []
+            if (chat_id != user_id) and (not is_api):
+                try:
+                    g_tail = await get_group_stm_tail(
+                        chat_id,
+                        cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
+                        max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
+                    )
+                    _coref_src.extend(
+                        _group_coref_source_from_tail(
+                            g_tail,
+                            user_id=user_id,
+                        )
+                    )
+                except Exception as e:
+                    logger.debug("group coref context failed chat=%s: %r", chat_id, e)
+
+            _coref_src.extend(list(history or []))
+            if ctx_ephemeral_history:
+                _coref_src.extend(ctx_ephemeral_history)
+            coref_hist = _history_tail_for_coref(
+                _coref_src,
+                max_messages=min(6, int(getattr(settings, "COREF_CONTEXT_MAX_MESSAGES", 6) or 6)),
+            )
+        except Exception:
+            coref_hist = []
+
+        try:
+            need_coref_flag = await needs_coref(query, history=coref_hist)
         except Exception as e:
             logger.warning("needs_coref failed: %s", e)
             need_coref_flag = False
@@ -1511,30 +1588,6 @@ async def respond_to_user(
             resolved = query
         else:
             try:
-                _coref_src: list[dict] = []
-                if (chat_id != user_id) and (not is_api):
-                    try:
-                        g_tail = await get_group_stm_tail(
-                            chat_id,
-                            cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
-                            max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
-                        )
-                        _coref_src.extend(
-                            _group_coref_source_from_tail(
-                                g_tail,
-                                user_id=user_id,
-                            )
-                        )
-                    except Exception as e:
-                        logger.debug("group coref context failed chat=%s: %r", chat_id, e)
-
-                _coref_src.extend(list(history or []))
-                if ctx_ephemeral_history:
-                    _coref_src.extend(ctx_ephemeral_history)
-                coref_hist = _history_tail_for_coref(
-                    _coref_src,
-                    max_messages=int(getattr(settings, "COREF_CONTEXT_MAX_MESSAGES", 10) or 10),
-                )
                 resolved = await resolve_coref(query, coref_hist)
                 if resolved != query:
                     logger.info(
@@ -1761,7 +1814,6 @@ async def respond_to_user(
         return res or None
 
     hits: List[Any] = []
-    emb_model = None
     if reply is None:
         top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 3))
         if trigger == "check_on_topic":
@@ -1771,7 +1823,6 @@ async def respond_to_user(
                 top_k = 1
         top_k = max(1, top_k)
         if on_topic_flag and on_topic_hits:
-            emb_model = get_rag_embedding_model()
             hits = on_topic_hits[:top_k]
             logger.info(
                 "RAG: on_topic; trigger=%s top_k=%d hits=%d; top_scores=%s",

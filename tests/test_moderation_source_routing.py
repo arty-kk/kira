@@ -218,7 +218,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
@@ -235,7 +235,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
@@ -252,7 +252,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 

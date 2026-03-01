@@ -58,6 +58,7 @@ COREF_SYSTEM_PROMPT = (
     "Decide if the user message contains references that may require coreference/deixis resolution "
     "AGAINST prior chat history. Output JSON ONLY: {\"answer\":\"YES\"|\"NO\"} (uppercase).\n"
     "Return NO if: no alphabetic chars OR only 1st/2nd-person forms (incl. possessives) and no 3rd-person/demonstrative/deictic refs.\n"
+    "Short confirmations/acceptances (e.g. ok/да/давай/go ahead/угу) may still require YES when SNIPPET shows an unresolved offer/proposal/question they accept.\n"
     "Return YES if any of:\n"
     "A) 3rd-person personal pronoun (any language),\n"
     "B) stand-alone demonstrative pronoun (e.g., EN this/that/these/those; RU это/то),\n"
@@ -72,6 +73,8 @@ COREF_EXTRACT_PROMPT = (
     "Extract coreference/deixis links between the latest user QUERY and prior chat SNIPPET.\n"
     "SNIPPET is JSON array of {\"i\":int,\"r\":\"u\"|\"a\",\"c\":string}. "
     "Antecedent offsets are within SNIPPET[msg_index].c.\n"
+    "Goal: minimal disambiguation only. NEVER add new facts, links, contact data, prices, or actions absent in QUERY.\n"
+    "For short confirmations (e.g. да/давай/ок/go ahead), if SNIPPET has an immediately preceding assistant offer/proposal/question being accepted, resolve to that concrete antecedent.\n"
     "Return links ONLY if high-confidence and unambiguous, for:\n"
     "- 3rd-person pronouns (stand-alone),\n"
     "- pronominal demonstratives (stand-alone; not determiner),\n"
@@ -79,6 +82,18 @@ COREF_EXTRACT_PROMPT = (
     "Exclude: 1st/2nd person; demonstrative determiners; complementizer that/что; "
     "EN existential there is/are/was/were/there's; anchored deictics (\"here in X\" / \"там в Y\").\n"
     "Output ONLY single-line minified JSON matching the given schema. No extra text.\n\n"
+)
+
+
+
+COREF_REWRITE_PROMPT = (
+    "Rewrite the latest user QUERY using prior chat SNIPPET only when necessary for contextual clarity.\n"
+    "SNIPPET is JSON array of {\"i\":int,\"r\":\"u\"|\"a\",\"c\":string}.\n"
+    "Rules:\n"
+    "- Preserve user intent exactly; no new facts/links/prices/contacts/actions not grounded in SNIPPET.\n"
+    "- For short confirmations (да/давай/ok/go ahead), resolve to the latest explicit assistant proposal/question if present.\n"
+    "- If ambiguous or unsafe, return QUERY unchanged.\n"
+    "Output JSON ONLY: {\"rewritten\": string}.\n\n"
 )
 
 

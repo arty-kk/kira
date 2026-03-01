@@ -26,6 +26,7 @@ async def is_relevant(
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
     query_embedding_reuse_counter: Optional[List[int]] = None,
+    apply_mmr: bool = True,
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     _ = persona_owner_id
@@ -57,16 +58,11 @@ async def is_relevant(
         kb_id_int = None
 
     try:
-        keyword_thr_strict = float(getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", 0.70) or 0.70)
-    except Exception:
-        keyword_thr_strict = 0.70
-
-    try:
         keyword_thr_direct = float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
     except Exception:
         keyword_thr_direct = 0.28
 
-    keyword_thr = keyword_thr_strict if strict_autoreply_gate else keyword_thr_direct
+    keyword_thr = float(threshold) if strict_autoreply_gate else keyword_thr_direct
     keyword_thr = max(0.0, min(1.0, keyword_thr))
 
     try:
@@ -81,6 +77,7 @@ async def is_relevant(
             query_embedding=query_embedding,
             embedding_model=(embedding_model or model),
             min_similarity=keyword_thr,
+            apply_mmr=apply_mmr,
         )
     except Exception as exc:
         query_embedding_len = len(query_embedding) if query_embedding is not None and hasattr(query_embedding, "__len__") else None
@@ -102,20 +99,10 @@ async def is_relevant(
     ok_tag = True
     if strict_autoreply_gate:
         try:
-            margin = float(getattr(settings, "RELEVANCE_MARGIN", 0.0))
-        except Exception:
-            margin = 0.0
-        try:
             tag_top = float(tag_hits[0][0])
         except Exception:
             tag_top = 0.0
-        try:
-            tag_delta = float(
-                getattr(settings, "KEYWORD_RELEVANCE_CONFIRM_DELTA", 0.05) or 0.0
-            )
-        except Exception:
-            tag_delta = 0.05
-        tag_thr_eff = threshold + margin + max(0.0, tag_delta)
+        tag_thr_eff = max(0.0, min(1.0, float(threshold)))
         ok_tag = tag_top >= tag_thr_eff
         logger.info(
             "gate: keyword hits=%d top=%.3f thr=%.3f ok=%s (strict autoreply gate)",

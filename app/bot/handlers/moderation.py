@@ -514,6 +514,7 @@ async def handle_passive_moderation(
                 "promo_profile_cta": "Promotional CTA to profile/bio/channel",
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "AI moderation policy violation",
+                "sexual_content": "Sexual/erotic content policy violation",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")

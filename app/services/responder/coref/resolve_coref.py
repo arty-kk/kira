@@ -10,7 +10,7 @@ from typing import List, Dict, Any
 
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.config import settings
-from app.prompts_base import COREF_EXTRACT_PROMPT
+from app.prompts_base import COREF_EXTRACT_PROMPT, COREF_REWRITE_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ MIN_CONFIDENCE = 0.80
 MAX_ANT_LENGTH = 200
 MAX_OUTPUT_MULT = 4
 
-SNIPPET_MAX_MESSAGES = 8  # можно уменьшить до 8, если хотите ещё дешевле
+SNIPPET_MAX_MESSAGES = min(6, int(getattr(settings, "COREF_SNIPPET_MAX_MESSAGES", 6) or 6))
 
 
 def _parse_json(s: str) -> Dict[str, Any]:
@@ -215,6 +215,7 @@ def _looks_like_first_or_second(pronoun: str) -> bool:
 
 
 _EXTRACT_PROMPT = COREF_EXTRACT_PROMPT
+_REWRITE_PROMPT = COREF_REWRITE_PROMPT
 
 _EXTRACT_SCHEMA = {
     "type": "object",
@@ -344,6 +345,52 @@ def _validate_links(obj: Dict[str, Any], query: str, snippet_texts: List[str]) -
     return out
 
 
+
+
+async def _rewrite_with_prompt(query: str, snippet_blob: str) -> str:
+    msgs = [
+        _msg("system", _REWRITE_PROMPT),
+        _msg("user", f"SNIPPET:\n{snippet_blob}\n\nQUERY:\n{query}\n"),
+    ]
+    try:
+        resp = await asyncio.wait_for(
+            _call_openai_with_retry(
+                endpoint="responses.create",
+                model=settings.REASONING_MODEL,
+                input=msgs,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "coref_rewrite",
+                        "strict": True,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "rewritten": {"type": "string"}
+                            },
+                            "required": ["rewritten"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                max_output_tokens=160,
+                temperature=0,
+            ),
+            timeout=settings.REASONING_MODEL_TIMEOUT,
+        )
+        raw = (_get_output_text(resp) or "").strip()
+        if not raw:
+            return query
+        obj = json.loads(raw)
+        rewritten = str(obj.get("rewritten") or "").strip()
+        if not rewritten:
+            return query
+        if len(rewritten) > MAX_OUTPUT_MULT * max(10, len(query)):
+            return query
+        return rewritten
+    except Exception:
+        return query
+
 async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
     if text is None:
         return ""
@@ -420,7 +467,8 @@ async def resolve_coref(text: str, history: List[Dict[str, str]]) -> str:
 
     links = _validate_links(obj, query, snippet_texts)
     if not links:
-        return query
+        rewritten = await _rewrite_with_prompt(query, snippet_blob)
+        return rewritten
 
     rewritten = _apply_links(query, links)
 

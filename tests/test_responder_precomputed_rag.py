@@ -59,6 +59,33 @@ class ResponderPrecomputedRagTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(is_relevant_mock.await_args.args[0], "raw rag query")
         self.assertEqual(rag_ctx.rag_query_source, "raw")
 
+    async def test_autoreply_runs_strict_trigger_then_generation_relevance(self):
+        is_relevant_mock = AsyncMock(side_effect=[(True, [(0.81, "id-1", "strict")]), (True, [(0.41, "id-2", "gen")])])
+        with patch.object(core, "is_relevant", is_relevant_mock),              patch.object(core, "_get_query_embedding", AsyncMock(return_value=[0.2, 0.1])):
+            ok, hits, _ = await core._compute_on_topic_relevance(
+                chat_id=100,
+                query_to_model="autotrigger",
+                trigger="check_on_topic",
+                persona_owner_id=100,
+                knowledge_owner_id=100,
+                knowledge_kb_id=None,
+                precomputed_rag_hits=None,
+                query_embedding=None,
+                embedding_model=None,
+                rag_precheck_source=None,
+                rag_query_source="raw",
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(hits, [(0.41, "id-2", "gen")])
+        self.assertEqual(is_relevant_mock.await_count, 2)
+        self.assertTrue(is_relevant_mock.await_args_list[0].kwargs.get("strict_autoreply_gate"))
+        self.assertFalse(is_relevant_mock.await_args_list[1].kwargs.get("strict_autoreply_gate"))
+        self.assertEqual(
+            is_relevant_mock.await_args_list[1].kwargs.get("threshold"),
+            float(getattr(core.settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -97,13 +124,15 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="What about it?", rag_query_source="raw")))
 
+        needs_coref_mock = AsyncMock(return_value=True)
+
         with patch.object(core, "get_redis", return_value=redis_stub), \
              patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
              patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
-             patch.object(core, "needs_coref", AsyncMock(return_value=True)), \
+             patch.object(core, "needs_coref", needs_coref_mock), \
              patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
@@ -123,6 +152,8 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(out, "")
         compute_mock.assert_awaited_once()
+        needs_coref_mock.assert_awaited_once()
+        self.assertIn("history", needs_coref_mock.await_args.kwargs)
         self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "rewritten query")
         self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "rewritten")
 
@@ -223,13 +254,15 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="rewritten query", rag_query_source="rewritten")))
 
+        needs_coref_mock = AsyncMock(return_value=True)
+
         with patch.object(core, "get_redis", return_value=redis_stub), \
              patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
              patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
-             patch.object(core, "needs_coref", AsyncMock(return_value=True)), \
+             patch.object(core, "needs_coref", needs_coref_mock), \
              patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
