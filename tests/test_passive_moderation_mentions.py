@@ -417,6 +417,41 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "clean")
 
+
+    async def test_check_light_flags_job_promo_without_links(self) -> None:
+        text = "Есть работа удаленно, хороший доход, пиши в личку"
+        entities = []
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "promo")
+
+    async def test_check_light_flags_explicit_nsfw_without_ai(self) -> None:
+        text = "скину porn видео"
+        entities = []
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "sexual_content")
+
     async def test_comment_context_promo_profile_cta_forces_deep_check(self) -> None:
         fake_redis = _FakeRedisHandler()
         deep_mock = AsyncMock(return_value=False)
@@ -608,7 +643,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
             patch.object(passive_moderation, "get_redis", return_value=redis),
             patch.object(passive_moderation, "get_openai", return_value=client),
         ):
@@ -619,6 +654,37 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent_input), 1)
         self.assertEqual(sent_input[0]["type"], "image_url")
         self.assertNotIn("text", sent_input[0])
+
+    async def test_moderate_with_openai_honors_enabled_category_boolean_flag(self) -> None:
+        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
+        response = types.SimpleNamespace(
+            results=[
+                types.SimpleNamespace(
+                    flagged=True,
+                    categories={"violence": True},
+                    category_scores={"violence": 0.2},
+                )
+            ]
+        )
+        create_mock = AsyncMock(return_value=response)
+        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(
+                ENABLE_AI_MODERATION=True,
+                MODERATION_MODEL="omni-moderation-latest",
+                MODERATION_AI_THRESHOLD=0.7,
+                MODERATION_AI_ENABLED_CATEGORIES=["violence"],
+                MODERATION_AI_NSFW_THRESHOLD=0.6,
+                MODERATION_CACHE_TTL=60,
+            )),
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_openai", return_value=client),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("image violence")
+
+        self.assertTrue(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "violence")
 
     async def test_moderate_with_openai_flagged_false_with_high_score_stays_false(self) -> None:
         redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
@@ -635,7 +701,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
             patch.object(passive_moderation, "get_redis", return_value=redis),
             patch.object(passive_moderation, "get_openai", return_value=client),
         ):
@@ -660,7 +726,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_TOXICITY_THRESHOLD=0.9, MODERATION_CACHE_TTL=60)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
             patch.object(passive_moderation, "get_redis", return_value=redis),
             patch.object(passive_moderation, "get_openai", return_value=client),
         ):

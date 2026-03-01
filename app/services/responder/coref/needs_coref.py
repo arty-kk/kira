@@ -2,6 +2,7 @@
 import logging
 import asyncio
 import json
+import json as _json_for_prompt
 from typing import Any, Dict, List, Optional
 
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
@@ -13,6 +14,19 @@ logger = logging.getLogger(__name__)
 
 COREF_SYSTEM = COREF_SYSTEM_PROMPT
 
+
+def _history_snippet(history: Optional[List[Dict[str, Any]]], *, max_messages: int = 6) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    for m in (history or []):
+        role = str(m.get("role") or "").strip().lower()
+        if role not in ("user", "assistant"):
+            continue
+        content = str(m.get("content") or "").strip()
+        if not content:
+            continue
+        out.append({"r": "u" if role == "user" else "a", "c": content})
+    return out[-max_messages:]
+
 def _fast_no_coref(text: str) -> bool:
     """
     Safe fast-path:
@@ -22,12 +36,14 @@ def _fast_no_coref(text: str) -> bool:
         return True
     return not any(ch.isalpha() for ch in text)
 
-def _build_user_prompt(text: str, *, force_yesno: bool = False) -> str:
+def _build_user_prompt(text: str, history: Optional[List[Dict[str, Any]]] = None, *, force_yesno: bool = False) -> str:
     suffix = " YES or NO" if force_yesno else ""
-    return 'Text:\n"""' + (text or "") + f'"""\nReply:{suffix}'
+    snippet = _history_snippet(history, max_messages=6)
+    snippet_blob = _json_for_prompt.dumps(snippet, ensure_ascii=False)
+    return 'SNIPPET:\n' + snippet_blob + '\n\nQUERY:\n"""' + (text or "") + f'"""\nReply:{suffix}'
 
-async def _ask_model(text: str, *, force_yesno: bool = False) -> str:
-    user_prompt = _build_user_prompt(text, force_yesno=force_yesno)
+async def _ask_model(text: str, history: Optional[List[Dict[str, Any]]] = None, *, force_yesno: bool = False) -> str:
+    user_prompt = _build_user_prompt(text, history=history, force_yesno=force_yesno)
 
     resp = await asyncio.wait_for(
         _call_openai_with_retry(
@@ -77,7 +93,7 @@ async def needs_coref(text: str, history: Optional[List[Dict[str, Any]]] = None)
     text = str(text)
 
     if history is not None:
-        snippet = [m for m in (history or []) if m.get("role") in ("user", "assistant")][-8:]
+        snippet = [m for m in (history or []) if m.get("role") in ("user", "assistant")][-6:]
         if not any(str(m.get("content", "")).strip() for m in snippet):
             return False
 
@@ -85,12 +101,12 @@ async def needs_coref(text: str, history: Optional[List[Dict[str, Any]]] = None)
         return False
 
     try:
-        ans = await asyncio.wait_for(_ask_model(text), timeout=settings.BASE_MODEL_TIMEOUT)
+        ans = await asyncio.wait_for(_ask_model(text, history=history), timeout=settings.BASE_MODEL_TIMEOUT)
         if ans in ("YES", "NO"):
             return ans == "YES"
 
         # Фоллбек на случай редких нарушений формата
-        ans2 = await asyncio.wait_for(_ask_model(text, force_yesno=True), timeout=settings.BASE_MODEL_TIMEOUT)
+        ans2 = await asyncio.wait_for(_ask_model(text, history=history, force_yesno=True), timeout=settings.BASE_MODEL_TIMEOUT)
         if ans2 in ("YES", "NO"):
             return ans2 == "YES"
 

@@ -54,13 +54,17 @@ def _to_plain_dict(obj: Any) -> dict[str, Any]:
     return {}
 
 
-def _primary_ai_category(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool) -> str:
+def _primary_ai_category(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool, *, enabled_categories: set[str] | None = None) -> str:
     scored: list[tuple[str, float]] = []
+    enabled = {x.strip().lower() for x in (enabled_categories or set()) if str(x).strip()}
     for key, value in category_scores.items():
+        key_s = str(key)
+        if enabled and key_s.lower() not in enabled:
+            continue
         if isinstance(value, (int, float)):
-            scored.append((str(key), float(value)))
+            scored.append((key_s, float(value)))
 
-    threshold = float(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", 0.9) or 0.9)
+    threshold = float(getattr(settings, "MODERATION_AI_THRESHOLD", 0.7) or 0.7)
     flagged_candidates = [
         (key, score)
         for key, score in scored
@@ -187,6 +191,37 @@ def contains_profile_cta_without_url(text: str) -> bool:
     has_combat_cta = bool(_COMBAT_PROMO_CTA_TRIGGER_RE.search(normalized) and _COMBAT_TOPIC_RE.search(normalized))
     has_combat_phrase = any(p.search(normalized) for p in _COMBAT_PROMO_CTA_PATTERNS)
     return bool(has_profile_cta or has_combat_cta or has_combat_phrase)
+
+
+_JOB_PROMO_PATTERNS = [
+    re.compile(r"\b(?:работа|подработк[аеи]|ваканси[яи]|доход|заработок|зп|зарплат[аы]|пассивн(?:ый|ого)?\s+доход|легк(?:ие|ий)\s+деньги)\b", re.IGNORECASE),
+    re.compile(r"\b(?:job|vacancy|income|earn(?:ings)?|salary|remote\s+work|part[- ]?time)\b", re.IGNORECASE),
+]
+
+_COMMERCE_PATTERNS = [
+    re.compile(r"\b(?:продам|продаю|куплю|покупаю|обменяю|обмен|в\s+наличии|цена|торг\s+уместен)\b", re.IGNORECASE),
+    re.compile(r"\b(?:for\s+sale|selling|buying|wtb|wts|price|dm\s+for\s+price)\b", re.IGNORECASE),
+]
+
+_NSFW_TEXT_PATTERNS = [
+    re.compile(r"\b(?:порно|porn|секс|sex|эротик[аеи]|erotic|nude|нюдс?|голые?|18\+\s*(?:контент|video|pics?))\b", re.IGNORECASE),
+]
+
+
+def contains_job_or_commerce_promo(text: str, *, has_media: bool = False) -> bool:
+    normalized = _normalize_for_cta_detection(text)
+    if not normalized:
+        return False
+    has_job_promo = any(p.search(normalized) for p in _JOB_PROMO_PATTERNS)
+    has_commerce = any(p.search(normalized) for p in _COMMERCE_PATTERNS)
+    return bool(has_job_promo or (has_commerce and has_media) or (has_job_promo and has_commerce))
+
+
+def contains_nsfw_text_signal(text: str) -> bool:
+    normalized = _normalize_for_cta_detection(text)
+    if not normalized:
+        return False
+    return any(p.search(normalized) for p in _NSFW_TEXT_PATTERNS)
 
 def sanitize_for_context(
     text: str,
@@ -519,7 +554,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     result = results[0]
     categories = _to_plain_dict(getattr(result, "categories", None))
     category_scores = _to_plain_dict(getattr(result, "category_scores", None))
-    threshold = float(getattr(settings, "MODERATION_TOXICITY_THRESHOLD", 0.9) or 0.9)
+    threshold = float(getattr(settings, "MODERATION_AI_NSFW_THRESHOLD", 0.6) or 0.6)
 
     sexual_flagged = bool(categories.get("sexual", False) or categories.get("sexual/minors", False))
     sexual_score = max(
@@ -528,6 +563,27 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     )
     return bool(sexual_flagged or sexual_score >= threshold)
 
+
+
+
+def _should_block_ai_categories(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool) -> tuple[bool, set[str]]:
+    if not flagged:
+        return False, set()
+    enabled_categories = {
+        x.strip().lower()
+        for x in getattr(settings, "MODERATION_AI_ENABLED_CATEGORIES", [])
+        if str(x).strip()
+    }
+    if not enabled_categories:
+        return False, set()
+    default_threshold = float(getattr(settings, "MODERATION_AI_THRESHOLD", 0.7) or 0.7)
+    triggered = set()
+    for key in enabled_categories:
+        score = float(category_scores.get(key, 0.0) or 0.0)
+        cat_flag = bool(categories.get(key, False))
+        if cat_flag or score >= default_threshold:
+            triggered.add(key)
+    return bool(triggered), triggered
 
 async def moderate_with_openai(
     text: str,
@@ -593,7 +649,12 @@ async def moderate_with_openai(
     category_scores_obj = getattr(result, "category_scores", None)
     categories_dump = _to_plain_dict(categories_obj)
     category_scores_dump = _to_plain_dict(category_scores_obj)
-    primary_category = _primary_ai_category(categories_dump, category_scores_dump, flagged)
+    enabled_categories = {
+        x.strip().lower()
+        for x in getattr(settings, "MODERATION_AI_ENABLED_CATEGORIES", [])
+        if str(x).strip()
+    }
+    primary_category = _primary_ai_category(categories_dump, category_scores_dump, flagged, enabled_categories=enabled_categories)
 
     logger.info(
         "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
@@ -606,8 +667,9 @@ async def moderate_with_openai(
         category_scores_dump,
     )
 
-    if flagged:
-        _LAST_AI_MODERATION_CATEGORY.set(primary_category)
+    blocked, triggered_categories = _should_block_ai_categories(categories_dump, category_scores_dump, flagged)
+    if blocked:
+        _LAST_AI_MODERATION_CATEGORY.set(primary_category or ",".join(sorted(triggered_categories)))
         return True
 
     _LAST_AI_MODERATION_CATEGORY.set("")
@@ -625,7 +687,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "toxic"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -666,6 +728,12 @@ async def check_light(
 
     if not urls and not contains_telegram_obfuscated(text or "") and contains_profile_cta_without_url(text or ""):
         return "promo_profile_cta"
+
+    if not urls and contains_job_or_commerce_promo(text or "", has_media=bool(image_b64)):
+        return "promo"
+
+    if contains_nsfw_text_signal(text or ""):
+        return "sexual_content"
 
     # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
     ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)

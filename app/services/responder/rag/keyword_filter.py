@@ -137,6 +137,7 @@ async def find_tag_hits(
     query_embedding: Optional[List[float]] = None,
     embedding_model: Optional[str] = None,
     min_similarity: Optional[float] = None,
+    apply_mmr: bool = True,
 ) -> List[Tuple[float, str, str]]:
     t = _norm_ws(text)
     if not t:
@@ -199,13 +200,7 @@ async def find_tag_hits(
     if min_similarity is not None:
         thr = float(min_similarity)
     else:
-        thr = float(
-            getattr(settings, "KEYWORD_RELEVANCE_THRESHOLD", None)
-            or (
-                float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
-                + float(getattr(settings, "RELEVANCE_MARGIN", 0.07) or 0.07)
-            )
-        )
+        thr = float(getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28)
     thr = max(0.0, min(1.0, thr))
     max_distance = 1.0 - thr
 
@@ -379,5 +374,8 @@ async def find_tag_hits(
         return []
 
     cand_ids = _sort_ids_by_similarity(scores_by_id)
-    picked = _mmr_select_ids(cand_ids, vec_by_id, scores_by_id, top_k=top_k, lam=lam)
+    if apply_mmr:
+        picked = _mmr_select_ids(cand_ids, vec_by_id, scores_by_id, top_k=top_k, lam=lam)
+    else:
+        picked = cand_ids[:top_k]
     return [(scores_by_id[i], i, text_by_id.get(i, "")) for i in picked]
