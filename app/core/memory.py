@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 SCAN_COUNT: int = int(getattr(settings, "CLEANUP_REDIS_SCAN_COUNT", 1000))
 
 _redis_by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, "SafeRedis"]] = weakref.WeakKeyDictionary()
+_redis_without_loop: Dict[str, "SafeRedis"] = {}
 _redis_lock = threading.Lock()
 _local_spam: Dict[tuple[int, int], tuple[int, float]] = {}
 _local_spam_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = weakref.WeakKeyDictionary()
@@ -199,10 +200,13 @@ class SafeRedis:
 def get_redis(name: str = "default") -> SafeRedis:
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError as exc:
-        raise RuntimeError(
-            "get_redis() requires an active asyncio event loop; call it from async context"
-        ) from exc
+    except RuntimeError:
+        with _redis_lock:
+            client = _redis_without_loop.get(name)
+            if client is None:
+                client = SafeRedis(_create_client(name))
+                _redis_without_loop[name] = client
+            return client
 
     with _redis_lock:
         if loop.is_closed():
@@ -225,6 +229,8 @@ async def close_redis_pools() -> None:
     with _redis_lock:
         loop_mapping = list(_redis_by_loop.items())
         _redis_by_loop.clear()
+        no_loop_clients = list(_redis_without_loop.values())
+        _redis_without_loop.clear()
 
     for loop, per_loop in loop_mapping:
         loop_closed = loop.is_closed()
@@ -262,6 +268,37 @@ async def close_redis_pools() -> None:
                         logger.debug("close_redis_pools: client.close() failed", exc_info=True)
             except Exception as exc:
                 logger.warning("Failed to close Redis pool: %s", exc)
+
+    for client in no_loop_clients:
+        raw: Redis = getattr(client, "_client", client)
+        try:
+            pool = getattr(raw, "connection_pool", None)
+            if pool is not None:
+                disc = getattr(pool, "disconnect", None)
+                try:
+                    if inspect.iscoroutinefunction(disc):
+                        await disc()
+                    elif callable(disc):
+                        try:
+                            disc()
+                        except TypeError:
+                            try:
+                                disc(inuse_connections=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.debug("close_redis_pools: pool.disconnect() failed", exc_info=True)
+            close = getattr(raw, "close", None)
+            if close is not None:
+                try:
+                    if inspect.iscoroutinefunction(close):
+                        await close()
+                    elif callable(close):
+                        close()
+                except Exception:
+                    logger.debug("close_redis_pools: client.close() failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("Failed to close Redis pool: %s", exc)
 
 def _b2s(x: Any, default: Any = None) -> Any:
     if isinstance(x, (bytes, bytearray)):

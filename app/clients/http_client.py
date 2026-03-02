@@ -69,13 +69,18 @@ class HTTPClient:
         for attempt in range(1, attempts + 1):
             try:
                 async with request_semaphore:
+                    request_kwargs = {
+                        "params": params,
+                        "json": json,
+                        "headers": headers,
+                    }
+                    if timeout is not None:
+                        request_kwargs["timeout"] = timeout
+
                     async with session.request(
                         method,
                         url,
-                        params=params,
-                        json=json,
-                        headers=headers,
-                        timeout=timeout,
+                        **request_kwargs,
                     ) as response:
                         response.raise_for_status()
                         return await response.read()
