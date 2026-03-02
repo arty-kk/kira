@@ -25,7 +25,6 @@ from app.core.memory import get_redis, load_context, push_message
 from app.emo_engine import get_persona
 from app.services.responder.prompt_builder import build_system_prompt
 from app.prompts_base import GROUP_PING_PROMPT_NO_CTX_TEMPLATE, GROUP_PING_PROMPT_WITH_CTX_TEMPLATE
-from app.prompts_base import GROUP_PING_PROMPT_NO_CTX_TEMPLATE, GROUP_PING_PROMPT_WITH_CTX_TEMPLATE
 from app.services.addons.analytics import record_ping_sent
 
 logger = logging.getLogger(__name__)

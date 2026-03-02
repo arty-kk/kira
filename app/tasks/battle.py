@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Celery entrypoint for launching group battles from bot handlers.
 
 Use `battle_launch_task.delay(challenger_id, opponent_id, chat_id)` to enqueue a battle
 start and execute the async service via `_run(...)` inside worker process.
 """
+
+from __future__ import annotations
 
 import logging
 

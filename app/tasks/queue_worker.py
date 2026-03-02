@@ -41,7 +41,6 @@ from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 from app.core.queue_recovery import requeue_processing_on_start
-from app.core.models import RagTagVector
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
 
 
