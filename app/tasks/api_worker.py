@@ -8,7 +8,6 @@ import logging
 import os
 import random
 import time
-import tempfile
 
 from contextlib import suppress
 from typing import Any, Dict, Set
@@ -25,6 +24,9 @@ from app.core.media_limits import (
 )
 from app.core.memory import get_redis_queue, close_redis_pools
 from app.core.queue_recovery import requeue_processing_on_start
+from app.core.temp_files import managed_temp_file, open_binary_read
+from app.services.dialog_logger import start_dialog_logger, shutdown_dialog_logger
+
 from app.services.responder import respond_to_user
 
 logger = logging.getLogger(__name__)
@@ -299,26 +301,25 @@ async def _transcribe_voice_bytes(audio: bytes, mime: str | None) -> str:
         )
         return ""
 
-    tmp_path = None
     try:
         suffix = _guess_audio_suffix(mime)
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(audio)
-            tmp_path = tmp.name
+        async with managed_temp_file(data=audio, suffix=suffix) as tmp_path:
+            async def _do() -> str:
+                f = await open_binary_read(tmp_path)
+                try:
+                    resp = await openai_client.transcribe_audio_with_retry(
+                        model=VOICE_TRANSCRIPTION_MODEL,
+                        file=f,
+                        response_format="text",
+                        total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
+                    )
+                finally:
+                    await asyncio.to_thread(f.close)
+                if isinstance(resp, str):
+                    return resp.strip()
+                return getattr(resp, "text", "").strip()
 
-        async def _do() -> str:
-            with open(tmp_path, "rb") as f:
-                resp = await openai_client.transcribe_audio_with_retry(
-                    model=VOICE_TRANSCRIPTION_MODEL,
-                    file=f,
-                    response_format="text",
-                    total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
-                )
-            if isinstance(resp, str):
-                return resp.strip()
-            return getattr(resp, "text", "").strip()
-
-        return await asyncio.wait_for(_do(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
+            return await asyncio.wait_for(_do(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
     except Exception as e:
         logger.warning(
             "api_worker: voice transcription failed",
@@ -331,10 +332,6 @@ async def _transcribe_voice_bytes(audio: bytes, mime: str | None) -> str:
             exc_info=True,
         )
         return ""
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            with suppress(Exception):
-                os.remove(tmp_path)
 
 
 async def _mark_done(redis, job_key: str) -> None:
@@ -1249,6 +1246,7 @@ async def _worker_loop(stop_evt: asyncio.Event) -> None:
 
 async def _async_main() -> None:
     _setup_logging()
+    await start_dialog_logger()
 
     stop_evt = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -1279,6 +1277,10 @@ async def _async_main() -> None:
                 await worker
 
             try:
+                await shutdown_dialog_logger()
+            except Exception:
+                pass
+            try:
                 await close_redis_pools()
             except Exception:
                 pass
@@ -1288,6 +1290,10 @@ async def _async_main() -> None:
 
         if stop_evt.is_set():
             logger.info("api_worker: stop signal received")
+            try:
+                await shutdown_dialog_logger()
+            except Exception:
+                pass
             try:
                 await close_redis_pools()
             except Exception:
@@ -1308,6 +1314,10 @@ async def _async_main() -> None:
         else:
             logger.error("api_worker: worker exited unexpectedly without stop signal")
 
+        try:
+            await shutdown_dialog_logger()
+        except Exception:
+            pass
         try:
             await close_redis_pools()
         except Exception:

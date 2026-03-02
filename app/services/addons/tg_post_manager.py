@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import textwrap
-import urllib.request
 import asyncio
 import hashlib
 import json
@@ -26,6 +25,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.clients.telegram_client import get_bot
+from app.clients.http_client import http_client
 from app.services.responder.prompt_builder import build_system_prompt
 from app.emo_engine import get_persona
 from app.core.memory import load_context, push_message, get_redis
@@ -334,13 +334,10 @@ async def _get_image_disabled_reason(redis, channel_id: int) -> str | None:
         return None
 
 async def _download_bytes(url: str, timeout: float = 20.0) -> bytes | None:
-    def _do() -> bytes | None:
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as r:
-                return r.read()
-        except Exception:
-            return None
-    return await asyncio.to_thread(_do)
+    try:
+        return await http_client.get_bytes(url, timeout_sec=timeout, retries=1)
+    except Exception:
+        return None
 
 async def _mark_image_disabled(redis, channel_id: int, reason: str) -> None:
     if not redis:

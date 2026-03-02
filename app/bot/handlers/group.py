@@ -1036,10 +1036,35 @@ async def on_group_message(message: Message) -> None:
             return
 
         if trigger == "check_on_topic" and await _chat_has_active_generation(cid):
-            logger.debug(
-                "group check_on_topic skipped while chat is busy: chat=%s msg_id=%s",
+            logger.info(
+                "group check_on_topic generation skipped while chat is busy: chat=%s msg_id=%s is_comment_context=%s",
                 cid,
                 message.message_id,
+                is_comment_context,
+            )
+            user_id_val = _user_id_val(message, is_channel)
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
             )
             return
 

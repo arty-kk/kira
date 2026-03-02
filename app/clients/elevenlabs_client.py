@@ -1,6 +1,7 @@
 #app/clients/elevenlabs_client.py
 from __future__ import annotations
 
+import asyncio
 import json
 import aiohttp
 import logging
@@ -98,6 +99,7 @@ class ElevenLabsClient:
     )))
     default_voice_map: Dict[str, str] = field(default_factory=_load_voice_map)
     _session: Optional[aiohttp.ClientSession] = None
+    _session_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @classmethod
     def from_settings(cls) -> "ElevenLabsClient":
@@ -107,16 +109,21 @@ class ElevenLabsClient:
         return cls(api_key=api_key)
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        if self._session and not self._session.closed:
+        if self._session is not None and not self._session.closed:
             return self._session
-        timeout = aiohttp.ClientTimeout(total=self.timeout)
-        headers = {"xi-api-key": self.api_key}
-        self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
+        async with self._session_lock:
+            if self._session is not None and not self._session.closed:
+                return self._session
+            timeout = aiohttp.ClientTimeout(total=self.timeout)
+            headers = {"xi-api-key": self.api_key}
+            self._session = aiohttp.ClientSession(timeout=timeout, headers=headers)
         return self._session
 
     async def close(self):
-        if self._session and not self._session.closed:
-            await self._session.close()
+        async with self._session_lock:
+            if self._session is not None and not self._session.closed:
+                await self._session.close()
+            self._session = None
 
     @staticmethod
     def _user_pref_key(user_id: int, lang: str) -> str:

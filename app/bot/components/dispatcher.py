@@ -8,13 +8,19 @@ from app.config import settings
 from app.core.memory import get_redis
 from app.clients.telegram_client import get_bot
 
-if settings.DP_USE_REDIS_STORAGE:
-    raw_redis = get_redis()
-    redis_native = getattr(raw_redis, "_client", raw_redis)
-    dp_storage = RedisStorage(redis=redis_native)
-else:
-    dp_storage = MemoryStorage()
+
+def _build_storage():
+    if settings.DP_USE_REDIS_STORAGE:
+        raw_redis = get_redis()
+        redis_native = getattr(raw_redis, "_client", raw_redis)
+        return RedisStorage(redis=redis_native)
+    return MemoryStorage()
+
 
 bot = get_bot()
-dp = Dispatcher(storage=dp_storage, bot=bot)
+dp = Dispatcher(storage=MemoryStorage(), bot=bot)
 
+
+async def init_dispatcher_storage() -> None:
+    if settings.DP_USE_REDIS_STORAGE:
+        dp.storage = _build_storage()

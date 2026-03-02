@@ -14,7 +14,8 @@ from celery import shared_task
 import app.bot.components.constants as consts
 from app.config import settings
 from app.core.media_limits import decode_base64_payload
-from app.tasks.celery_app import _run
+from app.tasks.celery_app import run_coro_sync
+
 
 
 logger = logging.getLogger(__name__)
@@ -102,7 +103,7 @@ async def _metrics_latency(latency_ms: int) -> None:
 
 def _run_metrics(coro: Any, *, label: str) -> None:
     try:
-        _run(coro)
+        run_coro_sync(coro)
     except Exception:
         with contextlib.suppress(Exception):
             close = getattr(coro, "close", None)
@@ -213,7 +214,7 @@ def passive_moderate(self, payload: dict) -> str:
     inflight_key = _moderation_inflight_key(chat_id, message_id)
     inflight_token = secrets.token_urlsafe(16)
     try:
-        _run(_set_moderation_inflight(inflight_key, inflight_token))
+        run_coro_sync(_set_moderation_inflight(inflight_key, inflight_token))
     except Exception:
         logger.warning("failed to dispatch moderation inflight set key=%s", inflight_key, exc_info=True)
 
@@ -227,7 +228,7 @@ def passive_moderate(self, payload: dict) -> str:
             payload.get("is_comment_context"),
             retries,
         )
-        result = _run(_do())
+        result = run_coro_sync(_do())
         logger.info(
             "PASSIVE_MODERATION_JOB_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s",
             chat_id,

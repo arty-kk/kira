@@ -15,7 +15,7 @@ from app.core.db import session_scope
 from app.core.memory import push_message
 from app.core.models import GiftPurchase, PaymentOutbox, PaymentReceipt, User
 from app.services.user.user_service import add_paid_requests, compute_remaining
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
@@ -288,7 +288,7 @@ def process_outbox_task(charge_id: str, lease_token: str) -> None:
             return
         await _notify_payment_result(outbox, remaining, duplicate, lease_token)
 
-    _run(_run_task(), timeout=PROCESS_OUTBOX_RUN_TIMEOUT_SEC)
+    run_coro_sync(_run_task(), timeout=PROCESS_OUTBOX_RUN_TIMEOUT_SEC)
 
 
 async def requeue_pending_outbox(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> RequeueResult:
@@ -439,9 +439,9 @@ async def requeue_applied_unnotified_outbox(batch_size: int = REQUEUE_PENDING_OU
 
 @celery.task(name="payments.requeue_pending_outbox")
 def requeue_pending_outbox_task(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> None:
-    _run(requeue_pending_outbox(batch_size=batch_size))
+    run_coro_sync(requeue_pending_outbox(batch_size=batch_size))
 
 
 @celery.task(name="payments.requeue_applied_unnotified_outbox")
 def requeue_applied_unnotified_outbox_task(batch_size: int = REQUEUE_PENDING_OUTBOX_BATCH_SIZE) -> None:
-    _run(requeue_applied_unnotified_outbox(batch_size=batch_size))
+    run_coro_sync(requeue_applied_unnotified_outbox(batch_size=batch_size))
