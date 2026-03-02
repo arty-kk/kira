@@ -227,6 +227,77 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         buffer_mock.assert_not_called()
         dispatch_mock.assert_called_once()
 
+    async def test_reply_gate_voice_still_dispatches_passive_moderation(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=89,
+            voice=types.SimpleNamespace(file_id="voice-file-id"),
+            entities=[],
+            caption_entities=[],
+            reply_to_message=types.SimpleNamespace(message_id=77),
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            text=None,
+            caption=None,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_reply_gate_requires_mention", return_value=True))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_voice(message)
+
+        buffer_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
+
+    async def test_reply_gate_image_still_dispatches_passive_moderation(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=90,
+            media_group_id=None,
+            caption="caption",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=types.SimpleNamespace(message_id=77),
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("caption", "caption")))
+            stack.enter_context(patch.object(group, "_reply_gate_requires_mention", return_value=True))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group.preprocess_group_image, "delay"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group._handle_group_image_message_common(
+                message,
+                file_id="photo-file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
+        dispatch_mock.assert_called_once()
+
     async def test_mentions_other_still_dispatches_passive_moderation(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
@@ -630,6 +701,9 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                         group, "is_from_linked_channel", AsyncMock(return_value=True)
                     )
                 )
+            dispatch_mock = stack.enter_context(
+                patch.object(group, "_dispatch_passive_moderation")
+            )
             delay_mock = stack.enter_context(
                 patch.object(group.preprocess_group_image, "delay")
             )
@@ -642,9 +716,11 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 content_type_for_analytics="photo",
             )
 
-        if not delay_mock.call_args:
-            return None
-        return delay_mock.call_args.args[0]["trigger"]
+        if delay_mock.call_args:
+            return delay_mock.call_args.args[0]["trigger"]
+        if dispatch_mock.call_args:
+            return dispatch_mock.call_args.args[1].get("trigger")
+        return None
 
 
     async def test_check_on_topic_is_skipped_while_chatbusy(self) -> None:
@@ -915,6 +991,9 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(group, "_mentions_other_user", return_value=False)
             )
             reject_mock = stack.enter_context(patch.object(group, "reject_image_and_reply"))
+            dispatch_mock = stack.enter_context(
+                patch.object(group, "_dispatch_passive_moderation")
+            )
             delay_mock = stack.enter_context(
                 patch.object(group.preprocess_group_image, "delay")
             )
@@ -930,6 +1009,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
         reject_mock.assert_not_called()
         delay_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
 
     async def test_album_with_mention_rejects_and_skips_enqueue(self) -> None:
         message = types.SimpleNamespace(

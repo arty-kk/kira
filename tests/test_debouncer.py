@@ -82,6 +82,42 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured[0]["reservation_ids"], [10, 20])
         self.assertEqual(captured[0]["reservation_id"], 10)
 
+    async def test_merge_mode_prioritizes_mention_trigger_over_check_on_topic(self) -> None:
+        captured = []
+
+        async def _capture(payload):
+            captured.append(payload)
+
+        debouncer.DEBOUNCE_MODE = "merge"
+        debouncer._enqueue = _capture
+
+        key = "1:1"
+        debouncer.message_buffers[key] = [
+            {
+                "chat_id": 1,
+                "user_id": 1,
+                "text": "@bot hi",
+                "msg_id": 1,
+                "trigger": "mention",
+                "enforce_on_topic": False,
+            },
+            {
+                "chat_id": 1,
+                "user_id": 1,
+                "text": "follow up",
+                "msg_id": 2,
+                "trigger": "check_on_topic",
+                "enforce_on_topic": True,
+            },
+        ]
+        debouncer.total_buffered = 2
+
+        await debouncer.schedule_response(key)
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["trigger"], "mention")
+        self.assertFalse(captured[0]["enforce_on_topic"])
+
     async def test_enqueue_rejects_invalid_payload_before_redis_and_refunds(self) -> None:
         lpush_mock = AsyncMock()
         refund_mock = AsyncMock()

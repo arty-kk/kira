@@ -283,6 +283,13 @@ async def _merge_and_send(msgs: list[dict]):
             payload = batch[-1].copy()
             payload["text"] = "\n".join((b.get("text") or "") for b in batch).strip()
             payload["merged_msg_ids"] = [b.get("msg_id") for b in batch if b.get("msg_id") is not None]
+            trigger_priority = ("mention", "channel_post", "check_on_topic")
+            merged_trigger = None
+            for trigger_value in trigger_priority:
+                if any((b.get("trigger") == trigger_value) for b in batch):
+                    merged_trigger = trigger_value
+                    break
+            payload["trigger"] = merged_trigger
             reservation_ids: list[int] = []
             seen_reservation_ids: set[int] = set()
             for b in batch:
@@ -303,7 +310,7 @@ async def _merge_and_send(msgs: list[dict]):
             if picked_tg_reply_to and not payload.get("tg_reply_to"):
                 payload["tg_reply_to"] = picked_tg_reply_to
             enforce_any = any(bool(b.get("enforce_on_topic")) for b in batch)
-            payload["enforce_on_topic"] = enforce_any
+            payload["enforce_on_topic"] = (False if merged_trigger == "mention" else enforce_any)
             out_payloads.append(payload)
         batch = []
         cur_len = 0

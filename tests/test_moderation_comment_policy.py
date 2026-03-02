@@ -51,7 +51,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         data.update(overrides)
         return types.SimpleNamespace(**data)
 
-    async def test_linked_discussion_message_without_origin_signals_uses_group_policy(self) -> None:
+    async def test_linked_discussion_message_without_origin_signals_uses_comment_policy(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=-10055),
             message_id=10,
@@ -94,11 +94,9 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         ):
             handled = await moderation.apply_moderation_filters(message.chat.id, message)
 
-        self.assertTrue(handled)
-        delete_mock.assert_awaited_once()
-        reason = flag_mock.await_args.kwargs["reason"]
-        self.assertIn("external_reply", reason)
-        self.assertIn("context=group", reason)
+        self.assertFalse(handled)
+        delete_mock.assert_not_awaited()
+        flag_mock.assert_not_awaited()
 
     async def test_linked_discussion_message_with_origin_signal_uses_comment_policy(self) -> None:
         message = types.SimpleNamespace(
