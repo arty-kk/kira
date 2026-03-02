@@ -195,6 +195,9 @@ class Settings:
     ENABLE_DIALOG_LOGGING: bool = field(
         default_factory=lambda: _get_env("ENABLE_DIALOG_LOGGING", "false", conv=_parse_bool)
     )
+    DIALOG_LOGGER_QUEUE_MAXSIZE: int = field(
+        default_factory=lambda: _get_env("DIALOG_LOGGER_QUEUE_MAXSIZE", "2000", conv=int)
+    )
     #TG Posting
     TG_PERSONA_CHAT_ID: int = field(default_factory=lambda: _get_env("TG_PERSONA_CHAT_ID", "11", conv=int))
     TG_CHANNEL_ID: int = field(default_factory=lambda: _get_env("TG_CHANNEL_ID", "0", conv=int))
@@ -284,6 +287,14 @@ class Settings:
     API_QUEUE_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("API_QUEUE_MAX_PAYLOAD_BYTES", "131072", conv=int))
     API_QUEUE_SNAPSHOT_SEC: int = field(default_factory=lambda: _get_env("API_QUEUE_SNAPSHOT_SEC", "60", conv=int))
     API_PROCESSING_SWEEP_BATCH: int = field(default_factory=lambda: _get_env("API_PROCESSING_SWEEP_BATCH", "200", conv=int))
+    HTTP_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("HTTP_TIMEOUT_SEC", "10", conv=float))
+    HTTP_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("HTTP_MAX_CONCURRENCY", "50", conv=int))
+    HTTP_MAX_CONNECTIONS: int = field(default_factory=lambda: _get_env("HTTP_MAX_CONNECTIONS", "200", conv=int))
+    GENDERIZE_TIMEOUT: float = field(default_factory=lambda: _get_env("GENDERIZE_TIMEOUT", "10", conv=float))
+    GENDERIZE_RETRIES: int = field(default_factory=lambda: _get_env("GENDERIZE_RETRIES", "2", conv=int))
+    GENDERIZE_RETRY_BACKOFF_SEC: float = field(default_factory=lambda: _get_env("GENDERIZE_RETRY_BACKOFF_SEC", "0.5", conv=float))
+    GENDERIZE_MAX_CONCURRENCY: int = field(default_factory=lambda: _get_env("GENDERIZE_MAX_CONCURRENCY", "20", conv=int))
+
     TRUSTED_PROXY_IPS: List[str] = field(
         default_factory=lambda: [
             x.strip()

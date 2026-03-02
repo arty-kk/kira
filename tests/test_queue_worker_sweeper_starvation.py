@@ -5,6 +5,8 @@ import pathlib
 import sys
 import types
 import unittest
+import tempfile
+from contextlib import asynccontextmanager
 from unittest.mock import patch
 
 
@@ -21,6 +23,10 @@ def _load_queue_worker():
     fake_openai_client = types.ModuleType("app.clients.openai_client")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
+    fake_dialog_logger = types.ModuleType("app.services.dialog_logger")
+    fake_responder_rag = types.ModuleType("app.services.responder.rag")
+    fake_responder_keyword = types.ModuleType("app.services.responder.rag.keyword_filter")
+    fake_responder_knowledge = types.ModuleType("app.services.responder.rag.knowledge_proc")
     fake_addons = types.ModuleType("app.services.addons")
     fake_voice = types.ModuleType("app.services.addons.voice_generator")
     fake_mod = types.ModuleType("app.services.addons.passive_moderation")
@@ -29,7 +35,9 @@ def _load_queue_worker():
     fake_user_service = types.ModuleType("app.services.user.user_service")
     fake_core = types.ModuleType("app.core")
     fake_memory = types.ModuleType("app.core.memory")
+    fake_embedding_utils = types.ModuleType("app.core.embedding_utils")
     fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
+    fake_temp_files = types.ModuleType("app.core.temp_files")
 
     fake_aiogram = types.ModuleType("aiogram")
     fake_aiogram_enums = types.ModuleType("aiogram.enums")
@@ -75,6 +83,15 @@ def _load_queue_worker():
     fake_tg_client.get_bot = lambda: types.SimpleNamespace()
     fake_clients.openai_client = fake_openai_client
     fake_responder.respond_to_user = _noop_async
+
+    async def _no_hits(*_args, **_kwargs):
+        return []
+
+    async def _query_embedding(*_args, **_kwargs):
+        return None
+
+    fake_responder_keyword.find_tag_hits = _no_hits
+    fake_responder_knowledge._get_query_embedding = _query_embedding
     fake_voice.maybe_tts_and_send = _noop_async
     fake_voice.shutdown_tts = _noop_async
     fake_voice.will_speak = lambda **_kwargs: False
@@ -89,10 +106,31 @@ def _load_queue_worker():
     fake_memory.close_redis_pools = _noop_async
     fake_memory.SafeRedis = object
     fake_memory.push_message = _noop_async
+    fake_embedding_utils.get_rag_embedding_model = lambda: None
+
+    fake_dialog_logger.start_dialog_logger = _noop_async
+    fake_dialog_logger.shutdown_dialog_logger = _noop_async
 
     async def _fake_requeue_processing_on_start(*_args, **_kwargs):
         return types.SimpleNamespace(moved_count=0, lock_acquired=True)
 
+
+    @asynccontextmanager
+    async def _fake_managed_temp_file(*, data: bytes | None = None, suffix: str = ""):
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            if data is not None:
+                tmp.write(data)
+            path = tmp.name
+        try:
+            yield path
+        finally:
+            pathlib.Path(path).unlink(missing_ok=True)
+
+    async def _fake_open_binary_read(path: str):
+        return open(path, "rb")
+
+    fake_temp_files.managed_temp_file = _fake_managed_temp_file
+    fake_temp_files.open_binary_read = _fake_open_binary_read
     fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
 
     module_overrides = {
@@ -108,6 +146,10 @@ def _load_queue_worker():
         "app.clients.openai_client": fake_openai_client,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
+        "app.services.dialog_logger": fake_dialog_logger,
+        "app.services.responder.rag": fake_responder_rag,
+        "app.services.responder.rag.keyword_filter": fake_responder_keyword,
+        "app.services.responder.rag.knowledge_proc": fake_responder_knowledge,
         "app.services.addons": fake_addons,
         "app.services.addons.voice_generator": fake_voice,
         "app.services.addons.passive_moderation": fake_mod,
@@ -116,7 +158,9 @@ def _load_queue_worker():
         "app.services.user.user_service": fake_user_service,
         "app.core": fake_core,
         "app.core.memory": fake_memory,
+        "app.core.embedding_utils": fake_embedding_utils,
         "app.core.queue_recovery": fake_queue_recovery,
+        "app.core.temp_files": fake_temp_files,
         "aiogram": fake_aiogram,
         "aiogram.enums": fake_aiogram_enums,
         "aiogram.types": fake_aiogram_types,

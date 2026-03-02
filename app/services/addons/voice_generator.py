@@ -8,7 +8,6 @@ import random
 import zlib
 import re
 import atexit
-import tempfile
 import contextlib
 import unicodedata
 import asyncio.subprocess as asp
@@ -27,6 +26,7 @@ from app.config import settings
 from app.clients.telegram_client import get_bot
 from app.clients.elevenlabs_client import choose_elevenlabs_voice, shutdown_elevenlabs_client
 from app.bot.components.constants import redis_client
+from app.core.temp_files import create_temp_path, managed_temp_file, write_temp_bytes
 from app.emo_engine import get_persona
 
 logger = logging.getLogger(__name__)
@@ -977,34 +977,39 @@ async def generate_voice_for_reply(
             return (len(buf) > 64) and (buf[:4] == b'OggS') and (b'OpusHead' in buf[:128])
 
         async def reencode_to_ogg_opus(src_bytes: bytes) -> Optional[str]:
-            in_fd, in_path = tempfile.mkstemp(suffix=".bin", prefix="tts_in_")
-            os.close(in_fd)
-            with open(in_path, "wb") as _f:
-                _f.write(src_bytes)
-            out_fd, out_path = tempfile.mkstemp(suffix=".ogg", prefix="tts_")
-            os.close(out_fd)
-            try:
+            async with managed_temp_file(data=src_bytes, suffix=".bin") as in_path:
+                out_path = await create_temp_path(suffix=".ogg")
+                keep_output = False
                 try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-                        "-i", in_path, "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "48k",
-                        out_path, stdout=asp.DEVNULL, stderr=asp.DEVNULL
-                    )
-                except FileNotFoundError:
-                    logger.warning("TTS: ffmpeg not found — cannot reencode to Ogg/Opus")
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                            "-i", in_path, "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "48k",
+                            out_path, stdout=asp.DEVNULL, stderr=asp.DEVNULL
+                        )
+                    except FileNotFoundError:
+                        logger.warning("TTS: ffmpeg not found — cannot reencode to Ogg/Opus")
+                        return None
+
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=float(getattr(settings, "FFMPEG_REENCODE_TIMEOUT", 15)))
+                    except asyncio.TimeoutError:
+                        with contextlib.suppress(Exception):
+                            proc.kill()
+                        return None
+                    except asyncio.CancelledError:
+                        with contextlib.suppress(Exception):
+                            proc.kill()
+                        raise
+
+                    if proc.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                        keep_output = True
+                        return out_path
                     return None
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=float(getattr(settings, "FFMPEG_REENCODE_TIMEOUT", 15)))
-                except asyncio.TimeoutError:
-                    with contextlib.suppress(Exception):
-                        proc.kill()
-                    return None
-                if proc.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-                    return out_path
-                return None
-            finally:
-                with contextlib.suppress(Exception):
-                    os.remove(in_path)
+                finally:
+                    if not keep_output:
+                        with contextlib.suppress(Exception):
+                            os.remove(out_path)
 
         if not looks_like_ogg_opus(audio):
             fixed = await reencode_to_ogg_opus(audio)
@@ -1013,10 +1018,7 @@ async def generate_voice_for_reply(
                 return None
             return fixed
 
-        fd, tmp_path = tempfile.mkstemp(suffix=".ogg", prefix="tts_")
-        with os.fdopen(fd, "wb") as f:
-            f.write(audio)
-        return tmp_path
+        return await write_temp_bytes(data=audio, suffix=".ogg")
     except Exception as e:
         logger.exception("TTS generation failed: %s", e)
         return None

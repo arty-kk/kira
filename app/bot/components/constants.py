@@ -1,6 +1,7 @@
 #app/bot/components/constants.py
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Callable
 
@@ -20,7 +21,20 @@ class _LazyClient:
         return self._client
 
     def __getattr__(self, name: str):
-        return getattr(self._ensure(), name)
+        try:
+            return getattr(self._ensure(), name)
+        except RuntimeError as exc:
+            if "active asyncio event loop" not in str(exc):
+                raise
+
+            async def _deferred_call(*args, **kwargs):
+                target = getattr(self._ensure(), name)
+                result = target(*args, **kwargs)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+
+            return _deferred_call
 
 
 redis_client: SafeRedis = _LazyClient(get_redis)

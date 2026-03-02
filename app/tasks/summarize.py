@@ -8,7 +8,7 @@ import contextlib
 
 from typing import List, Tuple
 
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.core.memory import (
     USER_KEYS_REGISTRY_TTL,
@@ -287,17 +287,17 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
 
 @celery.task(name="ltm.rollup_private", acks_late=True, time_limit=240)
 def rollup_private(user_id: int, namespace: str = "default") -> None:
-    _run(_rollup(chat_id=user_id, user_id=user_id, namespace=namespace))
+    run_coro_sync(_rollup(chat_id=user_id, user_id=user_id, namespace=namespace))
 
 
 @celery.task(name="ltm.rollup_group", acks_late=True, time_limit=240)
 def rollup_group(chat_id: int, user_id: int, namespace: str = "default") -> None:
-    _run(_rollup(chat_id=chat_id, user_id=user_id, namespace=namespace))
+    run_coro_sync(_rollup(chat_id=chat_id, user_id=user_id, namespace=namespace))
 
 
 @celery.task(name="persona.summarize_memory", acks_late=True, time_limit=300)
 def summarize_memory(chat_id: int, texts: list, old_ids: list) -> None:
-    _run(_summarize_memory_worker(chat_id, texts, old_ids))
+    run_coro_sync(_summarize_memory_worker(chat_id, texts, old_ids))
 
 
 async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> None:

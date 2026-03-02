@@ -14,10 +14,12 @@ class DialogLoggerFailSafeTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(dialog_logger, "settings", fake_settings), patch.object(
                 dialog_logger.Path, "mkdir", side_effect=PermissionError("mkdir denied")
             ), self.assertLogs("app.services.dialog_logger", level="WARNING") as logs:
+                await dialog_logger.start_dialog_logger()
                 await dialog_logger.log_user_message(1, "user", "hello")
                 await dialog_logger.log_bot_message(1, "bot", "world")
                 await dialog_logger.log_user_message(1, "user", "hello again")
                 await dialog_logger.log_bot_message(1, "bot", "world again")
+                await dialog_logger.shutdown_dialog_logger()
 
             self.assertEqual(len(logs.records), 1)
             self.assertIn("DIALOGS_DIR=/root/forbidden_dialogs", logs.output[0])

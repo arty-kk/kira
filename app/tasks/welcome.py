@@ -18,7 +18,7 @@ from aiogram.exceptions import (
 )
 
 from app.config import settings
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.clients.telegram_client import get_bot
 from app.services.addons.welcome_manager import (
     generate_welcome,
@@ -127,7 +127,7 @@ def send_group_welcome_task(chat_id: int, user: dict) -> None:
             with suppress(asyncio.CancelledError):
                 await typing_task
 
-    _run(_inner(), timeout=WELCOME_GROUP_RUN_TIMEOUT_SEC)
+    run_coro_sync(_inner(), timeout=WELCOME_GROUP_RUN_TIMEOUT_SEC)
 
 
 @celery.task(name="welcome.private_ai", time_limit=WELCOME_PRIVATE_TIME_LIMIT_SEC)
@@ -150,4 +150,4 @@ def send_private_ai_welcome_task(uid: int) -> None:
             with suppress(asyncio.CancelledError):
                 await typing_task
 
-    _run(_inner(), timeout=WELCOME_PRIVATE_RUN_TIMEOUT_SEC)
+    run_coro_sync(_inner(), timeout=WELCOME_PRIVATE_RUN_TIMEOUT_SEC)

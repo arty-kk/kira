@@ -2,9 +2,12 @@ import asyncio
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import types
 import unittest
 import unittest.mock
+
+from contextlib import asynccontextmanager
 
 
 def _load_api_worker():
@@ -16,8 +19,10 @@ def _load_api_worker():
     fake_media_limits = types.ModuleType("app.core.media_limits")
     fake_memory = types.ModuleType("app.core.memory")
     fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
+    fake_temp_files = types.ModuleType("app.core.temp_files")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
+    fake_dialog_logger = types.ModuleType("app.services.dialog_logger")
 
     fake_config.settings = types.SimpleNamespace()
     fake_openai_client.get_openai = lambda: None
@@ -38,10 +43,32 @@ def _load_api_worker():
     fake_memory.close_redis_pools = lambda: None
     fake_responder.respond_to_user = lambda **kwargs: None
 
+    async def _noop_async(*_args, **_kwargs):
+        return None
+
+    fake_dialog_logger.start_dialog_logger = _noop_async
+    fake_dialog_logger.shutdown_dialog_logger = _noop_async
+
     async def _fake_requeue_processing_on_start(*_args, **_kwargs):
         return types.SimpleNamespace(moved_count=0, lock_acquired=True)
 
+    @asynccontextmanager
+    async def _fake_managed_temp_file(*, data: bytes | None = None, suffix: str = ""):
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            if data is not None:
+                tmp.write(data)
+            path = tmp.name
+        try:
+            yield path
+        finally:
+            pathlib.Path(path).unlink(missing_ok=True)
+
+    async def _fake_open_binary_read(path: str):
+        return open(path, "rb")
+
     fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
+    fake_temp_files.managed_temp_file = _fake_managed_temp_file
+    fake_temp_files.open_binary_read = _fake_open_binary_read
 
     patch_modules = {
         "app": fake_app,
@@ -52,8 +79,10 @@ def _load_api_worker():
         "app.core.media_limits": fake_media_limits,
         "app.core.memory": fake_memory,
         "app.core.queue_recovery": fake_queue_recovery,
+        "app.core.temp_files": fake_temp_files,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
+        "app.services.dialog_logger": fake_dialog_logger,
     }
     previous = {name: sys.modules.get(name) for name in patch_modules}
 

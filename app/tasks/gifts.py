@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from app.config import settings
 from app.prompts_base import GIFTS_REACT_HARD_RULES_PROMPT, GIFTS_REACT_REWRITE_WARNING_PROMPT
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.clients.telegram_client import get_bot
 from app.bot.components.constants import redis_client
 from app.bot.utils.telegram_safe import send_message_safe, delete_message_safe
@@ -147,7 +147,7 @@ def _peek_gift_streak(uid: int) -> int:
     key = f"gift_streak:{int(uid)}"
     cur = 0
     try:
-        raw = _run(redis_client.get(key))
+        raw = run_coro_sync(redis_client.get(key))
         s = _b2s(raw).strip()
         if s:
             cur = int(s)
@@ -165,9 +165,9 @@ def _commit_gift_streak(uid: int) -> int:
 
     key = f"gift_streak:{int(uid)}"
     try:
-        n = _run(redis_client.incr(key))
+        n = run_coro_sync(redis_client.incr(key))
         try:
-            _run(redis_client.expire(key, int(_GIFT_STREAK_WINDOW_SEC)))
+            run_coro_sync(redis_client.expire(key, int(_GIFT_STREAK_WINDOW_SEC)))
         except Exception:
             pass
 
@@ -181,7 +181,7 @@ def _commit_gift_streak(uid: int) -> int:
 
         if n_int > _GIFT_STREAK_CAP:
             try:
-                _run(redis_client.set(key, int(_GIFT_STREAK_CAP), ex=int(_GIFT_STREAK_WINDOW_SEC)))
+                run_coro_sync(redis_client.set(key, int(_GIFT_STREAK_CAP), ex=int(_GIFT_STREAK_WINDOW_SEC)))
             except Exception:
                 pass
             n_int = _GIFT_STREAK_CAP
@@ -393,7 +393,7 @@ def gifts_react(
             sent_key = f"gift_react_sent:{charge_id}"
             lock_key = f"gift_react_lock:{charge_id}"
             try:
-                already_sent = _run(redis_client.get(sent_key), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                already_sent = run_coro_sync(redis_client.get(sent_key), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
                 if already_sent:
                     return
             except Exception:
@@ -401,7 +401,7 @@ def gifts_react(
 
             try:
                 lock_token = uuid4().hex
-                ok = _run(redis_client.set(lock_key, lock_token, nx=True, ex=5 * 60), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                ok = run_coro_sync(redis_client.set(lock_key, lock_token, nx=True, ex=5 * 60), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
                 if not ok:
                     logger.info(
                         "redis lock failed; aborting gift reaction",
@@ -419,7 +419,7 @@ def gifts_react(
 
         ui_lang = "en"
         try:
-            raw = _run(redis_client.get(f"lang_ui:{uid}"), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC) or _run(
+            raw = run_coro_sync(redis_client.get(f"lang_ui:{uid}"), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC) or run_coro_sync(
                 redis_client.get(f"lang:{uid}"), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC
             )
             ui_lang = _b2s(raw).strip().lower() or "en"
@@ -446,7 +446,7 @@ def gifts_react(
             strict=False,
         )
 
-        reply = _run(
+        reply = run_coro_sync(
             respond_to_user(
                 text=internal_prompt,
                 chat_id=int(chat_id),
@@ -476,7 +476,7 @@ def gifts_react(
                 intensity_score=float(intensity_score),
                 strict=True,
             )
-            reply2 = _run(
+            reply2 = run_coro_sync(
                 respond_to_user(
                     text=strict_prompt,
                     chat_id=int(chat_id),
@@ -502,7 +502,7 @@ def gifts_react(
             bot = get_bot()
             try:
                 if reply_to_message_id:
-                    sent = _run(
+                    sent = run_coro_sync(
                         send_message_safe(
                             bot,
                             int(chat_id),
@@ -512,9 +512,9 @@ def gifts_react(
                         timeout=GIFTS_REACT_RUN_TIMEOUT_SEC,
                     )
                 else:
-                    sent = _run(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                    sent = run_coro_sync(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
             except TypeError:
-                sent = _run(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                sent = run_coro_sync(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
             if sent:
                 try:
                     _commit_gift_streak(int(uid))
@@ -522,17 +522,17 @@ def gifts_react(
                     pass
                 if charge_id and sent_key:
                     try:
-                        _run(redis_client.set(sent_key, 1, ex=30 * 86400), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                        run_coro_sync(redis_client.set(sent_key, 1, ex=30 * 86400), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
                     except Exception:
                         logger.debug("gift react sent-key redis failed", exc_info=True)
-                _run(
+                run_coro_sync(
                     push_message(int(chat_id), "assistant", reply, user_id=int(uid), namespace="default"),
                     timeout=GIFTS_REACT_RUN_TIMEOUT_SEC,
                 )
 
             if cleanup_message_id and bool(getattr(settings, "DELETE_SUCCESSFUL_PAYMENT_MESSAGE", True)):
                 try:
-                    _run(delete_message_safe(bot, int(chat_id), int(cleanup_message_id)), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                    run_coro_sync(delete_message_safe(bot, int(chat_id), int(cleanup_message_id)), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
                 except Exception:
                     pass
 
@@ -548,6 +548,6 @@ def gifts_react(
                   return 0
                 end
                 """
-                _run(redis_client.eval(lua, 1, lock_key, lock_token), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                run_coro_sync(redis_client.eval(lua, 1, lock_key, lock_token), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
             except Exception:
                 pass

@@ -934,11 +934,44 @@ async def on_group_message(message: Message) -> None:
         if message.from_user and message.from_user.is_bot and not is_channel:
             return
 
-        if _reply_gate_requires_mention(message):
-            return
-
         raw_text = (message.text or message.caption or "").strip()
         ents = _extract_entities(message)
+
+        if _reply_gate_requires_mention(message):
+            user_id_val = _user_id_val(message, is_channel)
+            is_comment_context = await _resolve_group_comment_context(message)
+            model_text, log_text = split_context_text(raw_text, ents, allow_web=False)
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": None,
+                "enforce_on_topic": False,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
+            logger.info(
+                "GROUP_REPLY_GATE_PASSIVE_ONLY: chat_id=%s msg_id=%s user_id=%s is_comment_context=%s",
+                cid,
+                message.message_id,
+                user_id_val,
+                is_comment_context,
+            )
+            return
 
         if trusted_repost:
             if not trusted_repost_logged:
@@ -1036,10 +1069,35 @@ async def on_group_message(message: Message) -> None:
             return
 
         if trigger == "check_on_topic" and await _chat_has_active_generation(cid):
-            logger.debug(
-                "group check_on_topic skipped while chat is busy: chat=%s msg_id=%s",
+            logger.info(
+                "group check_on_topic generation skipped while chat is busy: chat=%s msg_id=%s is_comment_context=%s",
                 cid,
                 message.message_id,
+                is_comment_context,
+            )
+            user_id_val = _user_id_val(message, is_channel)
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
             )
             return
 

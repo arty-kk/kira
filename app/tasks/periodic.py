@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 
 from app.clients.telegram_client import get_bot
 from app.config import settings
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.tasks.cleanup import cleanup_nonbuyers
 from app.tasks.payments import requeue_pending_outbox, requeue_applied_unnotified_outbox
 from app.tasks.refunds import requeue_pending_refund_outbox
@@ -29,28 +29,28 @@ PRICES_POST_RUN_TIMEOUT_SEC = 170
 @celery.task(name="cleanup_nonbuyers")
 def cleanup_nonbuyers_task():
     logger.info("cleanup_nonbuyers_task start")
-    _run(cleanup_nonbuyers())
+    run_coro_sync(cleanup_nonbuyers())
     logger.info("cleanup_nonbuyers_task done")
 
 
 @celery.task(name="tg_channel_post")
 def tg_channel_post_task():
     logger.info("tg_channel_post_task start")
-    _run(generate_and_post_tg())
+    run_coro_sync(generate_and_post_tg())
     logger.info("tg_channel_post_task done")
 
 
 @celery.task(name="analytics_daily")
 def analytics_daily_task():
     logger.info("analytics_daily_task start")
-    _run(generate_and_send_daily_reports())
+    run_coro_sync(generate_and_send_daily_reports())
     logger.info("analytics_daily_task done")
 
 
 @celery.task(name="battle_job")
 def battle_job_task():
     logger.info("battle_job_task start")
-    _run(start_battle_job())
+    run_coro_sync(start_battle_job())
     logger.info("battle_job_task done")
 
 
@@ -106,47 +106,47 @@ def prices_post_task():
 
         logger.info("prices_post: sent %d message(s)", len(data))
 
-    _run(_inner(), timeout=PRICES_POST_RUN_TIMEOUT_SEC)
+    run_coro_sync(_inner(), timeout=PRICES_POST_RUN_TIMEOUT_SEC)
     logger.info("prices_post_task done")
 
 
 @celery.task(name="group_ping_job")
 def group_ping_job_task():
     logger.info("group_ping_job_task start")
-    _run(group_ping())
+    run_coro_sync(group_ping())
     logger.info("group_ping_job_task done")
 
 
 @celery.task(name="personal_ping_job")
 def personal_ping_job_task():
     logger.info("personal_ping_job_task start")
-    _run(personal_ping())
+    run_coro_sync(personal_ping())
     logger.info("personal_ping_job_task done")
 
 
 @celery.task(name="tweet_once")
 def tweet_once_task():
     logger.info("tweet_once_task start")
-    _run(generate_and_post_tweet())
+    run_coro_sync(generate_and_post_tweet())
     logger.info("tweet_once_task done")
 
 
 @celery.task(name="payments_requeue_pending_outbox")
 def payments_requeue_pending_outbox_task():
     logger.info("payments_requeue_pending_outbox_task start")
-    _run(requeue_pending_outbox())
+    run_coro_sync(requeue_pending_outbox())
     logger.info("payments_requeue_pending_outbox_task done")
 
 
 @celery.task(name="payments_requeue_applied_unnotified_outbox")
 def payments_requeue_applied_unnotified_outbox_task():
     logger.info("payments_requeue_applied_unnotified_outbox_task start")
-    _run(requeue_applied_unnotified_outbox())
+    run_coro_sync(requeue_applied_unnotified_outbox())
     logger.info("payments_requeue_applied_unnotified_outbox_task done")
 
 
 @celery.task(name="refunds_requeue_pending_outbox")
 def refunds_requeue_pending_outbox_task():
     logger.info("refunds_requeue_pending_outbox_task start")
-    _run(requeue_pending_refund_outbox())
+    run_coro_sync(requeue_pending_refund_outbox())
     logger.info("refunds_requeue_pending_outbox_task done")

@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from contextlib import contextmanager
+from unittest.mock import AsyncMock, patch
 
 
 _TWITTER_ENV_VARS = (
@@ -89,7 +90,6 @@ class TwitterClientLazyInitTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 for key, value in original_values.items():
                     setattr(module.settings, key, value)
-                module._twitter_client = None
                 _drop_twitter_related_modules()
 
     async def test_post_tweet_raises_config_error_when_creds_missing_and_contract_is_consistent(self) -> None:
@@ -100,7 +100,6 @@ class TwitterClientLazyInitTests(unittest.IsolatedAsyncioTestCase):
             try:
                 for key in _TWITTER_ENV_VARS:
                     setattr(module.settings, key, None)
-                module._twitter_client = None
 
                 self.assertFalse(module.is_twitter_configured())
 
@@ -112,8 +111,38 @@ class TwitterClientLazyInitTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 for key, value in original_values.items():
                     setattr(module.settings, key, value)
-                module._twitter_client = None
                 _drop_twitter_related_modules()
+
+    async def test_post_tweet_uses_shared_http_client(self) -> None:
+        with _required_app_import_env():
+            module = importlib.import_module("app.clients.twitter_client")
+            with patch.object(module.http_client, "post_json", AsyncMock(return_value={"data": {"id": "1"}})) as post_mock:
+                await module.post_tweet("hello")
+
+            post_mock.assert_awaited_once()
+
+    async def test_post_tweet_concurrency_is_limited(self) -> None:
+        with _required_app_import_env():
+            module = importlib.import_module("app.clients.twitter_client")
+
+            inflight = 0
+            max_inflight = 0
+
+            async def _slow_post(*args, **kwargs):
+                nonlocal inflight, max_inflight
+                inflight += 1
+                max_inflight = max(max_inflight, inflight)
+                await module.asyncio.sleep(0.01)
+                inflight -= 1
+                return {"ok": True}
+
+            with (
+                patch.object(module, "_twitter_post_semaphore", module.asyncio.Semaphore(2)),
+                patch.object(module.http_client, "post_json", AsyncMock(side_effect=_slow_post)),
+            ):
+                await module.asyncio.gather(*(module.post_tweet(f"tweet-{i}") for i in range(8)))
+
+            self.assertLessEqual(max_inflight, 2)
 
 
 if __name__ == "__main__":

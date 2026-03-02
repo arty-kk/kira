@@ -120,6 +120,19 @@ def _k_onb_gender_msg(uid: int) -> str:
 def _kb_upload_slot_key(uid: int) -> str:
     return f"kb:upload_for:{uid}"
 
+KB_UPLOAD_MAX_JSON_BYTES = int(getattr(settings, "KB_UPLOAD_MAX_JSON_BYTES", 2 * 1024 * 1024) or (2 * 1024 * 1024))
+KB_UPLOAD_PARSE_TIMEOUT_SEC = float(getattr(settings, "KB_UPLOAD_PARSE_TIMEOUT_SEC", 2.5) or 2.5)
+
+
+async def _read_utf8_json_text_limited(path: str, *, max_bytes: int) -> str:
+    def _read() -> str:
+        raw = Path(path).read_bytes()
+        if max_bytes > 0 and len(raw) > max_bytes:
+            raise ValueError("kb_upload_too_large")
+        return raw.decode("utf-8-sig", errors="strict")
+
+    return await asyncio.to_thread(_read)
+
 
 # ---------------------------
 # Small utilities
@@ -1118,7 +1131,14 @@ async def _handle_kb_json_upload(message: Message, doc) -> None:
 
     raw_text = ""
     try:
-        raw_text = Path(tmp_path).read_text(encoding="utf-8-sig", errors="strict")
+        raw_text = await _read_utf8_json_text_limited(
+            tmp_path,
+            max_bytes=KB_UPLOAD_MAX_JSON_BYTES,
+        )
+    except ValueError:
+        txt = await tr(user_id, "kb.upload.too_large", "⚠️ The JSON file is too large for upload.")
+        await send_message_safe(bot, chat_id, txt, parse_mode="HTML")
+        return
     except UnicodeDecodeError:
         txt = await tr(user_id, "kb.upload.bad_encoding", "Invalid encoding. Please send a valid UTF-8 JSON file.")
         await send_message_safe(bot, chat_id, txt, parse_mode="HTML")
@@ -1137,7 +1157,10 @@ async def _handle_kb_json_upload(message: Message, doc) -> None:
         return
 
     try:
-        data = json.loads(raw_text)
+        data = await asyncio.wait_for(
+            asyncio.to_thread(json.loads, raw_text),
+            timeout=KB_UPLOAD_PARSE_TIMEOUT_SEC,
+        )
     except Exception:
         txt = await tr(user_id, "kb.upload.bad_json", "Invalid JSON. Please send a valid UTF-8 JSON file.")
         await send_message_safe(bot, chat_id, txt, parse_mode="HTML")

@@ -15,6 +15,7 @@ from app.config import settings, _parse_bool
 from app.emo_engine.persona.memory import PersonaMemory
 from app.emo_engine.registry import shutdown_personas
 from app.clients.http_client import http_client
+from app.services.dialog_logger import start_dialog_logger, shutdown_dialog_logger
 from app.bot import start_bot
 from app.api.app import create_app
 from app.core.tls import resolve_tls_server_files
@@ -145,6 +146,8 @@ async def main() -> None:
         logging.error("Nothing to run (both RUN_BOT and RUN_API are false); exiting.")
         return
 
+    await start_dialog_logger()
+
     loop = asyncio.get_running_loop()
 
     if os.getenv("PYTHONASYNCIODEBUG", "0").lower() not in ("0", "false"):
@@ -201,6 +204,9 @@ async def main() -> None:
 
         logging.info("🌐 Closing HTTP client")
         await http_client.close()
+
+        logging.info("📝 Shutting down dialog logger")
+        await shutdown_dialog_logger()
 
         logging.info("🔌 Closing Redis")
         await close_redis_pools()
