@@ -1,4 +1,5 @@
 # ruff: noqa: E402
+import asyncio
 import os
 import unittest
 
@@ -36,6 +37,13 @@ from app.config import settings
 from app.emo_engine.persona.core import Persona
 
 
+def _create_persona(chat_id: int) -> Persona:
+    async def _build() -> Persona:
+        return Persona(chat_id=chat_id)
+
+    return asyncio.run(_build())
+
+
 class PersonaRegressionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._prev = {
@@ -65,7 +73,7 @@ class PersonaRegressionTests(unittest.TestCase):
         settings.PERSONA_ROLE = self._prev["PERSONA_ROLE"]
 
     def test_baseline_persona_fields(self) -> None:
-        persona = Persona(chat_id=1)
+        persona = _create_persona(chat_id=1)
         persona.apply_overrides(reset=True)
         self.assertEqual(persona.name, "Kira")
         self.assertEqual(persona.age, 24)
@@ -74,7 +82,7 @@ class PersonaRegressionTests(unittest.TestCase):
         self.assertEqual(persona.temperament["sanguine"], 0.4)
 
     def test_apply_overrides_updates_profile(self) -> None:
-        persona = Persona(chat_id=2)
+        persona = _create_persona(chat_id=2)
         persona.apply_overrides({
             "name": "Iris",
             "age": 30,

@@ -147,7 +147,7 @@ def _load_payments_module():
             return None
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
-    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.celery_app"].run_coro_sync = lambda _coro, timeout=None: None
     target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
 
     previous = {}

@@ -268,7 +268,7 @@ def _load_payments_module():
             return None
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
-    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.celery_app"].run_coro_sync = lambda _coro, timeout=None: None
     target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
 
     previous = {}
@@ -324,7 +324,7 @@ def _load_refunds_module():
     target_modules["app.core.db"].session_scope = _dummy_session_scope
     target_modules["app.core.models"].RefundOutbox = _FakeRefundOutbox
     target_modules["app.tasks.celery_app"].celery = _Celery()
-    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.celery_app"].run_coro_sync = lambda _coro, timeout=None: None
 
     target_modules["app.tasks.requeue_result"].RequeueResult = _SharedRequeueResult
     target_modules["app.services.user.user_service"].InvalidBillingTierError = RuntimeError
@@ -625,7 +625,7 @@ class ProcessOutboxRetryNotifyTests(unittest.TestCase):
         with (
             patch.object(payments, "_apply_outbox", apply_mock),
             patch.object(payments, "_notify_payment_result", notify_mock),
-            patch.object(payments, "_run", _run_sync),
+            patch.object(payments, "run_coro_sync", _run_sync),
             patch.object(payments, "requeue_applied_unnotified_outbox", AsyncMock()) as requeue_mock,
         ):
             with self.assertRaises(RuntimeError):

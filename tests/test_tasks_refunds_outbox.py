@@ -286,7 +286,7 @@ def _load_refunds_module():
             return None
 
     target_modules["app.tasks.celery_app"].celery = _Celery()
-    target_modules["app.tasks.celery_app"]._run = lambda _coro, timeout=None: None
+    target_modules["app.tasks.celery_app"].run_coro_sync = lambda _coro, timeout=None: None
 
     class _RequeueResult(tuple):
         __slots__ = ()
@@ -361,7 +361,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
             refunds.process_refund_outbox_task(7, "token")
@@ -380,7 +380,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_refund_then_fail_once),
         ):
             refunds.process_refund_outbox_task(7, "token-2")
@@ -441,7 +441,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
         ):
             refunds.process_refund_outbox_task(8, "token")
 
@@ -477,7 +477,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
             patch.object(refunds, "_refund_balance_for_outbox", side_effect=_always_fail),
         ):
             refunds.process_refund_outbox_task(9, "token")
@@ -510,7 +510,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
         ):
             refunds.process_refund_outbox_task(13, "token")
 
@@ -521,7 +521,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
         ):
             refunds.process_refund_outbox_task(13, "token")
 
@@ -553,7 +553,7 @@ class RefundOutboxAtomicityTests(unittest.TestCase):
         with (
             patch.object(refunds, "session_scope", _FakeSessionFactory(state)),
             patch.object(refunds, "select", side_effect=lambda model: _SelectStmt(model)),
-            patch.object(refunds, "_run", side_effect=lambda coro: asyncio.run(coro)),
+            patch.object(refunds, "run_coro_sync", side_effect=lambda coro: asyncio.run(coro)),
         ):
             refunds.process_refund_outbox_task(14, "old-token")
 
