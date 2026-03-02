@@ -12,7 +12,6 @@ import traceback
 import logging
 import os
 import re
-import tempfile
 
 from contextlib import suppress
 from typing import Optional, Dict
@@ -29,6 +28,8 @@ from app.core.embedding_utils import get_rag_embedding_model
 from app.bot.utils.debouncer import compute_typing_delay
 import app.bot.components.constants as consts
 from app.clients.telegram_client import get_bot
+from app.core.temp_files import managed_temp_file, open_binary_read
+
 from app.clients import openai_client
 from app.services.responder import respond_to_user
 from app.services.responder.rag.keyword_filter import find_tag_hits
@@ -39,6 +40,7 @@ from app.services.addons.voice_generator import (
 )
 from app.services.addons.passive_moderation import split_context_text
 from app.services.addons.analytics import record_timeout
+from app.services.dialog_logger import start_dialog_logger, shutdown_dialog_logger
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
 from app.core.queue_recovery import requeue_processing_on_start
 from app.services.user.user_service import confirm_reservation_by_id, refund_reservation_by_id
@@ -92,8 +94,7 @@ _IS_MENTION_RE = re.compile(r'(?<!\S)@\w+\b')
 
 TG_TEXT_LIMIT: int = int(getattr(settings, "TG_TEXT_LIMIT", 4096))
 
-REDIS_QUEUE: SafeRedis = get_redis_queue()
-logger.info("Configured Redis queue at %s", getattr(settings, "REDIS_URL_QUEUE", settings.REDIS_URL))
+REDIS_QUEUE: SafeRedis | None = None
 
 PROCESSING_TASKS: set[asyncio.Task] = set()
 MAX_INFLIGHT_TASKS: int = int(getattr(settings, "WORKER_MAX_INFLIGHT_TASKS", settings.OPENAI_MAX_CONCURRENT_REQUESTS * 2))
@@ -567,26 +568,26 @@ async def _send_chatty_reply(
 
 
 async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> str:
-    tmp_path = None
     try:
         model = model or getattr(settings, "TRANSCRIPTION_MODEL", "whisper-1")
         f = await asyncio.wait_for(BOT.get_file(file_id), timeout=60)
-        with tempfile.NamedTemporaryFile(suffix=".oga", delete=False) as tmp:
-            tmp_path = tmp.name
-        await asyncio.wait_for(BOT.download(f, tmp_path), timeout=120)
-        async def _do_transcribe() -> str:
-            with open(tmp_path, "rb") as audio:
-                resp = await openai_client.transcribe_audio_with_retry(
-                    model=model,
-                    file=audio,
-                    response_format="text",
-                    total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
-                )
-            text_inner = (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
-            return text_inner
+        async with managed_temp_file(suffix=".oga") as tmp_path:
+            await asyncio.wait_for(BOT.download(f, tmp_path), timeout=120)
 
-        resp_text = await asyncio.wait_for(_do_transcribe(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
-        return resp_text
+            async def _do_transcribe() -> str:
+                audio = await open_binary_read(tmp_path)
+                try:
+                    resp = await openai_client.transcribe_audio_with_retry(
+                        model=model,
+                        file=audio,
+                        response_format="text",
+                        total_timeout=VOICE_TRANSCRIPTION_TIMEOUT,
+                    )
+                finally:
+                    await asyncio.to_thread(audio.close)
+                return (resp if isinstance(resp, str) else getattr(resp, "text", "")).strip()
+
+            return await asyncio.wait_for(_do_transcribe(), timeout=VOICE_TRANSCRIPTION_TIMEOUT)
     except Exception as e:
         logger.warning(
             "voice transcription failed",
@@ -599,10 +600,6 @@ async def _transcribe_voice_file_id(file_id: str, model: str | None = None) -> s
             exc_info=True,
         )
         return ""
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            with suppress(Exception):
-                os.remove(tmp_path)
 
 
 async def _tg_acquire_permit() -> None:
@@ -2116,6 +2113,8 @@ async def _recover_redis_queue_client(reason: Exception) -> None:
 async def queue_worker(stop_evt: asyncio.Event) -> None:
 
     global REDIS_QUEUE
+    if REDIS_QUEUE is None:
+        REDIS_QUEUE = get_redis_queue()
     queue_key      = settings.QUEUE_KEY
     processing_key = queue_key + ":processing"
 
@@ -2185,6 +2184,11 @@ async def _async_main() -> None:
         with suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop_evt.set)
 
+    global REDIS_QUEUE
+    REDIS_QUEUE = get_redis_queue()
+    logger.info("Configured Redis queue at %s", getattr(settings, "REDIS_URL_QUEUE", settings.REDIS_URL))
+    await start_dialog_logger()
+
     worker = asyncio.create_task(queue_worker(stop_evt))
     cleanup_task = asyncio.create_task(_cleanup_chat_locks_loop(stop_evt))
     logger.info("queue_worker task launched, entering event loop")
@@ -2227,6 +2231,8 @@ async def _async_main() -> None:
         await shutdown_tts()
     except Exception:
         pass
+    with suppress(Exception):
+        await shutdown_dialog_logger()
     with suppress(Exception):
         await close_redis_pools()
     logger.info("Redis connections closed, bye!")

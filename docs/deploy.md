@@ -356,6 +356,7 @@ This allows changing worker tuning without rebuilding images: update `.env` and 
   - `CELERY_MEDIA_QUEUE` → queue for `worker-media`.
   - `CELERY_MODERATION_QUEUE` → queue for `worker-moderation`.
 - In-container worker behavior:
+  - Celery tasks execute async business code via `run_coro_sync(...)` (internally `asyncio.run(...)` + timeout), with no background event-loop bridge/thread.
   - `CELERY_TASKS_CONCURRENCY`, `CELERY_TASKS_PREFETCH` (+ optional `CELERY_TASKS_POOL`, `CELERY_TASKS_LOGLEVEL`).
   - `CELERY_MEDIA_CONCURRENCY`, `CELERY_MEDIA_PREFETCH`.
   - `CELERY_MODERATION_CONCURRENCY`, `CELERY_MODERATION_PREFETCH`.

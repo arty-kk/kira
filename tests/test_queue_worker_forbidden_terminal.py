@@ -4,6 +4,8 @@ import pathlib
 import sys
 import types
 import unittest
+import tempfile
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 
@@ -20,6 +22,7 @@ def _load_queue_worker():
     fake_openai_client = types.ModuleType("app.clients.openai_client")
     fake_services = types.ModuleType("app.services")
     fake_responder = types.ModuleType("app.services.responder")
+    fake_dialog_logger = types.ModuleType("app.services.dialog_logger")
     fake_responder_rag = types.ModuleType("app.services.responder.rag")
     fake_responder_keyword = types.ModuleType("app.services.responder.rag.keyword_filter")
     fake_responder_knowledge = types.ModuleType("app.services.responder.rag.knowledge_proc")
@@ -34,6 +37,7 @@ def _load_queue_worker():
     fake_embedding_utils = types.ModuleType("app.core.embedding_utils")
     fake_core_models = types.ModuleType("app.core.models")
     fake_queue_recovery = types.ModuleType("app.core.queue_recovery")
+    fake_temp_files = types.ModuleType("app.core.temp_files")
 
     fake_aiogram = types.ModuleType("aiogram")
     fake_aiogram_enums = types.ModuleType("aiogram.enums")
@@ -120,6 +124,8 @@ def _load_queue_worker():
     fake_memory.close_redis_pools = _noop_async
     fake_memory.SafeRedis = object
     fake_memory.push_message = _noop_async
+    fake_dialog_logger.start_dialog_logger = _noop_async
+    fake_dialog_logger.shutdown_dialog_logger = _noop_async
     fake_embedding_utils.get_rag_embedding_model = lambda: "text-embedding-3-large"
     class _RagTagVector:
         pass
@@ -128,6 +134,23 @@ def _load_queue_worker():
     async def _fake_requeue_processing_on_start(*_args, **_kwargs):
         return types.SimpleNamespace(moved_count=0, lock_acquired=True)
 
+
+    @asynccontextmanager
+    async def _fake_managed_temp_file(*, data: bytes | None = None, suffix: str = ""):
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            if data is not None:
+                tmp.write(data)
+            path = tmp.name
+        try:
+            yield path
+        finally:
+            pathlib.Path(path).unlink(missing_ok=True)
+
+    async def _fake_open_binary_read(path: str):
+        return open(path, "rb")
+
+    fake_temp_files.managed_temp_file = _fake_managed_temp_file
+    fake_temp_files.open_binary_read = _fake_open_binary_read
     fake_queue_recovery.requeue_processing_on_start = _fake_requeue_processing_on_start
 
     module_overrides = {
@@ -143,6 +166,7 @@ def _load_queue_worker():
         "app.clients.openai_client": fake_openai_client,
         "app.services": fake_services,
         "app.services.responder": fake_responder,
+        "app.services.dialog_logger": fake_dialog_logger,
         "app.services.responder.rag": fake_responder_rag,
         "app.services.responder.rag.keyword_filter": fake_responder_keyword,
         "app.services.responder.rag.knowledge_proc": fake_responder_knowledge,
@@ -157,6 +181,7 @@ def _load_queue_worker():
         "app.core.embedding_utils": fake_embedding_utils,
         "app.core.models": fake_core_models,
         "app.core.queue_recovery": fake_queue_recovery,
+        "app.core.temp_files": fake_temp_files,
         "aiogram": fake_aiogram,
         "aiogram.enums": fake_aiogram_enums,
         "aiogram.types": fake_aiogram_types,

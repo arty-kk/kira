@@ -19,7 +19,7 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.memory import append_group_recent, inc_msg_count, push_group_stm
 from app.services.user.user_service import refund_reservation_by_id
-from app.tasks.celery_app import _run
+
 from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 from app.tasks.queue_schema import validate_bot_job
 from app.core.media_utils import MAX_IMAGE_BYTES, sanitize_and_compress, strict_image_load
@@ -223,4 +223,4 @@ async def _preprocess(payload: dict[str, Any]) -> str:
 
 @shared_task(name="media.preprocess_group_image", bind=True, acks_late=True)
 def preprocess_group_image(self, payload: dict[str, Any]) -> str:
-    return _run(_preprocess(payload))
+    return run_coro_sync(_preprocess(payload))

@@ -52,12 +52,8 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         async def _fake_handle(**kwargs):
             return "clean"
 
-        def _fake_run(coro):
-            return asyncio.run(coro)
-
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
-            patch("app.tasks.moderation._run", side_effect=_fake_run),
         ):
             result = passive_moderate.run(payload)
 
@@ -107,12 +103,8 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         async def _fake_handle(**kwargs):
             return "clean"
 
-        def _fake_run(coro):
-            return asyncio.run(coro)
-
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
-            patch("app.tasks.moderation._run", side_effect=_fake_run),
         ):
             result = passive_moderate.run(payload)
 
@@ -136,12 +128,8 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         async def _fake_handle(**kwargs):
             return "clean"
 
-        def _fake_run(coro):
-            return asyncio.run(coro)
-
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle) as handle_mock,
-            patch("app.tasks.moderation._run", side_effect=_fake_run),
         ):
             result = passive_moderate.run(payload)
 
@@ -173,8 +161,7 @@ class ModerationCeleryConfigTests(unittest.TestCase):
 
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_fake_handle),
-            patch("app.tasks.moderation._run", side_effect=_fake_run),
-            patch.object(passive_moderate.__wrapped__.__globals__["consts"], "redis_client", type("RedisStub", (), {
+                        patch.object(passive_moderate.__wrapped__.__globals__["consts"], "redis_client", type("RedisStub", (), {
                 "set": redis_set_mock,
                 "eval": redis_eval_mock,
                 "incrby": unittest.mock.AsyncMock(return_value=1),
@@ -215,8 +202,7 @@ class ModerationCeleryConfigTests(unittest.TestCase):
 
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation", side_effect=_raise_handle),
-            patch("app.tasks.moderation._run", side_effect=_fake_run),
-        ):
+                    ):
             with self.assertRaises(RuntimeError):
                 passive_moderate.run(payload)
 

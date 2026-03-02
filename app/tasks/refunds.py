@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import session_scope
 from app.core.models import RefundOutbox
 from app.services.user.user_service import InvalidBillingTierError, refund_user_balance
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
@@ -77,7 +77,7 @@ def process_refund_outbox_task(outbox_id: int, lease_token: str) -> None:
                     outbox.request_id,
                 )
 
-    _run(_run_task(str(lease_token)))
+    run_coro_sync(_run_task(str(lease_token)))
 
 
 async def requeue_pending_refund_outbox(batch_size: int = REFUND_REQUEUE_BATCH_SIZE) -> RequeueResult:

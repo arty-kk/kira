@@ -17,7 +17,7 @@ from app.core.vector_adapter import adapt_vector_for_storage
 from app.core.db import session_scope
 from app.core.models import ApiKey, ApiKeyKnowledge, RagTagVector
 from app.clients.openai_client import _call_openai_with_retry
-from app.tasks.celery_app import celery, _run
+from app.tasks.celery_app import celery, run_coro_sync
 from app.services.responder.rag.api_kb_proc import invalidate_api_kb_cache
 from app.services.responder.rag.keyword_filter import invalidate_tags_index
 from app.clients.telegram_client import get_bot
@@ -173,7 +173,7 @@ async def _notify_kb_status(api_key_id: int, kb_id: int, status: str, error: str
 
 @celery.task(name="kb.rebuild_for_api_key")
 def rebuild_for_api_key(api_key_id: int, kb_id: int) -> None:
-    _run(_rebuild_for_api_key_async(api_key_id, kb_id))
+    run_coro_sync(_rebuild_for_api_key_async(api_key_id, kb_id))
     invalidate_api_kb_cache(api_key_id)
     invalidate_tags_index(api_key_id)
     try:
@@ -446,6 +446,6 @@ async def _gc_orphan_api_key_dirs_async() -> None:
 def gc_orphan_api_key_dirs() -> None:
 
     try:
-        _run(_gc_orphan_api_key_dirs_async())
+        run_coro_sync(_gc_orphan_api_key_dirs_async())
     except Exception:
         logger.exception("kb: gc_orphan_api_key_dirs failed")
