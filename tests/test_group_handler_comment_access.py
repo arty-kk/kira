@@ -8,9 +8,6 @@ from app.bot.handlers import group
 
 
 class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self) -> None:
-        group._TRUSTED_DISCUSSION_CHAT_IDS.clear()
-
     async def test_regular_allowed_group_keeps_existing_path(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=100, type=ChatType.SUPERGROUP),
@@ -114,32 +111,26 @@ class GroupCommentAccessTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(group, "settings", cfg):
             self.assertFalse(await group._is_message_allowed_for_group_handlers(message))
 
-    async def test_trusted_channel_seeds_discussion_chat_without_comment_target_list(self) -> None:
+    async def test_untrusted_chat_with_untrusted_forward_source_is_blocked(self) -> None:
         chat_id = 310
-        source_channel_id = -100123
+        trusted_source_channel_id = -100123
+        untrusted_source_channel_id = -100124
         cfg = types.SimpleNamespace(
             ALLOWED_GROUP_IDS=[],
             COMMENT_MODERATION_ENABLED=True,
             COMMENT_TARGET_CHAT_IDS=[],
-            COMMENT_SOURCE_CHANNEL_IDS=[source_channel_id],
+            COMMENT_SOURCE_CHANNEL_IDS=[trusted_source_channel_id],
         )
 
-        channel_post = types.SimpleNamespace(
-            chat=types.SimpleNamespace(id=chat_id, type=ChatType.SUPERGROUP),
-            sender_chat=types.SimpleNamespace(id=source_channel_id, type=ChatType.CHANNEL),
-            forward_from_chat=None,
-            is_automatic_forward=True,
-        )
-        user_comment = types.SimpleNamespace(
+        forwarded_message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=chat_id, type=ChatType.SUPERGROUP),
             sender_chat=None,
-            forward_from_chat=None,
+            forward_from_chat=types.SimpleNamespace(id=untrusted_source_channel_id, type=ChatType.CHANNEL),
             is_automatic_forward=False,
         )
 
         with patch.object(group, "settings", cfg):
-            self.assertTrue(await group._is_message_allowed_for_group_handlers(channel_post))
-            self.assertTrue(await group._is_message_allowed_for_group_handlers(user_comment))
+            self.assertFalse(await group._is_message_allowed_for_group_handlers(forwarded_message))
 
 
 if __name__ == "__main__":

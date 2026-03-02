@@ -30,6 +30,9 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "split_context_text", return_value=("just a caption", "just a caption")),
             patch.object(group, "_is_mention", return_value=False),
             patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group, "_user_id_val", return_value=42),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)),
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group.preprocess_group_image, "delay", delay_mock),
             patch.object(group, "reject_image_and_reply", reject_mock),
         ):
@@ -44,6 +47,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
 
         delay_mock.assert_not_called()
         reject_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
 
     async def test_group_document_image_common_does_not_enqueue_without_mention(self) -> None:
         message = types.SimpleNamespace(
@@ -67,6 +71,9 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "split_context_text", return_value=("doc caption", "doc caption")),
             patch.object(group, "_is_mention", return_value=False),
             patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group, "_user_id_val", return_value=42),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)),
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group.preprocess_group_image, "delay", delay_mock),
         ):
             await group._handle_group_image_message_common(
@@ -79,6 +86,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             )
 
         delay_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
 
     async def test_group_image_common_enqueues_preprocess_without_inline_image(self) -> None:
         message = types.SimpleNamespace(
@@ -347,6 +355,9 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_is_channel_post", return_value=False),
             patch.object(group, "_is_mention", return_value=False),
             patch.object(group, "is_from_linked_channel", linked_check),
+            patch.object(group, "_user_id_val", return_value=42),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)),
+            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
             patch.object(group, "buffer_message_for_response", buffer_mock),
             patch.object(group, "record_activity", AsyncMock()),
         ):
@@ -354,6 +365,7 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
 
         buffer_mock.assert_not_called()
         linked_check.assert_not_called()
+        dispatch_mock.assert_called_once()
 
 
 

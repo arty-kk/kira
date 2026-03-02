@@ -39,7 +39,6 @@ from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 
 logger = logging.getLogger(__name__)
 
-_TRUSTED_DISCUSSION_CHAT_IDS: set[int] = set()
 bot = get_bot()
 
 if not getattr(consts, "BOT_USERNAME", None):
@@ -116,10 +115,6 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
         if int(message.chat.id) in target_ids:
             return True
 
-    with contextlib.suppress(Exception):
-        if int(message.chat.id) in _TRUSTED_DISCUSSION_CHAT_IDS:
-            return True
-
     source_ids = set(getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
     if not source_ids:
         return False
@@ -144,8 +139,6 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
             candidate_source_ids.add(int(linked_chat_id))
 
     if candidate_source_ids & source_ids:
-        with contextlib.suppress(Exception):
-            _TRUSTED_DISCUSSION_CHAT_IDS.add(int(message.chat.id))
         return True
 
     return False
@@ -1226,15 +1219,40 @@ async def on_group_voice(message: Message) -> None:
         if message.from_user:
             asyncio.create_task(record_activity(cid, message.from_user.id))
 
-        if _reply_gate_requires_mention(message):
-            return
-
         voice_file_id = getattr(getattr(message, "voice", None), "file_id", None)
         if not voice_file_id:
             return
 
         is_channel = _is_channel_post(message)
         if message.from_user and message.from_user.is_bot and not is_channel:
+            return
+
+        if _reply_gate_requires_mention(message):
+            user_id_val = _user_id_val(message, is_channel)
+            is_comment_context = await _resolve_group_comment_context(message)
+            payload = {
+                "chat_id": cid,
+                "text": None,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": None,
+                "enforce_on_topic": False,
+                "entities": [],
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text="",
+                ents=[],
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
             return
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
@@ -1273,6 +1291,31 @@ async def on_group_voice(message: Message) -> None:
         # replies to bot messages.
 
         if not trigger:
+            user_id_val = _user_id_val(message, is_channel)
+            is_comment_context = await _resolve_group_comment_context(message)
+            payload = {
+                "chat_id": cid,
+                "text": None,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": [],
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text="",
+                ents=[],
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
             return
 
         if not await _ensure_daily_limit(cid, message.message_id):
@@ -1363,9 +1406,6 @@ async def _handle_group_image_message_common(
     except Exception:
         logger.exception("guard filters failed (image)")
 
-    if _reply_gate_requires_mention(message):
-        return
-
     is_channel = _is_channel_post(message)
     if message.from_user and message.from_user.is_bot and not is_channel:
         return
@@ -1381,6 +1421,35 @@ async def _handle_group_image_message_common(
 
     caption = (message.caption or "").strip()
     ents = _extract_entities(message)
+    model_caption, log_caption = split_context_text(caption, ents, allow_web=False)
+
+    if _reply_gate_requires_mention(message):
+        user_id_val = _user_id_val(message, is_channel)
+        is_comment_context = await _resolve_group_comment_context(message)
+        payload = {
+            "chat_id": cid,
+            "text": model_caption,
+            "user_id": user_id_val,
+            "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+            "is_group": True,
+            "msg_id": message.message_id,
+            "is_channel_post": is_channel,
+            "is_comment_context": is_comment_context,
+            "trigger": None,
+            "enforce_on_topic": False,
+            "entities": ents,
+        }
+        _dispatch_passive_moderation(
+            message,
+            payload,
+            text=log_caption,
+            ents=ents,
+            is_channel=is_channel,
+            user_id_val=user_id_val,
+            is_comment_context=is_comment_context,
+            trusted_repost=False,
+        )
+        return
 
     trusted_repost = _is_trusted_scope_repost(message)
     if trusted_repost:
@@ -1392,8 +1461,6 @@ async def _handle_group_image_message_common(
             is_channel=is_channel,
         )
         return
-
-    model_caption, log_caption = split_context_text(caption, ents, allow_web=False)
 
     mentioned = _is_mention(message)
     mentions_other = _mentions_other_user(message)
@@ -1409,6 +1476,31 @@ async def _handle_group_image_message_common(
     )
 
     if not trigger:
+        user_id_val = _user_id_val(message, is_channel)
+        is_comment_context = await _resolve_group_comment_context(message)
+        payload = {
+            "chat_id": cid,
+            "text": model_caption,
+            "user_id": user_id_val,
+            "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+            "is_group": True,
+            "msg_id": message.message_id,
+            "is_channel_post": is_channel,
+            "is_comment_context": is_comment_context,
+            "trigger": trigger,
+            "enforce_on_topic": False,
+            "entities": ents,
+        }
+        _dispatch_passive_moderation(
+            message,
+            payload,
+            text=log_caption,
+            ents=ents,
+            is_channel=is_channel,
+            user_id_val=user_id_val,
+            is_comment_context=is_comment_context,
+            trusted_repost=False,
+        )
         return
 
     if not is_single_media(message):
