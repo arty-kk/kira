@@ -1016,9 +1016,8 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if bool(getattr(message, "is_automatic_forward", False)):
         return False
 
-    trusted_chat_ids, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
+    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
 
-    is_trusted_chat = int(chat_id) in trusted_chat_ids
     is_trusted_destination = int(chat_id) in trusted_scope_ids
     with contextlib.suppress(Exception):
         linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)

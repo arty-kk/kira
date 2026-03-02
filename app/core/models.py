@@ -12,6 +12,8 @@ from app.core.db_base import Base
 
 
 class HalfVector(UserDefinedType):
+    cache_ok = True
+
     def __init__(self, dim: int):
         self.dim = int(dim)
 

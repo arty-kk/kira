@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Shared moderation context resolution helpers for sync/async handler paths."""
+
+from __future__ import annotations
 
 from aiogram import types
 from aiogram.enums import ChatType
