@@ -32,7 +32,10 @@ from app.services.addons.passive_moderation import (
     get_last_ai_moderation_category,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
-from app.bot.handlers.moderation_context import resolve_message_moderation_context
+from app.bot.handlers.moderation_context import (
+    resolve_message_moderation_context,
+    resolve_message_moderation_context_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -465,7 +468,13 @@ async def handle_passive_moderation(
     if is_comment_context is not None:
         moderation_context = "comment" if bool(is_comment_context) else "group"
     elif message is not None:
-        moderation_context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
+        try:
+            moderation_context = await resolve_message_moderation_context_async(
+                message,
+                from_linked=bool(from_linked),
+            )
+        except Exception:
+            moderation_context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
     else:
         moderation_context = "group"
     light_policy = resolve_moderation_policy(moderation_context, settings)
@@ -1070,7 +1079,13 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     ):
         return False
 
-    context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
+    try:
+        context = await resolve_message_moderation_context_async(
+            message,
+            from_linked=bool(from_linked),
+        )
+    except Exception:
+        context = resolve_message_moderation_context(message, from_linked=bool(from_linked))
     policy = resolve_moderation_policy(context, settings)
 
     def _ctx_reason(reason: str) -> str:

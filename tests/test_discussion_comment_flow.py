@@ -13,6 +13,7 @@ os.environ.setdefault("REDIS_URL_VECTOR", "redis://localhost:6379/2")
 from aiogram.enums import ChatType
 
 from app.bot.handlers import group, moderation
+from app.bot.handlers import moderation_context
 from app.bot.handlers.moderation_context import resolve_message_moderation_context
 
 
@@ -558,6 +559,68 @@ class DiscussionCommentIntegrationTests(unittest.IsolatedAsyncioTestCase):
         moderation_payload = delay_mock.call_args.args[0]
         self.assertEqual(sync_context, "comment")
         self.assertEqual(moderation_payload["is_comment_context"], sync_context == "comment")
+
+
+class DiscussionCommentAsyncContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_async_resolver_marks_nested_reply_as_comment_via_cache(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, linked_chat_id=-100900),
+            message_id=703,
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            reply_to_message=types.SimpleNamespace(message_id=702, sender_chat=None, forward_from_chat=None),
+        )
+
+        with patch.object(moderation_context, "redis_client", types.SimpleNamespace(
+            get=AsyncMock(return_value=b"701"),
+            set=AsyncMock(),
+        )) as redis_mock:
+            ctx = await moderation_context.resolve_message_moderation_context_async(message, from_linked=False)
+
+        self.assertEqual(ctx, "comment")
+        redis_mock.get.assert_awaited_once_with("comment:root_of:-100200:702")
+        redis_mock.set.assert_awaited_once_with(
+            "comment:root_of:-100200:703",
+            701,
+            ex=86400,
+        )
+
+    async def test_group_context_falls_back_to_sync_when_async_resolver_fails(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, linked_chat_id=-100900),
+            message_id=704,
+            sender_chat=types.SimpleNamespace(id=-100900, type=ChatType.CHANNEL),
+            forward_from_chat=None,
+            reply_to_message=None,
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(group, "resolve_message_moderation_context_async", AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            is_comment = await group._resolve_group_comment_context(message)
+
+        self.assertTrue(is_comment)
+
+    async def test_async_resolver_keeps_channel_origin_fallback_without_linked_chat_id(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, linked_chat_id=None),
+            message_id=705,
+            sender_chat=types.SimpleNamespace(id=-100900, type=ChatType.CHANNEL),
+            forward_from_chat=None,
+            reply_to_message=None,
+            is_automatic_forward=False,
+        )
+
+        with patch.object(moderation_context, "redis_client", types.SimpleNamespace(
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )):
+            ctx = await moderation_context.resolve_message_moderation_context_async(message, from_linked=False)
+
+        self.assertEqual(ctx, "comment")
 
 
 if __name__ == "__main__":

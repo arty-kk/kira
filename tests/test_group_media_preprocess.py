@@ -446,21 +446,23 @@ class GroupVoiceHandlerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class GroupCommentContextTests(unittest.TestCase):
-    def test_is_comment_context_detects_linked_chat_message(self) -> None:
+    def test_is_comment_context_false_for_general_linked_group_message(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123, linked_chat_id=-100500),
             sender_chat=None,
             forward_from_chat=None,
+            reply_to_message=None,
             is_automatic_forward=False,
         )
 
-        self.assertTrue(group.resolve_message_moderation_context(message) == "comment")
+        self.assertFalse(group.resolve_message_moderation_context(message) == "comment")
 
     def test_is_comment_context_true_with_channel_sender(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123, linked_chat_id=-100500),
             sender_chat=types.SimpleNamespace(id=-100500, type=group.ChatType.CHANNEL),
             forward_from_chat=None,
+            reply_to_message=None,
             is_automatic_forward=False,
         )
 
@@ -471,10 +473,27 @@ class GroupCommentContextTests(unittest.TestCase):
             chat=types.SimpleNamespace(id=123, linked_chat_id=None),
             sender_chat=None,
             forward_from_chat=None,
+            reply_to_message=None,
             is_automatic_forward=False,
         )
 
         self.assertFalse(group.resolve_message_moderation_context(message) == "comment")
+
+    def test_is_comment_context_true_for_reply_to_linked_channel_post(self) -> None:
+        parent = types.SimpleNamespace(
+            sender_chat=types.SimpleNamespace(id=-100500, type=group.ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=True,
+        )
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, linked_chat_id=-100500),
+            sender_chat=None,
+            forward_from_chat=None,
+            reply_to_message=parent,
+            is_automatic_forward=False,
+        )
+
+        self.assertTrue(group.resolve_message_moderation_context(message) == "comment")
 
 
 
