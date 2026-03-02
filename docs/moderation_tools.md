@@ -133,6 +133,19 @@ MODERATION_DEEP_INCLUDE_HISTORY=false
 - `is_automatic_forward` трактуется как системный автоперенос linked-channel, а не как обычный пользовательский forward.
 - Исключение trusted-repost применяется только если destination и source входят в доверенный контур (trusted scope).
 
+### Матрица поведения (group vs comment, mention/reply/attachments)
+
+| Контекст | Тип входа | Модерация (`apply_moderation_filters`) | Passive moderation (`passive_moderate`) | Автоответ бота |
+|---|---|---|---|---|
+| Group | Текст c `@бот`/reply на бота (`mention`) | Да, до пайплайна ответа | Да | Да, только после статуса `clean` |
+| Comment | Текст c `@бот`/reply на бота (`mention`) | Да, те же правила контекста `comment` | Да | Да, только после статуса `clean` |
+| Group | Обычный текст без триггера (`check_on_topic` возможен) | Да | Да | Только если сработал `check_on_topic` и после `clean` |
+| Comment | Обычный текст без триггера (`check_on_topic` возможен) | Да | Да | Только если сработал `check_on_topic` и после `clean` |
+| Group/Comment | Reply не боту (reply-gate) | Да | Да (passive-only) | Нет |
+| Group/Comment | Сообщение с вложением + текст/подпись | Да | Да (в т.ч. через media-preprocess для изображений) | По тем же trigger-правилам, после `clean` |
+
+Ключевой принцип: все текстовые сообщения обычных пользователей (в группах и в комментариях) проходят модерацию; автоответ/прямой ответ бота не запускается без `clean`-статуса.
+
 ---
 
 ## 9) Кого уведомлять
