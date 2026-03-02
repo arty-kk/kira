@@ -24,7 +24,11 @@ from app.bot.components.dispatcher import dp
 import app.bot.components.constants as consts
 from app.bot.components.constants import redis_client
 from app.bot.handlers.moderation import apply_moderation_filters, is_from_linked_channel
-from app.bot.handlers.moderation_context import resolve_message_moderation_context
+from app.bot.handlers.moderation_context import (
+    resolve_message_moderation_context,
+    resolve_message_moderation_context_async,
+    update_comment_thread_root_cache,
+)
 from app.bot.i18n import t
 from app.bot.utils.debouncer import buffer_message_for_response
 from app.bot.utils.telegram_safe import delete_message_safe, send_message_safe
@@ -579,7 +583,10 @@ async def _resolve_group_comment_context(message: Message) -> bool:
     from_linked = False
     with contextlib.suppress(Exception):
         from_linked = await is_from_linked_channel(message)
-    return resolve_message_moderation_context(message, from_linked=from_linked) == "comment"
+    try:
+        return (await resolve_message_moderation_context_async(message, from_linked=from_linked)) == "comment"
+    except Exception:
+        return resolve_message_moderation_context(message, from_linked=from_linked) == "comment"
 
 
 def _is_trusted_scope_repost(message: Message) -> bool:
@@ -907,6 +914,8 @@ async def on_group_message(message: Message) -> None:
         if is_channel:
             raw_text = (message.text or message.caption or "").strip()
             ents = _extract_entities(message)
+            with contextlib.suppress(Exception):
+                await update_comment_thread_root_cache(message)
             if trusted_repost:
                 await _log_ignored_repost_to_stm(
                     message,
@@ -929,6 +938,8 @@ async def on_group_message(message: Message) -> None:
 
         raw_text = (message.text or message.caption or "").strip()
         ents = _extract_entities(message)
+        with contextlib.suppress(Exception):
+            await update_comment_thread_root_cache(message)
 
         if _reply_gate_requires_mention(message):
             user_id_val = _user_id_val(message, is_channel)
