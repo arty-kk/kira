@@ -160,6 +160,41 @@ class CleanOnTopicMessageTests(unittest.TestCase):
         )
 
 
+
+
+class ReplyGateTests(unittest.TestCase):
+    def test_reply_to_channel_post_does_not_require_mention(self) -> None:
+        message = types.SimpleNamespace(
+            reply_to_message=types.SimpleNamespace(
+                from_user=None,
+                is_automatic_forward=True,
+                sender_chat=types.SimpleNamespace(type=group.ChatType.CHANNEL),
+                forward_from_chat=None,
+            ),
+            text="plain comment",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+        )
+
+        self.assertFalse(group._reply_gate_requires_mention(message))
+
+    def test_reply_to_regular_user_requires_mention(self) -> None:
+        message = types.SimpleNamespace(
+            reply_to_message=types.SimpleNamespace(
+                from_user=types.SimpleNamespace(id=42, username="alice", is_bot=False),
+                is_automatic_forward=False,
+                sender_chat=None,
+                forward_from_chat=None,
+            ),
+            text="plain reply",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+        )
+
+        self.assertTrue(group._reply_gate_requires_mention(message))
+
 class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_mentions_other_still_dispatches_passive_moderation(self) -> None:
         message = types.SimpleNamespace(
@@ -594,6 +629,59 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIsNone(trigger)
+
+    async def test_check_on_topic_chatbusy_still_dispatches_passive_moderation(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=78,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.object(
+                    group,
+                    "settings",
+                    types.SimpleNamespace(GROUP_AUTOREPLY_ON_TOPIC=True),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    group,
+                    "_is_message_allowed_for_group_handlers",
+                    AsyncMock(return_value=True),
+                )
+            )
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_reply_gate_requires_mention", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("hello", "hello")))
+            stack.enter_context(patch.object(group, "_is_mention", return_value=False))
+            stack.enter_context(patch.object(group, "_mentions_other_user", return_value=False))
+            stack.enter_context(patch.object(group, "_is_bot_command_to_us", return_value=False))
+            stack.enter_context(patch.object(group, "_chat_has_active_generation", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_message(message)
+
+        buffer_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
+
 
     async def test_mention_still_enqueues_while_chatbusy(self) -> None:
         with patch.object(

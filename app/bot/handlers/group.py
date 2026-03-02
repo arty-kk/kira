@@ -409,11 +409,23 @@ async def _update_presence(cid: int, message: Message) -> None:
 
 
 def _reply_gate_requires_mention(message: Message) -> bool:
-    if message.reply_to_message and message.reply_to_message.from_user:
-        if _is_reply_to_our_bot(message):
-            return False
-        return not _is_mention(message)
-    return False
+    reply = getattr(message, "reply_to_message", None)
+    if not reply:
+        return False
+
+    if _is_reply_to_our_bot(message):
+        return False
+
+    reply_sender_chat = getattr(reply, "sender_chat", None)
+    reply_forward_from_chat = getattr(reply, "forward_from_chat", None)
+    if bool(getattr(reply, "is_automatic_forward", False)):
+        return False
+    if reply_sender_chat and getattr(reply_sender_chat, "type", None) == ChatType.CHANNEL:
+        return False
+    if reply_forward_from_chat and getattr(reply_forward_from_chat, "type", None) == ChatType.CHANNEL:
+        return False
+
+    return not _is_mention(message)
 
 
 def _is_clean_message_for_on_topic(message: Message, *, mentioned: bool, mentions_other: bool) -> bool:
@@ -1040,6 +1052,30 @@ async def on_group_message(message: Message) -> None:
                 "group check_on_topic skipped while chat is busy: chat=%s msg_id=%s",
                 cid,
                 message.message_id,
+            )
+            user_id_val = _user_id_val(message, is_channel)
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": True,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
             )
             return
 

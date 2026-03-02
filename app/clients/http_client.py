@@ -1,6 +1,7 @@
 #app/clients/http_client.py
 import asyncio
 import aiohttp
+import contextlib
 import logging
 
 from aiohttp import ClientTimeout
@@ -15,13 +16,21 @@ class HTTPClient:
     def __init__(self, timeout_sec: int = 10):
         self._timeout_sec = timeout_sec
         self._session: aiohttp.ClientSession | None = None
+        self._session_loop: asyncio.AbstractEventLoop | None = None
         self._session_lock = asyncio.Lock()
         self._request_semaphore = asyncio.Semaphore(
             int(getattr(settings, "HTTP_MAX_CONCURRENCY", 50) or 50)
         )
 
     async def _get_session(self) -> aiohttp.ClientSession:
+        current_loop = asyncio.get_running_loop()
         async with self._session_lock:
+            if self._session is not None and self._session_loop is not current_loop:
+                with contextlib.suppress(Exception):
+                    await self._session.close()
+                self._session = None
+                self._session_loop = None
+
             if self._session is None or self._session.closed:
                 connector = aiohttp.TCPConnector(
                     limit=getattr(settings, "HTTP_MAX_CONNECTIONS", 200)
@@ -35,6 +44,7 @@ class HTTPClient:
                     connector=connector,
                     timeout=timeout
                 )
+                self._session_loop = current_loop
         return self._session
 
     def _build_timeout(self, timeout_sec: float | None) -> ClientTimeout | None:
@@ -161,7 +171,8 @@ class HTTPClient:
         async with self._session_lock:
             if self._session and not self._session.closed:
                 await self._session.close()
-                self._session = None
+            self._session = None
+            self._session_loop = None
 
 
 http_client = HTTPClient(timeout_sec=getattr(settings, "HTTP_TIMEOUT_SEC", 10))
