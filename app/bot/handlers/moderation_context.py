@@ -145,6 +145,8 @@ async def resolve_message_moderation_context_async(message: types.Message, *, fr
         return "comment"
     if from_linked:
         return "comment"
+    if _linked_channel_id(message):
+        return "comment"
     # Backward-compatible fallback when linked_chat_id is absent in update,
     # but message still carries explicit channel-origin markers.
     if _is_channel_origin_message(message):
