@@ -1,4 +1,5 @@
 # ruff: noqa: E402
+import asyncio
 import os
 import unittest
 
@@ -31,6 +32,13 @@ from app.emo_engine.persona.constants.emotions import (
 )
 from app.emo_engine.persona.constants.tone_map import Tone
 from app.emo_engine.persona.core import Persona
+
+
+def _create_persona(chat_id: int) -> Persona:
+    async def _build() -> Persona:
+        return Persona(chat_id=chat_id)
+
+    return asyncio.run(_build())
 
 
 class PersonaBrainSnapshotRecomputeTests(unittest.TestCase):
@@ -112,7 +120,7 @@ class PersonaUpdateSelfPatternsTests(unittest.IsolatedAsyncioTestCase):
 
 class PersonaBrainLearnedMetricsIsolationTests(unittest.TestCase):
     def test_learned_metric_is_local_to_persona_and_recomputed(self) -> None:
-        persona_a = Persona(chat_id=1001)
+        persona_a = _create_persona(chat_id=1001)
         persona_a.brain.config.activation_threshold = 0.1
         persona_a.brain.config.learn_threshold = 1
 
@@ -128,7 +136,7 @@ class PersonaBrainLearnedMetricsIsolationTests(unittest.TestCase):
         self.assertNotIn(learned_name, ALL_METRICS)
         self.assertNotIn(learned_name, SECONDARY_EMOTIONS.get("derived", {}))
 
-        persona_b = Persona(chat_id=1002)
+        persona_b = _create_persona(chat_id=1002)
         self.assertNotIn(learned_name, persona_b.brain.state)
         self.assertNotIn(learned_name, persona_b.state)
 

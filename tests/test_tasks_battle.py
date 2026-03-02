@@ -28,7 +28,7 @@ class BattleTimeoutTasksTests(unittest.TestCase):
         payload = {"gid": "   ", "expected_phase_version": "2"}
 
         with (
-            patch("app.tasks.battle._run", side_effect=self._fake_run),
+            patch("app.tasks.battle.run_coro_sync", side_effect=self._fake_run),
             patch("app.tasks.battle.check_battle_timeout", new_callable=AsyncMock) as check_mock,
             patch("app.bot.components.constants.redis_client.incr", new_callable=AsyncMock) as incr_mock,
             self.assertLogs("app.tasks.battle", level="WARNING") as logs,
@@ -43,7 +43,7 @@ class BattleTimeoutTasksTests(unittest.TestCase):
         payload = {"gid": "gid-1", "expected_phase_version": "abc"}
 
         with (
-            patch("app.tasks.battle._run", side_effect=self._fake_run),
+            patch("app.tasks.battle.run_coro_sync", side_effect=self._fake_run),
             patch("app.tasks.battle.check_move_timeout", new_callable=AsyncMock) as check_mock,
             patch("app.bot.components.constants.redis_client.incr", new_callable=AsyncMock) as incr_mock,
             self.assertLogs("app.tasks.battle", level="WARNING") as logs,
@@ -58,7 +58,7 @@ class BattleTimeoutTasksTests(unittest.TestCase):
         payload = {"gid": "gid-1", "expected_version": "7"}
 
         with (
-            patch("app.tasks.battle._run", side_effect=self._fake_run),
+            patch("app.tasks.battle.run_coro_sync", side_effect=self._fake_run),
             patch("app.tasks.battle.check_battle_timeout", new_callable=AsyncMock) as check_mock,
         ):
             battle_start_timeout_check_task.run(payload)
@@ -69,7 +69,7 @@ class BattleTimeoutTasksTests(unittest.TestCase):
         payload = {"gid": "gid-1", "expected_version": "9"}
 
         with (
-            patch("app.tasks.battle._run", side_effect=self._fake_run),
+            patch("app.tasks.battle.run_coro_sync", side_effect=self._fake_run),
             patch("app.tasks.battle.check_move_timeout", new_callable=AsyncMock) as check_mock,
         ):
             battle_move_timeout_check_task.run(payload)
