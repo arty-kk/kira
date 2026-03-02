@@ -20,6 +20,7 @@ from app.config import settings
 from app.core.memory import append_group_recent, inc_msg_count, push_group_stm
 from app.services.user.user_service import refund_reservation_by_id
 
+from app.tasks.celery_app import run_coro_sync
 from app.tasks.moderation import passive_moderate, prepare_moderation_payload
 from app.tasks.queue_schema import validate_bot_job
 from app.core.media_utils import MAX_IMAGE_BYTES, sanitize_and_compress, strict_image_load
