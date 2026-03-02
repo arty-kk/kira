@@ -504,6 +504,7 @@ async def handle_passive_moderation(
 
         status = "clean"
         reason_text = ""
+        reason_code = ""
         ai_flag_signal = False
         if light_status != "clean":
             reason_map = {
@@ -518,6 +519,7 @@ async def handle_passive_moderation(
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
+            reason_code = str(light_status or "unknown").strip().lower() or "unknown"
             status = "flagged"
             ai_flag_signal = light_status == "toxic"
             if light_status == "toxic":
@@ -537,7 +539,8 @@ async def handle_passive_moderation(
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"
                 f"{body}\n\n"
-                f"Reason: <b>{reason_text}</b>."
+                f"Reason: <b>{reason_text}</b>.\n"
+                f"Reason code: <code>{html.escape(reason_code)}</code>."
             )
             if str(chat_id).startswith("-100"):
                 public_chat_id = str(chat_id)[4:]
@@ -601,8 +604,10 @@ async def handle_passive_moderation(
             deep_ai_category = get_last_ai_moderation_category()
             if deep_ai_category:
                 reason_text = f"Contextual violation ({deep_ai_category})"
+                reason_code = f"deep_ai:{deep_ai_category}"
             else:
                 reason_text = "Contextual violation"
+                reason_code = "deep_contextual"
             raw_snippet = (text or "")[:200]
             snippet = html.escape(raw_snippet) + ("…" if len(text) > 200 else "")
             chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
@@ -612,7 +617,8 @@ async def handle_passive_moderation(
                 f"(<code>{_uid}</code>)\n"
                 f"Message ID: <code>{_mid}</code>\n"
                 f"Text: {snippet}\n\n"
-                f"Reason: <b>{html.escape(reason_text or 'Contextual violation')}</b>."
+                f"Reason: <b>{html.escape(reason_text or 'Contextual violation')}</b>.\n"
+                f"Reason code: <code>{html.escape(reason_code or 'deep_contextual')}</code>."
             )
             if str(chat_id).startswith("-100"):
                 public_chat_id = str(chat_id)[4:]
