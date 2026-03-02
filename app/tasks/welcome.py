@@ -65,6 +65,7 @@ async def typing_loop(bot, chat_id: int, action: ChatAction = ChatAction.TYPING,
 
 @celery.task(name="welcome.group", time_limit=WELCOME_GROUP_TIME_LIMIT_SEC)
 def send_group_welcome_task(chat_id: int, user: dict) -> None:
+    user_id = user.get("id", user.get("user_id"))
 
     try:
         task_id = getattr(getattr(current_task, "request", None), "id", None)
@@ -76,14 +77,14 @@ def send_group_welcome_task(chat_id: int, user: dict) -> None:
         os.getpid(),
         task_id,
         chat_id,
-        user.get("id"),
+        user_id,
     )
     
     async def _inner():
         bot = get_bot()
 
         u = SimpleNamespace(
-            id=user["id"],
+            id=int(user_id),
             username=user.get("username"),
             full_name=user.get("full_name"),
             language_code=user.get("language_code"),
