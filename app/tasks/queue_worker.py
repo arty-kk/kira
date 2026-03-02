@@ -1237,6 +1237,31 @@ async def handle_job(raw, processing_key: str) -> None:
         await _refund_reservation()
         return
 
+    if is_group or is_channel:
+        trusted_group_ids = {
+            int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
+        }
+        trusted_comment_target_ids = {
+            int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
+        }
+        trusted_source_channel_ids = {
+            int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+        }
+        trusted_scope_ids = trusted_group_ids | trusted_comment_target_ids | trusted_source_channel_ids
+        if int(chat_id) not in trusted_scope_ids:
+            logger.info(
+                "Dropping job outside trusted scope chat=%s user=%s msg_id=%s is_group=%s is_channel=%s",
+                chat_id,
+                user_id,
+                msg_id,
+                is_group,
+                is_channel,
+            )
+            with suppress(Exception):
+                await REDIS_QUEUE.lrem(processing_key, 1, raw)
+            await _refund_reservation()
+            return
+
     try:
         sent_key = f"sent_reply:{chat_id}:{msg_id}"
         if await REDIS_QUEUE.get(sent_key):
@@ -1446,10 +1471,7 @@ async def handle_job(raw, processing_key: str) -> None:
                         int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
                     }
                     trusted_scope_ids = trusted_group_ids | trusted_comment_target_ids | trusted_source_channel_ids
-                    is_trusted_comment_context = bool(job.get("is_comment_context")) and bool(
-                        getattr(settings, "COMMENT_MODERATION_ENABLED", False)
-                    )
-                    is_trusted_destination = int(chat_id) in trusted_scope_ids or is_trusted_comment_context
+                    is_trusted_destination = int(chat_id) in trusted_scope_ids
 
                     if is_trusted_destination:
                         attempt_key = f"{job_key}:modwait_attempt"
