@@ -39,6 +39,19 @@ from app.services.addons.voice_generator import (
     will_speak, is_tts_eligible_short
 )
 from app.services.addons.passive_moderation import split_context_text
+try:
+    from app.bot.utils.trusted_scope import is_trusted_destination as trusted_destination_check
+except Exception:  # pragma: no cover - queue-worker unit tests may stub app.bot without handlers package
+    def trusted_destination_check(chat_id: int, chat_obj, settings_like) -> bool:
+        trusted_scope_ids = {
+            int(x)
+            for x in (
+                *(getattr(settings_like, "ALLOWED_GROUP_IDS", []) or []),
+                *(getattr(settings_like, "COMMENT_TARGET_CHAT_IDS", []) or []),
+                *(getattr(settings_like, "COMMENT_SOURCE_CHANNEL_IDS", []) or []),
+            )
+        }
+        return int(chat_id) in trusted_scope_ids
 from app.services.addons.analytics import record_timeout
 from app.services.dialog_logger import start_dialog_logger, shutdown_dialog_logger
 from app.core.memory import get_redis, get_redis_queue, close_redis_pools, SafeRedis, push_message
@@ -1436,20 +1449,10 @@ async def handle_job(raw, processing_key: str) -> None:
                     return
 
                 if (mod_status not in {"clean", "error"}) or read_failed:
-                    trusted_group_ids = {
-                        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
-                    }
-                    trusted_comment_target_ids = {
-                        int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
-                    }
-                    trusted_source_channel_ids = {
-                        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
-                    }
-                    trusted_scope_ids = trusted_group_ids | trusted_comment_target_ids | trusted_source_channel_ids
                     is_trusted_comment_context = bool(job.get("is_comment_context")) and bool(
                         getattr(settings, "COMMENT_MODERATION_ENABLED", False)
                     )
-                    is_trusted_destination = int(chat_id) in trusted_scope_ids or is_trusted_comment_context
+                    is_trusted_destination = trusted_destination_check(chat_id, None, settings) or is_trusted_comment_context
 
                     if is_trusted_destination:
                         attempt_key = f"{job_key}:modwait_attempt"
