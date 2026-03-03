@@ -122,7 +122,10 @@ def send_group_welcome_task(chat_id: int, user: dict) -> None:
                 if mention_pt not in safe_plain:
                     safe_plain = f"{mention_pt} {safe_plain}".strip()
 
-                await bot.send_message(chat_id, safe_plain, parse_mode=None)
+                try:
+                    await bot.send_message(chat_id, safe_plain, parse_mode=None)
+                except Exception:
+                    logger.error("Plain text fallback send failed", exc_info=True)
         finally:
             typing_task.cancel()
             with suppress(asyncio.CancelledError):

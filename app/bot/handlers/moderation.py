@@ -30,6 +30,8 @@ from app.services.addons.passive_moderation import (
     check_deep,
     classify_profile_nsfw_fast,
     get_last_ai_moderation_category,
+    get_last_ai_moderation_flags,
+    should_delete_ai_flagged_message,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import (
@@ -621,7 +623,9 @@ async def handle_passive_moderation(
 
         if ai_flag_signal and _mid and status != "blocked":
             try:
-                if getattr(settings, "MODERATION_DELETE_FLAGGED", False):
+                ai_flags = get_last_ai_moderation_flags()
+                should_delete_ai = bool(getattr(settings, "MODERATION_DELETE_FLAGGED", False)) or should_delete_ai_flagged_message(ai_flags)
+                if should_delete_ai:
                     await _delete_message_safe(chat_id, _mid)
             except Exception:
                 logger.debug("ai-flagged: delete failed", exc_info=True)

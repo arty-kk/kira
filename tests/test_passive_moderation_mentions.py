@@ -629,114 +629,62 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_moderate_with_openai_image_only_payload_has_no_synthetic_text(self) -> None:
-        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
-        response = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    flagged=False,
-                    categories={},
-                    category_scores={},
-                )
-            ]
-        )
-        create_mock = AsyncMock(return_value=response)
-        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
+        call_mock = AsyncMock(return_value=response)
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
-            patch.object(passive_moderation, "get_redis", return_value=redis),
-            patch.object(passive_moderation, "get_openai", return_value=client),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
         ):
             flagged = await passive_moderation.moderate_with_openai("", image_b64="Zm9v", image_mime="image/png")
 
         self.assertFalse(flagged)
-        sent_input = create_mock.await_args.kwargs["input"]
-        self.assertEqual(len(sent_input), 1)
-        self.assertEqual(sent_input[0]["type"], "image_url")
-        self.assertNotIn("text", sent_input[0])
+        sent_input = call_mock.await_args.kwargs["input"]
+        self.assertEqual(sent_input[1]["role"], "user")
+        content = sent_input[1]["content"]
+        self.assertEqual(len(content), 1)
+        self.assertEqual(content[0]["type"], "input_image")
 
     async def test_moderate_with_openai_honors_enabled_category_boolean_flag(self) -> None:
-        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
-        response = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    flagged=True,
-                    categories={"violence": True},
-                    category_scores={"violence": 0.2},
-                )
-            ]
-        )
-        create_mock = AsyncMock(return_value=response)
-        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":true,"insult_abuse":false,"threat_abuse":false}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(
-                ENABLE_AI_MODERATION=True,
-                MODERATION_MODEL="omni-moderation-latest",
-                MODERATION_AI_THRESHOLD=0.7,
-                MODERATION_AI_ENABLED_CATEGORIES=["violence"],
-                MODERATION_AI_NSFW_THRESHOLD=0.6,
-                MODERATION_CACHE_TTL=60,
-            )),
-            patch.object(passive_moderation, "get_redis", return_value=redis),
-            patch.object(passive_moderation, "get_openai", return_value=client),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
-            flagged = await passive_moderation.moderate_with_openai("image violence")
+            flagged = await passive_moderation.moderate_with_openai("income text")
 
         self.assertTrue(flagged)
-        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "violence")
+        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "income_promo")
 
     async def test_moderate_with_openai_flagged_false_with_high_score_stays_false(self) -> None:
-        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
-        response = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    flagged=False,
-                    categories={"violence": False},
-                    category_scores={"violence": 0.99},
-                )
-            ]
-        )
-        create_mock = AsyncMock(return_value=response)
-        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
-            patch.object(passive_moderation, "get_redis", return_value=redis),
-            patch.object(passive_moderation, "get_openai", return_value=client),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("neutral text")
 
         self.assertFalse(flagged)
         self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "")
-        redis.set.assert_not_awaited()
 
     async def test_moderate_with_openai_mixed_payload_keeps_text_and_image(self) -> None:
-        redis = types.SimpleNamespace(get=AsyncMock(return_value=None), set=AsyncMock(return_value=True))
-        response = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    flagged=False,
-                    categories={},
-                    category_scores={},
-                )
-            ]
-        )
-        create_mock = AsyncMock(return_value=response)
-        client = types.SimpleNamespace(moderations=types.SimpleNamespace(create=create_mock))
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
+        call_mock = AsyncMock(return_value=response)
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_THRESHOLD=0.7, MODERATION_AI_NSFW_THRESHOLD=0.6, MODERATION_CACHE_TTL=60)),
-            patch.object(passive_moderation, "get_redis", return_value=redis),
-            patch.object(passive_moderation, "get_openai", return_value=client),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
         ):
             flagged = await passive_moderation.moderate_with_openai("hello", image_b64="Zm9v", image_mime="image/png")
 
         self.assertFalse(flagged)
-        sent_input = create_mock.await_args.kwargs["input"]
-        self.assertEqual(len(sent_input), 2)
-        self.assertEqual(sent_input[0], {"type": "text", "text": "hello"})
-        self.assertEqual(sent_input[1]["type"], "image_url")
+        sent_input = call_mock.await_args.kwargs["input"]
+        content = sent_input[1]["content"]
+        self.assertEqual(len(content), 2)
+        self.assertEqual(content[0], {"type": "input_text", "text": "hello"})
+        self.assertEqual(content[1]["type"], "input_image")
 
     async def test_check_deep_with_history_includes_context_and_new_message(self) -> None:
         moderate_mock = AsyncMock(return_value=True)

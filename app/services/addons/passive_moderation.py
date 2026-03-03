@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import logging
-import contextlib
 import re
 import time
 import asyncio
 import hashlib
+import json
 import unicodedata
 
 from urllib.parse import urlparse
@@ -19,7 +19,7 @@ from aiogram.enums import ChatType
 from app.core.memory import load_context, get_redis
 from app.config import settings
 from app.clients.telegram_client import get_bot
-from app.clients.openai_client import get_openai
+from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 
 logger = logging.getLogger(__name__)
 
@@ -30,60 +30,32 @@ DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
 _PIPELINE_TIMEOUT = float(getattr(settings, "REDIS_PIPELINE_TIMEOUT", 1.0))
 
 _LAST_AI_MODERATION_CATEGORY: ContextVar[str] = ContextVar("last_ai_moderation_category", default="")
+_LAST_AI_MODERATION_FLAGS: ContextVar[tuple[str, ...]] = ContextVar("last_ai_moderation_flags", default=())
 
 
 def get_last_ai_moderation_category() -> str:
     return str(_LAST_AI_MODERATION_CATEGORY.get("") or "").strip()
 
 
-def _to_plain_dict(obj: Any) -> dict[str, Any]:
-    if obj is None:
-        return {}
-    if isinstance(obj, dict):
-        return obj
-    if hasattr(obj, "model_dump"):
-        with contextlib.suppress(Exception):
-            data = obj.model_dump()
-            if isinstance(data, dict):
-                return data
-    if hasattr(obj, "dict"):
-        with contextlib.suppress(Exception):
-            data = obj.dict()
-            if isinstance(data, dict):
-                return data
-    return {}
+def get_last_ai_moderation_flags() -> tuple[str, ...]:
+    return tuple(_LAST_AI_MODERATION_FLAGS.get(()) or ())
 
 
-def _primary_ai_category(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool, *, enabled_categories: set[str] | None = None) -> str:
-    scored: list[tuple[str, float]] = []
-    enabled = {x.strip().lower() for x in (enabled_categories or set()) if str(x).strip()}
-    for key, value in category_scores.items():
-        key_s = str(key)
-        if enabled and key_s.lower() not in enabled:
-            continue
-        if isinstance(value, (int, float)):
-            scored.append((key_s, float(value)))
+def should_delete_ai_flagged_message(flags: tuple[str, ...]) -> bool:
+    if not flags:
+        return False
+    if not bool(getattr(settings, "MODERATION_DELETE_ON_AI_FLAG", True)):
+        return False
+    delete_policy = {
+        "regular_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_REGULAR_PROMO", True)),
+        "income_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_INCOME_PROMO", True)),
+        "insult_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_INSULT_ABUSE", True)),
+        "threat_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_THREAT_ABUSE", True)),
+        "sex_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_SEX_ABUSE", True)),
+    }
+    return any(delete_policy.get(flag, False) for flag in flags)
 
-    threshold = float(getattr(settings, "MODERATION_AI_THRESHOLD", 0.7) or 0.7)
-    flagged_candidates = [
-        (key, score)
-        for key, score in scored
-        if bool(categories.get(key, False)) or score >= threshold
-    ]
-    if flagged_candidates:
-        flagged_candidates.sort(key=lambda item: item[1], reverse=True)
-        return flagged_candidates[0][0]
 
-    if flagged and scored:
-        scored.sort(key=lambda item: item[1], reverse=True)
-        return scored[0][0]
-
-    if flagged:
-        for key, value in categories.items():
-            if bool(value):
-                return str(key)
-
-    return ""
 
 
 TELEGRAM_DOMAINS = [d.lower() for d in getattr(
@@ -522,68 +494,82 @@ def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
     return True
 
 
+def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
+    try:
+        payload = json.loads(raw or "{}")
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        "regular_promo": bool(payload.get("regular_promo", False)),
+        "income_promo": bool(payload.get("income_promo", False)),
+        "insult_abuse": bool(payload.get("insult_abuse", False)),
+        "threat_abuse": bool(payload.get("threat_abuse", False)),
+        "sex_abuse": bool(payload.get("sex_abuse", False)),
+    }
+
+
 async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image/jpeg") -> bool:
     payload = (image_b64 or "").strip()
     if not payload:
         return False
 
-    client = get_openai()
+    system_prompt = (
+        "Ты — NSFW-модератор, определяющий наличие сексуализированного контента по фото. "
+        "Верни только sex_abuse=true или sex_abuse=false. "
+        "Ставь true только при уверенности ≥80%, иначе — false.\n\n"
+        "Поставь sex_abuse=true, если выполнено хотя бы одно из условий:\n"
+        "- отчётливо видны гениталии, анус или женские соски/ареолы, либо их явная демонстрация через прозрачную или подчёркивающую ткань;\n"
+        "- изображено сексуальное действие, его имитация или сексуальные аксессуары в явном эротическом контексте;\n"
+        "- изображение выглядит как профильный эротический/эскорт-аватар: крупный план или ракурс с намеренным акцентом на груди, ягодицах или зоне бикини, демонстративная поза, визуальная подача, характерная для сексуального продвижения (включая купальник или нижнее бельё).\n\n"
+        "Всегда ставь sex_abuse=false, если:\n"
+        "- обычное пляжное или спортивное фото без явного сексуального акцента;\n"
+        "- мужчина с обнажённым торсом без эротизированной подачи;\n"
+        "- нейтральный портрет или селфи без акцента на интимных зонах;\n"
+        "- художественная, медицинская или документальная нагота без сексуальной цели."
+    )
 
     try:
         resp = await asyncio.wait_for(
-            client.moderations.create(
-                model=settings.MODERATION_MODEL,
+            _call_openai_with_retry(
+                endpoint="responses.create",
+                model=getattr(settings, "MODERATION_PROFILE_NSFW_MODEL", "gpt-5-nano"),
+                reasoning={"effort": getattr(settings, "MODERATION_AI_REASONING_EFFORT", "low")},
                 input=[
+                    {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{image_mime};base64,{payload}"},
-                    }
+                        "role": "user",
+                        "content": [{"type": "input_image", "image_url": f"data:{image_mime};base64,{payload}"}],
+                    },
                 ],
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "profile_nsfw_moderation",
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "sex_abuse": {"type": "boolean", "description": "Есть ли сексуализированный контент при уверенности >=80%."},
+                            },
+                            "required": ["sex_abuse"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                max_output_tokens=32,
             ),
             timeout=10.0,
         )
     except Exception:
-        logger.exception("classify_profile_nsfw_fast: moderation API error")
+        logger.exception("classify_profile_nsfw_fast: responses API error")
         return False
 
-    results = getattr(resp, "results", None)
-    if not results or not isinstance(results, list):
-        logger.error("classify_profile_nsfw_fast: unexpected response %r", resp)
-        return False
-
-    result = results[0]
-    categories = _to_plain_dict(getattr(result, "categories", None))
-    category_scores = _to_plain_dict(getattr(result, "category_scores", None))
-    threshold = float(getattr(settings, "MODERATION_AI_NSFW_THRESHOLD", 0.6) or 0.6)
-
-    sexual_flagged = bool(categories.get("sexual", False) or categories.get("sexual/minors", False))
-    sexual_score = max(
-        float(category_scores.get("sexual", 0.0) or 0.0),
-        float(category_scores.get("sexual/minors", 0.0) or 0.0),
-    )
-    return bool(sexual_flagged or sexual_score >= threshold)
+    parsed = _parse_ai_moderation_json(_get_output_text(resp) or "")
+    return bool(parsed.get("sex_abuse", False))
 
 
 
-
-def _should_block_ai_categories(categories: dict[str, Any], category_scores: dict[str, Any], flagged: bool) -> tuple[bool, set[str]]:
-    if not flagged:
-        return False, set()
-    enabled_categories = {
-        x.strip().lower()
-        for x in getattr(settings, "MODERATION_AI_ENABLED_CATEGORIES", [])
-        if str(x).strip()
-    }
-    if not enabled_categories:
-        return False, set()
-    default_threshold = float(getattr(settings, "MODERATION_AI_THRESHOLD", 0.7) or 0.7)
-    triggered = set()
-    for key in enabled_categories:
-        score = float(category_scores.get(key, 0.0) or 0.0)
-        cat_flag = bool(categories.get(key, False))
-        if cat_flag or score >= default_threshold:
-            triggered.add(key)
-    return bool(triggered), triggered
 
 async def moderate_with_openai(
     text: str,
@@ -593,6 +579,7 @@ async def moderate_with_openai(
 ) -> bool:
 
     _LAST_AI_MODERATION_CATEGORY.set("")
+    _LAST_AI_MODERATION_FLAGS.set(())
 
     if not settings.ENABLE_AI_MODERATION:
         return False
@@ -605,74 +592,79 @@ async def moderate_with_openai(
 
     msg_hash, msg_len = _log_message_ref(trimmed)
 
-    client = get_openai()
+    moderation_prompt = (
+        "Ты — профессиональный модератор чатов и комментариев Telegram-сообществ компании kupikod.com. "
+        "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n"
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n"
+        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n"
+        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 80% → установи insult_abuse=false.\n"
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false."
+    )
 
+    user_content: list[dict[str, Any]] = []
+    if trimmed:
+        user_content.append({"type": "input_text", "text": trimmed})
     if image_b64:
-        image_item = {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}",
-            },
-        }
-        if trimmed:
-            input_payload = [
-                {"type": "text", "text": trimmed},
-                image_item,
-            ]
-        else:
-            input_payload = [image_item]
-    else:
-        input_payload = trimmed
+        user_content.append({"type": "input_image", "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"})
 
     async with _LIGHT_SEMAPHORE:
         try:
             resp = await asyncio.wait_for(
-                client.moderations.create(
+                _call_openai_with_retry(
+                    endpoint="responses.create",
                     model=settings.MODERATION_MODEL,
-                    input=input_payload,
+                    reasoning={"effort": getattr(settings, "MODERATION_AI_REASONING_EFFORT", "low")},
+                    input=[
+                        {"role": "system", "content": [{"type": "input_text", "text": moderation_prompt}]},
+                        {"role": "user", "content": user_content},
+                    ],
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": "chat_moderation",
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=80%."},
+                                    "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
+                                    "insult_abuse": {"type": "boolean", "description": "Оскорбление конкретных лиц с уверенностью >=80%."},
+                                    "threat_abuse": {"type": "boolean", "description": "Угроза конкретным лицам с уверенностью >=80%."},
+                                },
+                                "required": ["regular_promo", "income_promo", "insult_abuse", "threat_abuse"],
+                                "additionalProperties": False,
+                            },
+                        }
+                    },
+                    max_output_tokens=64,
                 ),
                 timeout=10.0,
             )
         except Exception:
-            logger.exception("moderate_with_openai: moderation API error")
+            logger.exception("moderate_with_openai: responses API error")
             return False
 
-    results = getattr(resp, "results", None)
-    if not results or not isinstance(results, list):
-        logger.error("moderate_with_openai: unexpected response %r", resp)
-        return False
-
-    result = results[0]
-    flagged = bool(getattr(result, "flagged", False))
-
-    categories_obj = getattr(result, "categories", None)
-    category_scores_obj = getattr(result, "category_scores", None)
-    categories_dump = _to_plain_dict(categories_obj)
-    category_scores_dump = _to_plain_dict(category_scores_obj)
-    enabled_categories = {
-        x.strip().lower()
-        for x in getattr(settings, "MODERATION_AI_ENABLED_CATEGORIES", [])
-        if str(x).strip()
-    }
-    primary_category = _primary_ai_category(categories_dump, category_scores_dump, flagged, enabled_categories=enabled_categories)
+    parsed = _parse_ai_moderation_json(_get_output_text(resp) or "")
+    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "insult_abuse", "threat_abuse") if parsed.get(k, False)))
+    primary_category = triggered_flags[0] if triggered_flags else ""
+    flagged = bool(triggered_flags)
 
     logger.info(
-        "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s categories=%s category_scores=%s",
+        "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s flags=%s",
         settings.MODERATION_MODEL,
         flagged,
         primary_category or "-",
         msg_hash,
         msg_len,
-        categories_dump,
-        category_scores_dump,
+        triggered_flags,
     )
 
-    blocked, triggered_categories = _should_block_ai_categories(categories_dump, category_scores_dump, flagged)
-    if blocked:
-        _LAST_AI_MODERATION_CATEGORY.set(primary_category or ",".join(sorted(triggered_categories)))
+    if flagged:
+        _LAST_AI_MODERATION_FLAGS.set(triggered_flags)
+        _LAST_AI_MODERATION_CATEGORY.set(primary_category or ",".join(triggered_flags))
         return True
 
     _LAST_AI_MODERATION_CATEGORY.set("")
+    _LAST_AI_MODERATION_FLAGS.set(())
     return False
 
 
