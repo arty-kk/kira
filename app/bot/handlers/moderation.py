@@ -235,6 +235,25 @@ async def _is_fully_trusted_actor_or_action(
 ) -> bool:
     _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
 
+    source_channel_id: int | None = None
+    if message is not None:
+        with contextlib.suppress(Exception):
+            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
+            if linked_chat_id:
+                source_channel_id = linked_chat_id
+
+        if source_channel_id is None:
+            sender_chat = getattr(message, "sender_chat", None)
+            if sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL:
+                with contextlib.suppress(Exception):
+                    source_channel_id = int(sender_chat.id)
+
+        if source_channel_id is None:
+            forward_from_chat = getattr(message, "forward_from_chat", None)
+            if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
+                with contextlib.suppress(Exception):
+                    source_channel_id = int(forward_from_chat.id)
+
     is_trusted_destination = int(chat_id) in trusted_scope_ids
     if message is not None:
         with contextlib.suppress(Exception):
@@ -276,6 +295,11 @@ async def _is_fully_trusted_actor_or_action(
     if uid and is_trusted_destination:
         with contextlib.suppress(Exception):
             if await _is_admin(chat_id, uid):
+                return True
+
+    if uid and source_channel_id and source_channel_id in trusted_source_channel_ids:
+        with contextlib.suppress(Exception):
+            if await _is_admin(source_channel_id, uid):
                 return True
 
     return False

@@ -371,6 +371,60 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         delete_mock_off.assert_not_awaited()
         flag_mock_off.assert_not_awaited()
 
+    async def test_comment_source_channel_admin_is_trusted_even_without_group_admin(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=-10077),
+            message_id=40,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=types.SimpleNamespace(id=-10099, type=ChatType.CHANNEL),
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=None,
+            text="channel post",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        async def _is_admin_side_effect(chat_id: int, user_id: int) -> bool:
+            return (chat_id, user_id) == (-10077, 42)
+
+        with (
+            patch.object(
+                moderation,
+                "settings",
+                self._base_settings(ALLOWED_GROUP_IDS=[-1001], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[-10077]),
+            ),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(side_effect=_is_admin_side_effect)) as is_admin_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertFalse(handled)
+        delete_mock.assert_not_awaited()
+        flag_mock.assert_not_awaited()
+        self.assertEqual(
+            [call.args for call in is_admin_mock.await_args_list],
+            [(-1001, 42), (-10077, 42)],
+        )
+
     def test_resolve_policy_relaxed_comment_disables_external_channel_checks(self) -> None:
         cfg = self._base_settings(COMMENT_MODERATION_LINK_POLICY="relaxed")
         policy = moderation.resolve_moderation_policy("comment", cfg)
