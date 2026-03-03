@@ -681,14 +681,20 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"]:
+    return_ai_flags: bool = False,
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"] | tuple[Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"], tuple[str, ...], str]:
+
+    def _result(status: Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"]) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"] | tuple[Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"], tuple[str, ...], str]:
+        if return_ai_flags:
+            return status, get_last_ai_moderation_flags(), get_last_ai_moderation_category()
+        return status
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
-        return "clean"
+        return _result("clean")
 
     # Channel/bot sources are checked with link-policy only in light mode.
     if source == "user" and await is_flooding(chat_id, user_id):
-        return "flood"
+        return _result("flood")
 
     urls = extract_urls(text or "", entities)
     logger.debug("check_light: urls=%r", urls)
@@ -697,10 +703,10 @@ async def check_light(
 
     mention_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "mention")
     if mention_count > int(getattr(settings, "MODERATION_SPAM_MENTION_THRESHOLD", 5)):
-        return "spam_mentions"
+        return _result("spam_mentions")
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
-        return "spam_links"
+        return _result("spam_links")
 
     external_mentions: list[str] = []
     has_unresolved_mentions = False
@@ -708,33 +714,33 @@ async def check_light(
         external_mentions, has_unresolved_mentions = await extract_external_mentions(chat_id, text or "", entities)
         if external_mentions:
             logger.debug("check_light: external_mentions=%r", external_mentions)
-            return "link_violation"
+            return _result("link_violation")
         if has_unresolved_mentions and bool(getattr(settings, "MODERATION_DELETE_UNRESOLVED_MENTIONS", False)):
             logger.debug("check_light: unresolved_mentions link_violation")
-            return "link_violation"
+            return _result("link_violation")
 
     if links_blocked and contains_telegram_obfuscated(text or ""):
-        return "link_violation"
+        return _result("link_violation")
 
     for u in urls:
         if links_blocked and url_is_unwanted(u, policy=policy):
-            return "link_violation"
+            return _result("link_violation")
 
     if not urls and not contains_telegram_obfuscated(text or "") and contains_profile_cta_without_url(text or ""):
-        return "promo_profile_cta"
+        return _result("promo_profile_cta")
 
     if not urls and contains_job_or_commerce_promo(text or "", has_media=bool(image_b64)):
-        return "promo"
+        return _result("promo")
 
     if contains_nsfw_text_signal(text or ""):
-        return "sexual_content"
+        return _result("sexual_content")
 
     # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
     ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
     if ai_allowed and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
-        return "toxic"
+        return _result("toxic")
 
-    return "clean"
+    return _result("clean")
 
 
 async def check_deep(
