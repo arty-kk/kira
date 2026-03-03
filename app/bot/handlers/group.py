@@ -127,31 +127,31 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
     with contextlib.suppress(Exception):
         chat_id = int(message.chat.id)
 
-    if chat_id is None or chat_id not in target_ids:
+    if chat_id is None:
         return False
 
-    if not source_ids:
-        return False
+    destination_trusted = is_trusted_destination(chat_id, getattr(message, "chat", None), settings)
+    if not destination_trusted:
+        # Приоритет у явного target allowlist: если он задан, source-only маршрут
+        # не должен расширять доступ за пределы доверенных destination-чатов.
+        if target_ids:
+            return False
 
-    if not is_trusted_destination(chat_id, getattr(message, "chat", None), settings):
-        return False
-
-    with contextlib.suppress(Exception):
-        linked_chat_id = int(getattr(message.chat, "linked_chat_id", 0) or 0)
-        if linked_chat_id and linked_chat_id in source_ids:
+        if source_ids and extract_source_scope_ids(message) & source_ids:
             return True
 
-    with contextlib.suppress(Exception):
-        if await is_from_linked_channel(message):
-            return True
+        with contextlib.suppress(Exception):
+            linked_chat_id = int(getattr(message.chat, "linked_chat_id", 0) or 0)
+            if linked_chat_id and linked_chat_id in source_ids:
+                return True
 
-    if extract_source_scope_ids(message) & source_ids:
-        return True
+        with contextlib.suppress(Exception):
+            if await is_from_linked_channel(message):
+                return True
 
-    if await _resolve_group_comment_context(message):
-        return True
+        return False
 
-    return False
+    return True
 
 
 async def _first_delivery(chat_id: int, msg_id: int, kind: str, ttl: int = 43_200) -> bool:

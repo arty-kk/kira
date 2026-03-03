@@ -255,52 +255,19 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         check_deep_mock.assert_not_awaited()
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
-    async def test_classify_profile_nsfw_fast_flags_when_sexual_category_present(self) -> None:
-        resp = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    categories={"sexual": True},
-                    category_scores={"sexual": 0.2},
-                )
-            ]
-        )
+    async def test_classify_profile_nsfw_fast_flags_when_sex_abuse_true(self) -> None:
         with (
-            patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":true}'))),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
         self.assertTrue(flagged)
 
-    async def test_classify_profile_nsfw_fast_flags_by_sexual_score_threshold(self) -> None:
-        resp = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    categories={"sexual": False},
-                    category_scores={"sexual": 0.95},
-                )
-            ]
-        )
+    async def test_classify_profile_nsfw_fast_returns_false_for_sex_abuse_false(self) -> None:
         with (
-            patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
-        ):
-            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
-
-        self.assertTrue(flagged)
-
-    async def test_classify_profile_nsfw_fast_returns_false_for_non_sexual_flags(self) -> None:
-        resp = types.SimpleNamespace(
-            results=[
-                types.SimpleNamespace(
-                    categories={"violence": True, "sexual": False},
-                    category_scores={"violence": 0.99, "sexual": 0.01},
-                )
-            ]
-        )
-        with (
-            patch.object(passive_moderation, "get_openai", return_value=types.SimpleNamespace(moderations=types.SimpleNamespace(create=AsyncMock(return_value=resp)))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_MODEL="omni-moderation-latest", MODERATION_AI_NSFW_THRESHOLD=0.6)),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
@@ -891,6 +858,137 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "extract_urls", return_value=[]),
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
+
+    async def test_handle_passive_moderation_toxic_keeps_flags_across_light_timeout_boundary(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False, MODERATION_DELETE_FLAGGED=False, MODERATION_DELETE_ON_AI_FLAG=True, MODERATION_DELETE_FLAG_INCOME_PROMO=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "_check_light_with_flags", AsyncMock(return_value=("toxic", ("income_promo",), "income_promo"))),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "get_last_ai_moderation_flags", return_value=()),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
+
+    async def test_handle_passive_moderation_toxic_deletes_by_ai_flag_policy(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False, MODERATION_DELETE_FLAGGED=False, MODERATION_DELETE_ON_AI_FLAG=True, MODERATION_DELETE_FLAG_INCOME_PROMO=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "get_last_ai_moderation_flags", return_value=("income_promo",)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
+
+    async def test_handle_passive_moderation_toxic_deletes_by_ai_sex_abuse_policy(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False, MODERATION_DELETE_FLAGGED=False, MODERATION_DELETE_ON_AI_FLAG=True, MODERATION_DELETE_FLAG_SEX_ABUSE=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "get_last_ai_moderation_flags", return_value=("sex_abuse",)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
+    async def test_handle_passive_moderation_toxic_preserves_light_ai_flags_after_deep_check(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False, MODERATION_DELETE_FLAGGED=False, MODERATION_DELETE_ON_AI_FLAG=True, MODERATION_DELETE_FLAG_INCOME_PROMO=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=["https://example.com"]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "get_last_ai_moderation_flags", side_effect=[("income_promo",), ()]),
             patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
             patch.object(moderation, "analytics_record_moderation", AsyncMock()),
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
