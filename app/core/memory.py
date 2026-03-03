@@ -235,16 +235,20 @@ async def close_redis_pools() -> None:
                 if pool is not None:
                     disc = getattr(pool, "disconnect", None)
                     try:
-                        if inspect.iscoroutinefunction(disc):
+                        if callable(disc):
                             if loop_closed:
                                 continue
-                            await disc()
-                        elif callable(disc):
                             try:
-                                disc()
+                                result = disc()
+                                if inspect.isawaitable(result):
+                                    await result
                             except TypeError:
                                 try:
-                                    disc(inuse_connections=True)
+                                    if loop_closed:
+                                        continue
+                                    result = disc(inuse_connections=True)
+                                    if inspect.isawaitable(result):
+                                        await result
                                 except Exception:
                                     pass
                     except Exception:
@@ -252,12 +256,12 @@ async def close_redis_pools() -> None:
                 close = getattr(raw, "close", None)
                 if close is not None:
                     try:
-                        if inspect.iscoroutinefunction(close):
+                        if callable(close):
                             if loop_closed:
                                 continue
-                            await close()
-                        elif callable(close):
-                            close()
+                            result = close()
+                            if inspect.isawaitable(result):
+                                await result
                     except Exception:
                         logger.debug("close_redis_pools: client.close() failed", exc_info=True)
             except Exception as exc:
