@@ -1665,3 +1665,38 @@ async def on_group_document_image(message: Message) -> None:
         logger.warning("Redis error in on_group_document_image, skipping noncritical ops: %s", e)
     except Exception:
         logger.exception("Error in on_group_document_image handler")
+
+
+@dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]))
+async def on_group_fallback_moderation(message: Message) -> None:
+    try:
+        cid = message.chat.id
+
+        try:
+            if not await _is_message_allowed_for_group_handlers(message):
+                logger.info("Ignore unauthorized group chat=%s title=%r uname=%s", cid, getattr(message.chat, "title", None), getattr(message.chat, "username", None))
+                return
+        except Exception:
+            logger.exception("Group access check failed")
+            return
+
+        content_type = getattr(message, "content_type", None)
+        if content_type in {ContentType.TEXT, ContentType.VOICE, ContentType.PHOTO}:
+            return
+
+        if content_type == ContentType.DOCUMENT:
+            doc = getattr(message, "document", None)
+            mime_type = (getattr(doc, "mime_type", "") or "").lower()
+            if mime_type.startswith("image/"):
+                return
+
+        if not await _first_delivery(cid, message.message_id, "fallback"):
+            return
+
+        if await apply_moderation_filters(cid, message):
+            return
+
+    except RedisError as e:
+        logger.warning("Redis error in on_group_fallback_moderation, skipping noncritical ops: %s", e)
+    except Exception:
+        logger.exception("Error in on_group_fallback_moderation handler")
