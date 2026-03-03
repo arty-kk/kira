@@ -598,7 +598,8 @@ async def moderate_with_openai(
         "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n"
         "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n"
         "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 80% → установи insult_abuse=false.\n"
-        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false."
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false.\n"
+        "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false."
     )
 
     user_content: list[dict[str, Any]] = []
@@ -629,8 +630,9 @@ async def moderate_with_openai(
                                     "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
                                     "insult_abuse": {"type": "boolean", "description": "Оскорбление конкретных лиц с уверенностью >=80%."},
                                     "threat_abuse": {"type": "boolean", "description": "Угроза конкретным лицам с уверенностью >=80%."},
+                                    "sex_abuse": {"type": "boolean", "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=80%."},
                                 },
-                                "required": ["regular_promo", "income_promo", "insult_abuse", "threat_abuse"],
+                                "required": ["regular_promo", "income_promo", "insult_abuse", "threat_abuse", "sex_abuse"],
                                 "additionalProperties": False,
                             },
                         }
@@ -644,7 +646,7 @@ async def moderate_with_openai(
             return False
 
     parsed = _parse_ai_moderation_json(_get_output_text(resp) or "")
-    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "insult_abuse", "threat_abuse") if parsed.get(k, False)))
+    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "insult_abuse", "threat_abuse", "sex_abuse") if parsed.get(k, False)))
     primary_category = triggered_flags[0] if triggered_flags else ""
     flagged = bool(triggered_flags)
 

@@ -657,6 +657,18 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(flagged)
         self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "income_promo")
 
+    async def test_moderate_with_openai_flags_sex_abuse(self) -> None:
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false,"sex_abuse":true}')
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("sexual text")
+
+        self.assertTrue(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_flags(), ("sex_abuse",))
+
     async def test_moderate_with_openai_flagged_false_with_high_score_stays_false(self) -> None:
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
 
