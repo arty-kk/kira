@@ -37,9 +37,10 @@ class AsyncioExecutionModelTests(unittest.TestCase):
 
     def test_welcome_task_uses_run_coro_sync_with_task_timeout(self) -> None:
         payload = {"chat_id": 1, "user_id": 1, "username": "u"}
-        captured = {}
+        captured = {"calls": 0}
 
         def _fake_runner(coro, *, timeout=None):
+            captured["calls"] += 1
             captured["timeout"] = timeout
             close = getattr(coro, "close", None)
             if callable(close):
@@ -52,6 +53,7 @@ class AsyncioExecutionModelTests(unittest.TestCase):
         ):
             welcome.send_group_welcome_task.run(1, payload)
 
+        self.assertEqual(captured["calls"], 1)
         self.assertEqual(captured["timeout"], welcome.WELCOME_GROUP_RUN_TIMEOUT_SEC)
 
 
