@@ -62,6 +62,32 @@ def get_targets() -> list[int]:
         targets.add(notify_chat_id)
     return sorted(targets)
 
+async def _check_light_with_flags(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    entities: list[dict[str, Any]] | None,
+    *,
+    source: str,
+    allow_ai_for_source: bool,
+    policy: dict[str, Any],
+    image_b64: str | None,
+    image_mime: str | None,
+) -> tuple[str, tuple[str, ...], str]:
+    light_status = await check_light(
+        chat_id,
+        user_id,
+        text,
+        entities,
+        source=source,
+        allow_ai_for_source=allow_ai_for_source,
+        policy=policy,
+        image_b64=image_b64,
+        image_mime=image_mime,
+    )
+    return light_status, get_last_ai_moderation_flags(), get_last_ai_moderation_category()
+
+
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
 
@@ -449,7 +475,7 @@ async def handle_passive_moderation(
         light_ai_category = ""
         try:
             light_result = await asyncio.wait_for(
-                check_light(
+                _check_light_with_flags(
                     chat_id,
                     _uid,
                     text,
@@ -459,7 +485,6 @@ async def handle_passive_moderation(
                     policy=light_policy,
                     image_b64=image_b64,
                     image_mime=image_mime,
-                    return_ai_flags=True,
                 ),
                 timeout=getattr(settings, "MOD_LIGHT_TIMEOUT", 2.0),
             )
