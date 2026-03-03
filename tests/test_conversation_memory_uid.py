@@ -312,6 +312,67 @@ class ConversationMemoryUidTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["detail"].get("code"), "invalid_payload")
         send_job_mock.assert_not_called()
 
+    async def test_voice_mime_without_voice_b64_rejected(self):
+        app = FastAPI()
+        app.include_router(conversation.router)
+        app.dependency_overrides[conversation._auth_api_key] = lambda: {"user_id": 1, "id": 2}
+
+        send_job_mock = unittest.mock.AsyncMock()
+        with unittest.mock.patch.object(conversation, "_send_job_and_wait", send_job_mock):
+            client = TestClient(app)
+            response = client.post(
+                "/api/v1/conversation",
+                json={
+                    "user_id": "user-1",
+                    "message": "hi",
+                    "voice_mime": "audio/ogg",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"].get("code"), "invalid_payload")
+        send_job_mock.assert_not_called()
+
+    async def test_send_job_and_wait_does_not_call_llen_after_lpush(self):
+        class _QueueWithoutLlen:
+            def __init__(self):
+                self.lpush_calls = []
+
+            async def lpush(self, key, payload):
+                self.lpush_calls.append((key, payload))
+                return 1
+
+            async def blpop(self, key, timeout=0):
+                data = json.dumps({"ok": True, "reply": "ok", "latency_ms": 1}, ensure_ascii=False)
+                return (key, data)
+
+            async def llen(self, _key):
+                raise AssertionError("LLEN must not be called in _send_job_and_wait")
+
+        queue = _QueueWithoutLlen()
+        job = {
+            "request_id": "req-1",
+            "result_key": "api:resp:req-1",
+            "chat_id": 1,
+            "memory_uid": 1,
+            "persona_owner_id": 1,
+            "knowledge_owner_id": 2,
+            "persona_profile_id": None,
+            "api_key_id": 2,
+            "billing_tier": "free",
+            "msg_id": 1,
+            "allow_web": False,
+            "enqueued_at": 0.0,
+            "text": "hello",
+        }
+
+        with unittest.mock.patch.object(conversation, "get_redis_queue", return_value=queue):
+            res = await conversation._send_job_and_wait(request_id="req-1", job=job)
+
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(queue.lpush_calls), 1)
+
+
 
 if __name__ == "__main__":
     unittest.main()

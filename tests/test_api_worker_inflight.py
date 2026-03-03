@@ -261,6 +261,40 @@ class ApiWorkerInflightTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs.get("embedding_model"), "text-embedding-3-large")
         self.assertEqual(kwargs.get("rag_precheck_source"), "api_worker_tag_precheck")
 
+    async def test_handle_job_invalid_non_string_request_id_goes_to_dlq(self) -> None:
+        redis_queue = _FakeRedisQueue(existing_value=None)
+        raw = json.dumps(
+            {
+                "request_id": 123,
+                "result_key": "result:req-123",
+                "chat_id": 1,
+                "memory_uid": 2,
+                "persona_owner_id": 3,
+                "knowledge_owner_id": 7,
+                "persona_profile_id": "profile",
+                "msg_id": 4,
+                "text": "hello",
+            }
+        )
+
+        with unittest.mock.patch.object(
+            api_worker,
+            "_push_dlq",
+            new=unittest.mock.AsyncMock(),
+        ) as push_dlq_mock:
+            await api_worker._handle_job(raw, redis_queue)
+
+        self.assertEqual(redis_queue.lrem_calls, [(api_worker.PROCESSING_KEY, 1, raw)])
+        push_dlq_mock.assert_awaited_once_with(
+            redis_queue,
+            raw=raw,
+            error_type="invalid_job",
+            request_id=None,
+            reason="missing_request_or_result_key",
+            chat_id=1,
+            persona_owner_id=3,
+        )
+
     async def test_two_workers_race_on_stale_inflight_only_first_claims(self) -> None:
         now = 20_000
         stale_ts = now - api_worker.INFLIGHT_STALE_AFTER_SEC - 20

@@ -85,6 +85,14 @@ _DETERMINISTIC_4XX_IDEMPOTENCY_CODES = {
     "no_requests",
 }
 
+_IDEMPOTENCY_CLEAR_FALLBACK_TTL_SEC = max(
+    1,
+    min(
+        5,
+        int(getattr(settings, "API_IDEMPOTENCY_CLEAR_FALLBACK_TTL_SEC", 3)),
+    ),
+)
+
 
 def _get_api_queue_key() -> str:
     return getattr(settings, "API_QUEUE_KEY", "queue:api")
@@ -388,6 +396,8 @@ class ConversationRequest(BaseModel):
             self.image_mime = normalized_img_mime
 
         voice_mime = (self.voice_mime or "").strip()
+        if voice_mime and not has_voice:
+            _payload_error("voice_b64 must be provided when voice_mime is set.")
         if voice_mime:
             normalized_voice_mime = voice_mime.lower()
             if normalized_voice_mime not in ALLOWED_VOICE_MIMES:
@@ -782,6 +792,24 @@ async def conversation_endpoint(
                 await idem_redis.delete(idem_cache_key)
             except Exception:
                 logger.exception("Failed to clear idempotency result")
+                fallback_payload = json.dumps(
+                    {
+                        "status_code": status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "body": {
+                            "detail": {
+                                "code": "idempotency_unavailable",
+                                "message": "Idempotency subsystem is temporarily unavailable.",
+                            }
+                        },
+                        "request_hash": current_request_hash,
+                    },
+                    ensure_ascii=False,
+                )
+                await idem_redis.set(
+                    idem_cache_key,
+                    fallback_payload,
+                    ex=_IDEMPOTENCY_CLEAR_FALLBACK_TTL_SEC,
+                )
             return
         ttl = int(getattr(settings, "API_IDEMPOTENCY_TTL_SEC", 3600))
         try:
@@ -1311,11 +1339,6 @@ async def _send_job_and_wait(*, request_id: str, job: Dict[str, Any]) -> Dict[st
 
     try:
         await redis_q.lpush(_get_api_queue_key(), payload)
-        try:
-            depth = await redis_q.llen(_get_api_queue_key())
-            logger.info("API queue depth=%s request_id=%s", depth, request_id)
-        except Exception:
-            pass
     except Exception:
         logging.exception("API: enqueue failed request_id=%s", request_id)
         raise HTTPException(

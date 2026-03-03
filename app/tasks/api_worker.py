@@ -556,6 +556,10 @@ async def _handle_job(raw: str, redis_queue) -> None:
         return
 
     request_id = job.get("request_id")
+    if isinstance(request_id, (bytes, bytearray)):
+        request_id = request_id.decode("utf-8", "ignore")
+    if isinstance(request_id, str):
+        request_id = request_id.strip()
     text = (job.get("text") or "").strip()
     chat_id = job.get("chat_id")
     memory_uid = job.get("memory_uid")
@@ -595,7 +599,7 @@ async def _handle_job(raw: str, redis_queue) -> None:
     except (TypeError, ValueError):
         enqueued_at = None
 
-    if not request_id or not isinstance(result_key, str):
+    if not isinstance(request_id, str) or not request_id or not isinstance(result_key, str):
         logger.error("api_worker: missing ids in job: %r", job)
         await _push_dlq(
             redis_queue,
