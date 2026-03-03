@@ -13,9 +13,7 @@ from aiogram.types import FSInputFile
 from app.config import settings
 from app.core.memory import get_redis, get_redis_queue
 from app.clients.telegram_client import get_bot
-import app.bot.components.dispatcher as dispatcher_module
-
-dp = dispatcher_module.dp
+from app.bot.components.dispatcher import dp
 from app.core.tls import resolve_tls_server_files
 import app.bot.components.constants as consts
 from app.bot.components.constants import (
@@ -26,12 +24,6 @@ from app.bot.components.constants import (
 logger = logging.getLogger(__name__)
 
 bot = get_bot()
-
-
-async def _init_dispatcher_storage() -> None:
-    init_fn = getattr(dispatcher_module, "init_dispatcher_storage", None)
-    if callable(init_fn):
-        await init_fn()
 
 
 WEBHOOK_DEDUP_TTL_SEC = 60
@@ -121,8 +113,6 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
     global redis_client, WELCOME_MESSAGES
 
     import app.bot.handlers  # noqa: F401
-
-    await _init_dispatcher_storage()
 
     consts.redis_client = get_redis()
     consts.redis_queue  = get_redis_queue()
