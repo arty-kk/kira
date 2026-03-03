@@ -151,7 +151,7 @@ class CommentSettingsMixedAccessTests(unittest.IsolatedAsyncioTestCase):
             is_automatic_forward=False,
         )
         comment_target_message = types.SimpleNamespace(
-            chat=types.SimpleNamespace(id=222, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            chat=types.SimpleNamespace(id=222, type=ChatType.SUPERGROUP, linked_chat_id=-100555),
             sender_chat=None,
             forward_from_chat=None,
             is_automatic_forward=False,
@@ -166,7 +166,28 @@ class CommentSettingsMixedAccessTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(group, "settings", cfg):
             self.assertTrue(await group._is_message_allowed_for_group_handlers(regular_message))
             self.assertTrue(await group._is_message_allowed_for_group_handlers(comment_target_message))
-            self.assertTrue(await group._is_message_allowed_for_group_handlers(comment_source_message))
+            self.assertFalse(await group._is_message_allowed_for_group_handlers(comment_source_message))
+
+    async def test_comment_target_linked_source_message_is_allowed(self) -> None:
+        from aiogram.enums import ChatType
+        from app.bot.handlers import group
+
+        cfg = types.SimpleNamespace(
+            ALLOWED_GROUP_IDS=[],
+            COMMENT_MODERATION_ENABLED=True,
+            COMMENT_TARGET_CHAT_IDS=[222],
+            COMMENT_SOURCE_CHANNEL_IDS=[-100555],
+        )
+
+        comment_message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=222, type=ChatType.SUPERGROUP, linked_chat_id=-100555),
+            sender_chat=types.SimpleNamespace(id=-100555, type=ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=True,
+        )
+
+        with patch.object(group, "settings", cfg):
+            self.assertTrue(await group._is_message_allowed_for_group_handlers(comment_message))
 
 
 

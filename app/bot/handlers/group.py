@@ -24,6 +24,12 @@ from app.bot.components.dispatcher import dp
 import app.bot.components.constants as consts
 from app.bot.components.constants import redis_client
 from app.bot.handlers.moderation import apply_moderation_filters, is_from_linked_channel
+from app.bot.utils.trusted_scope import (
+    extract_source_scope_ids,
+    is_trusted_destination,
+    is_trusted_repost,
+    trusted_scope_ids,
+)
 from app.bot.handlers.moderation_context import (
     resolve_message_moderation_context,
     resolve_message_moderation_context_async,
@@ -115,34 +121,34 @@ async def _is_message_allowed_for_group_handlers(message: Message) -> bool:
         return True
 
     target_ids = set(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
-    with contextlib.suppress(Exception):
-        if int(message.chat.id) in target_ids:
-            return True
-
     source_ids = set(getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+
+    chat_id = None
+    with contextlib.suppress(Exception):
+        chat_id = int(message.chat.id)
+
+    if chat_id is None or chat_id not in target_ids:
+        return False
+
     if not source_ids:
         return False
 
-    linked_chat_id = None
-    with contextlib.suppress(Exception):
-        linked_chat_id = getattr(message.chat, "linked_chat_id", None)
-
-    candidate_source_ids: set[int] = set()
-    sender_chat = getattr(message, "sender_chat", None)
-    if sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL:
-        with contextlib.suppress(Exception):
-            candidate_source_ids.add(int(sender_chat.id))
-
-    forward_from_chat = getattr(message, "forward_from_chat", None)
-    if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
-        with contextlib.suppress(Exception):
-            candidate_source_ids.add(int(forward_from_chat.id))
+    if not is_trusted_destination(chat_id, getattr(message, "chat", None), settings):
+        return False
 
     with contextlib.suppress(Exception):
-        if linked_chat_id is not None:
-            candidate_source_ids.add(int(linked_chat_id))
+        linked_chat_id = int(getattr(message.chat, "linked_chat_id", 0) or 0)
+        if linked_chat_id and linked_chat_id in source_ids:
+            return True
 
-    if candidate_source_ids & source_ids:
+    with contextlib.suppress(Exception):
+        if await is_from_linked_channel(message):
+            return True
+
+    if extract_source_scope_ids(message) & source_ids:
+        return True
+
+    if await _resolve_group_comment_context(message):
         return True
 
     return False
@@ -591,41 +597,15 @@ async def _resolve_group_comment_context(message: Message) -> bool:
 
 def _is_trusted_scope_repost(message: Message) -> bool:
     """True when a repost is routed between trusted chats/channels scopes."""
-    trusted_chat_ids = {
-        int(x)
-        for x in (
-            *(getattr(settings, "ALLOWED_GROUP_IDS", []) or []),
-            *(getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or []),
-        )
-    }
-    trusted_source_channel_ids = {
-        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
-    }
-    trusted_scope_ids = trusted_chat_ids | trusted_source_channel_ids
-
+    _, _, trusted_scope = trusted_scope_ids(settings)
+    chat_id = None
     with contextlib.suppress(Exception):
         chat_id = int(message.chat.id)
-        if chat_id not in trusted_scope_ids:
-            return False
-
-    try:
-        sc = getattr(message, "sender_chat", None)
-        if sc and int(sc.id) == int(message.chat.id) and getattr(sc, "type", None) in (ChatType.GROUP, ChatType.SUPERGROUP):
-            return False
-    except Exception:
-        pass
-
-    source_scope_ids: set[int] = set()
-    for field in ("sender_chat", "forward_from_chat"):
-        src = getattr(message, field, None)
-        if src and getattr(src, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
-            with contextlib.suppress(Exception):
-                source_scope_ids.add(int(src.id))
-
-    if not source_scope_ids:
+    if chat_id is None:
         return False
-
-    return bool(source_scope_ids & trusted_scope_ids)
+    if not is_trusted_destination(chat_id, getattr(message, "chat", None), settings):
+        return False
+    return is_trusted_repost(message, trusted_scope, destination_trusted=True)
 
 
 async def _log_ignored_repost_to_stm(

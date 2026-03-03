@@ -36,6 +36,13 @@ from app.bot.handlers.moderation_context import (
     resolve_message_moderation_context,
     resolve_message_moderation_context_async,
 )
+from app.bot.utils.trusted_scope import (
+    extract_source_scope_ids,
+    is_trusted_actor,
+    is_trusted_destination as trusted_destination_check,
+    is_trusted_repost as trusted_repost_check,
+    trusted_scope_ids as build_trusted_scope_ids,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,17 +219,8 @@ async def _is_admin(chat_id: int, user_id: int) -> bool:
 
 
 def _trusted_scope_ids() -> tuple[set[int], set[int], set[int]]:
-    trusted_chat_ids = {
-        int(x) for x in (getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
-    }
-    trusted_comment_target_ids = {
-        int(x) for x in (getattr(settings, "COMMENT_TARGET_CHAT_IDS", []) or [])
-    }
-    trusted_source_channel_ids = {
-        int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
-    }
-    trusted_scope_ids = trusted_chat_ids | trusted_comment_target_ids | trusted_source_channel_ids
-    return trusted_chat_ids, trusted_source_channel_ids, trusted_scope_ids
+    trusted_destinations, trusted_source_channel_ids, trusted_scope = build_trusted_scope_ids(settings)
+    return trusted_destinations, trusted_source_channel_ids, trusted_scope
 
 
 async def _is_fully_trusted_actor_or_action(
@@ -233,76 +231,16 @@ async def _is_fully_trusted_actor_or_action(
     user_id: int | None = None,
     from_linked: bool = False,
 ) -> bool:
-    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
-
-    source_channel_id: int | None = None
-    if message is not None:
-        with contextlib.suppress(Exception):
-            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
-            if linked_chat_id:
-                source_channel_id = linked_chat_id
-
-        if source_channel_id is None:
-            sender_chat = getattr(message, "sender_chat", None)
-            if sender_chat and getattr(sender_chat, "type", None) == ChatType.CHANNEL:
-                with contextlib.suppress(Exception):
-                    source_channel_id = int(sender_chat.id)
-
-        if source_channel_id is None:
-            forward_from_chat = getattr(message, "forward_from_chat", None)
-            if forward_from_chat and getattr(forward_from_chat, "type", None) == ChatType.CHANNEL:
-                with contextlib.suppress(Exception):
-                    source_channel_id = int(forward_from_chat.id)
-
-    is_trusted_destination = int(chat_id) in trusted_scope_ids
-    if message is not None:
-        with contextlib.suppress(Exception):
-            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
-            if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
-                is_trusted_destination = True
-
-    normalized_source = (source or "user").strip().lower()
-
-    is_trusted_sender_chat = False
-    source_scope_ids: set[int] = set()
-    if message is not None:
-        sender_chat = getattr(message, "sender_chat", None)
-        if sender_chat and getattr(sender_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
-            with contextlib.suppress(Exception):
-                sender_chat_id = int(sender_chat.id)
-                source_scope_ids.add(sender_chat_id)
-                if sender_chat_id in trusted_scope_ids:
-                    is_trusted_sender_chat = True
-
-        forward_from_chat = getattr(message, "forward_from_chat", None)
-        if forward_from_chat and getattr(forward_from_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
-            with contextlib.suppress(Exception):
-                source_scope_ids.add(int(forward_from_chat.id))
-
-    if is_trusted_destination and source_scope_ids & trusted_scope_ids:
-        return True
-
-    if from_linked:
-        return True
-
-    if is_trusted_destination and is_trusted_sender_chat:
-        return True
-
-    if normalized_source in {"channel", "bot"} and is_trusted_destination:
-        return True
-
-    uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0) or 0)
-    if uid and is_trusted_destination:
-        with contextlib.suppress(Exception):
-            if await _is_admin(chat_id, uid):
-                return True
-
-    if uid and source_channel_id and source_channel_id in trusted_source_channel_ids:
-        with contextlib.suppress(Exception):
-            if await _is_admin(source_channel_id, uid):
-                return True
-
-    return False
+    _, trusted_source_channel_ids, trusted_scope = _trusted_scope_ids()
+    return await is_trusted_actor(
+        message=message,
+        user_id=user_id,
+        chat_id=chat_id,
+        from_linked=from_linked,
+        trusted_scope_ids=trusted_scope,
+        trusted_source_channel_ids=trusted_source_channel_ids,
+        is_admin_cb=_is_admin,
+    )
 
 
 def _ban_markup(target_chat_id: int, offender_id: int, msg_id: int | None = None) -> types.InlineKeyboardMarkup:
@@ -411,23 +349,18 @@ async def handle_passive_moderation(
         logger.warning("Unknown passive moderation source=%r; fallback to 'user'", source)
         normalized_source = "user"
 
-    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
+    _, _, trusted_scope = _trusted_scope_ids()
 
-    is_trusted_destination = int(chat_id) in trusted_scope_ids
-    if message is not None:
-        with contextlib.suppress(Exception):
-            linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
-            if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
-                is_trusted_destination = True
+    is_destination_trusted = trusted_destination_check(chat_id, getattr(message, "chat", None), settings)
 
-    is_trusted_source = bool(normalized_source == "user" or is_trusted_destination or from_linked)
+    is_trusted_source = bool(normalized_source == "user" or is_destination_trusted or from_linked)
     logger.info(
         "PASSIVE_MODERATION_START: chat_id=%s msg_id=%s user_id=%s source=%s is_trusted_destination=%s is_comment_context=%s",
         chat_id,
         message_id or getattr(message, "message_id", None),
         user_id or getattr(getattr(message, "from_user", None), "id", None),
         normalized_source,
-        is_trusted_destination,
+        is_destination_trusted,
         is_comment_context,
     )
     is_fully_trusted = await _is_fully_trusted_actor_or_action(
@@ -1055,32 +988,17 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     if bool(getattr(message, "is_automatic_forward", False)):
         return False
 
-    _, trusted_source_channel_ids, trusted_scope_ids = _trusted_scope_ids()
+    _, _, trusted_scope = _trusted_scope_ids()
 
-    is_trusted_destination = int(chat_id) in trusted_scope_ids
-    with contextlib.suppress(Exception):
-        linked_chat_id = int(getattr(getattr(message, "chat", None), "linked_chat_id", 0) or 0)
-        if linked_chat_id and linked_chat_id in trusted_source_channel_ids:
-            is_trusted_destination = True
+    is_destination_trusted = trusted_destination_check(chat_id, getattr(message, "chat", None), settings)
 
     sender_chat = getattr(message, "sender_chat", None)
     is_sender_chat_entity = bool(
         sender_chat and getattr(sender_chat, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP)
     )
-    sender_chat_id = None
-    with contextlib.suppress(Exception):
-        if sender_chat:
-            sender_chat_id = int(sender_chat.id)
-    is_trusted_sender_chat = bool(is_sender_chat_entity and sender_chat_id in trusted_scope_ids)
+    is_trusted_sender_chat = bool(sender_chat and int(getattr(sender_chat, "id", 0) or 0) in trusted_scope)
 
-    source_scope_ids: set[int] = set()
-    for field in ("sender_chat", "forward_from_chat"):
-        src = getattr(message, field, None)
-        if src and getattr(src, "type", None) in (ChatType.CHANNEL, ChatType.GROUP, ChatType.SUPERGROUP):
-            with contextlib.suppress(Exception):
-                source_scope_ids.add(int(src.id))
-
-    is_trusted_repost = bool(is_trusted_destination and (source_scope_ids & trusted_scope_ids))
+    is_trusted_repost = trusted_repost_check(message, trusted_scope, destination_trusted=is_destination_trusted)
 
     try:
         sc = getattr(message, "sender_chat", None)
@@ -1132,7 +1050,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     u = getattr(message, "from_user", None)
     is_admin = False
     try:
-        if u and is_trusted_destination:
+        if u and is_destination_trusted:
             is_admin = await _is_admin(chat_id, int(u.id))
         elif settings.MODERATION_ADMIN_EXEMPT and u:
             is_admin = await _is_admin(chat_id, int(u.id))

@@ -117,6 +117,54 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
 
+    async def test_handle_passive_moderation_untrusted_channel_source_in_trusted_group_is_not_exempt(self) -> None:
+        fake_redis = _FakeRedis()
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-10055, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            from_user=None,
+            sender_chat=None,
+            forward_from_chat=types.SimpleNamespace(id=-100999, type=ChatType.CHANNEL),
+            message_id=101,
+            entities=[],
+            caption_entities=[],
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(
+                MODERATION_ADMIN_EXEMPT=False,
+                MOD_ALERT_THROTTLE_SECONDS=60,
+                MOD_LIGHT_TIMEOUT=2.0,
+                MOD_DEEP_TIMEOUT=5.0,
+                MOD_DEEP_TEXT_THRESHOLD=10,
+                ALLOWED_GROUP_IDS=[-10055],
+                COMMENT_SOURCE_CHANNEL_IDS=[],
+            )),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "check_light", AsyncMock(return_value="clean")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)) as check_deep_mock,
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-10055,
+                message=message,
+                text="channel msg",
+                entities=[],
+                source="channel",
+                user_id=42,
+                message_id=101,
+            )
+
+        self.assertEqual(status, "clean")
+        check_light_mock.assert_awaited_once()
+        check_deep_mock.assert_not_awaited()
+
     async def test_handle_passive_moderation_trusted_admin_repost_from_untrusted_source_is_exempt(self) -> None:
         fake_redis = _FakeRedis()
         message = types.SimpleNamespace(
