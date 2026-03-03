@@ -37,17 +37,24 @@ class AsyncioExecutionModelTests(unittest.TestCase):
 
     def test_welcome_task_uses_run_coro_sync_with_task_timeout(self) -> None:
         payload = {"chat_id": 1, "user_id": 1, "username": "u"}
+        captured = {"calls": 0}
+
         def _fake_runner(coro, *, timeout=None):
+            captured["calls"] += 1
+            captured["timeout"] = timeout
             close = getattr(coro, "close", None)
             if callable(close):
                 close()
             return None
 
-        with patch.object(welcome, "run_coro_sync", side_effect=_fake_runner) as runner_mock:
+        with patch.dict(
+            welcome.send_group_welcome_task.run.__globals__,
+            {"run_coro_sync": _fake_runner},
+        ):
             welcome.send_group_welcome_task.run(1, payload)
 
-        runner_mock.assert_called_once()
-        self.assertEqual(runner_mock.call_args.kwargs["timeout"], welcome.WELCOME_GROUP_RUN_TIMEOUT_SEC)
+        self.assertEqual(captured["calls"], 1)
+        self.assertEqual(captured["timeout"], welcome.WELCOME_GROUP_RUN_TIMEOUT_SEC)
 
 
 if __name__ == "__main__":
