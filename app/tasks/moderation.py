@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import logging
 import secrets
@@ -141,10 +142,42 @@ def _moderation_inflight_key(chat_id: int, message_id: int) -> str:
     return f"mod:inflight:{chat_id}:{message_id}"
 
 
+def _is_closed_transport_runtime_error(exc: Exception) -> bool:
+    if not isinstance(exc, RuntimeError):
+        return False
+    message = str(exc).lower()
+    return "handler is closed" in message or "transport closed" in message
+
+
+async def _reset_redis_connection() -> None:
+    client = consts.redis_client
+    close = getattr(client, "aclose", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+        return
+
+    pool = getattr(client, "connection_pool", None)
+    disconnect = getattr(pool, "disconnect", None)
+    if callable(disconnect):
+        result = disconnect()
+        if inspect.isawaitable(result):
+            await result
+
+
 async def _set_moderation_inflight(key: str, token: str) -> bool:
     try:
         return bool(await consts.redis_client.set(key, token, ex=MODERATION_INFLIGHT_TTL, nx=True))
-    except Exception:
+    except Exception as exc:
+        if _is_closed_transport_runtime_error(exc):
+            logger.warning("failed to set moderation inflight key=%s: %s; reconnecting and retrying once", key, exc)
+            try:
+                await _reset_redis_connection()
+                return bool(await consts.redis_client.set(key, token, ex=MODERATION_INFLIGHT_TTL, nx=True))
+            except Exception:
+                logger.warning("failed to set moderation inflight key=%s after reconnect", key)
+                return False
         logger.warning("failed to set moderation inflight key=%s", key, exc_info=True)
         return False
 
@@ -152,7 +185,16 @@ async def _set_moderation_inflight(key: str, token: str) -> bool:
 async def _clear_moderation_inflight(key: str, token: str) -> None:
     try:
         await consts.redis_client.eval(_MODERATION_INFLIGHT_RELEASE_LUA, 1, key, token)
-    except Exception:
+    except Exception as exc:
+        if _is_closed_transport_runtime_error(exc):
+            logger.warning("failed to clear moderation inflight key=%s: %s; reconnecting and retrying once", key, exc)
+            try:
+                await _reset_redis_connection()
+                await consts.redis_client.eval(_MODERATION_INFLIGHT_RELEASE_LUA, 1, key, token)
+                return
+            except Exception:
+                logger.warning("failed to clear moderation inflight key=%s after reconnect", key)
+                return
         logger.warning("failed to clear moderation inflight key=%s", key, exc_info=True)
 
 

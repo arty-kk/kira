@@ -18,7 +18,12 @@ os.environ.setdefault("TWITTER_BEARER_TOKEN", "x")
 
 from app.config import settings
 from app.tasks.celery_app import celery
-from app.tasks.moderation import passive_moderate, prepare_moderation_payload
+from app.tasks.moderation import (
+    _clear_moderation_inflight,
+    _set_moderation_inflight,
+    passive_moderate,
+    prepare_moderation_payload,
+)
 
 
 class ModerationCeleryConfigTests(unittest.TestCase):
@@ -223,6 +228,90 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         self.assertNotIn("image_b64", prepared)
         self.assertNotIn("image_mime", prepared)
         self.assertTrue(any("invalid base64" in entry and "api" in entry for entry in logs.output))
+
+    def test_set_moderation_inflight_suppresses_traceback_for_closed_transport_runtime_error(self) -> None:
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "set": unittest.mock.AsyncMock(
+                    side_effect=RuntimeError("unable to perform operation on <TCPTransport closed=True>; the handler is closed")
+                )
+            },
+        )()
+
+        with (
+            patch("app.tasks.moderation.consts.redis_client", redis_stub),
+            self.assertLogs("app.tasks.moderation", level="WARNING") as logs,
+        ):
+            result = asyncio.run(_set_moderation_inflight("mod:inflight:1:2", "token"))
+
+        self.assertFalse(result)
+        self.assertTrue(any("failed to set moderation inflight" in entry for entry in logs.output))
+        self.assertFalse(any("Traceback" in entry for entry in logs.output))
+
+    def test_clear_moderation_inflight_suppresses_traceback_for_closed_transport_runtime_error(self) -> None:
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "eval": unittest.mock.AsyncMock(
+                    side_effect=RuntimeError("unable to perform operation on <TCPTransport closed=True>; the handler is closed")
+                )
+            },
+        )()
+
+        with (
+            patch("app.tasks.moderation.consts.redis_client", redis_stub),
+            self.assertLogs("app.tasks.moderation", level="WARNING") as logs,
+        ):
+            asyncio.run(_clear_moderation_inflight("mod:inflight:1:2", "token"))
+
+        self.assertTrue(any("failed to clear moderation inflight" in entry for entry in logs.output))
+        self.assertFalse(any("Traceback" in entry for entry in logs.output))
+
+    def test_set_moderation_inflight_retries_once_after_closed_transport_error(self) -> None:
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "set": unittest.mock.AsyncMock(
+                    side_effect=[
+                        RuntimeError("unable to perform operation on <TCPTransport closed=True>; the handler is closed"),
+                        True,
+                    ]
+                ),
+                "aclose": unittest.mock.AsyncMock(return_value=None),
+            },
+        )()
+
+        with patch("app.tasks.moderation.consts.redis_client", redis_stub):
+            result = asyncio.run(_set_moderation_inflight("mod:inflight:1:2", "token"))
+
+        self.assertTrue(result)
+        self.assertEqual(redis_stub.set.await_count, 2)
+        redis_stub.aclose.assert_awaited_once()
+
+    def test_clear_moderation_inflight_retries_once_after_closed_transport_error(self) -> None:
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "eval": unittest.mock.AsyncMock(
+                    side_effect=[
+                        RuntimeError("unable to perform operation on <TCPTransport closed=True>; the handler is closed"),
+                        1,
+                    ]
+                ),
+                "aclose": unittest.mock.AsyncMock(return_value=None),
+            },
+        )()
+
+        with patch("app.tasks.moderation.consts.redis_client", redis_stub):
+            asyncio.run(_clear_moderation_inflight("mod:inflight:1:2", "token"))
+
+        self.assertEqual(redis_stub.eval.await_count, 2)
+        redis_stub.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":
