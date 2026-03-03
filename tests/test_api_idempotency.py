@@ -99,6 +99,13 @@ class _ScenarioFakeRedis:
         self._values.pop(key, None)
 
 
+class _DeleteFailingRedis(_ScenarioFakeRedis):
+    async def delete(self, key):
+        self.delete_calls.append(key)
+        self.call_log.append(("delete", key))
+        raise RuntimeError("delete-failed")
+
+
 class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
     async def test_auth_api_key_prefers_bearer_token_over_x_api_key(self) -> None:
         @asynccontextmanager
@@ -667,6 +674,67 @@ class ApiIdempotencyTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(len(inflight_set_calls), 2)
         finally:
             conversation.settings.API_IDEMPOTENCY_INFLIGHT_TTL_SEC = original_inflight_ttl
+
+
+    async def test_non_deterministic_http_error_delete_failure_sets_short_fallback_record(self) -> None:
+        fake_redis = _DeleteFailingRedis(
+            get_results=[None],
+            set_nx_results=[True],
+        )
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/conversation",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+        }
+        request = Request(scope)
+        payload = conversation.ConversationRequest(user_id="user-1", message="hi")
+
+        rate_limit_exc = conversation.HTTPException(
+            status_code=429,
+            detail={"code": "rate_limit_exceeded", "message": "Too many requests"},
+        )
+
+        with (
+            unittest.mock.patch.object(conversation, "get_redis", return_value=fake_redis),
+            unittest.mock.patch.object(
+                conversation,
+                "_check_rate_limit",
+                new=unittest.mock.AsyncMock(side_effect=rate_limit_exc),
+            ),
+        ):
+            with self.assertRaises(conversation.HTTPException) as first_exc:
+                await conversation.conversation_endpoint(
+                    payload,
+                    request,
+                    api_key={"user_id": 1, "id": 2},
+                    idempotency_key="idem-delete-failure",
+                )
+
+            with self.assertRaises(conversation.HTTPException) as second_exc:
+                await conversation.conversation_endpoint(
+                    payload,
+                    request,
+                    api_key={"user_id": 1, "id": 2},
+                    idempotency_key="idem-delete-failure",
+                )
+
+        self.assertEqual(first_exc.exception.status_code, 429)
+        self.assertEqual(first_exc.exception.detail.get("code"), "rate_limit_exceeded")
+
+        self.assertEqual(second_exc.exception.status_code, 503)
+        self.assertEqual(second_exc.exception.detail.get("code"), "idempotency_unavailable")
+
+        idem_cache_key = conversation._idempotency_redis_key(2, "idem-delete-failure")
+        fallback_sets = [
+            call
+            for call in fake_redis.set_calls
+            if call["key"] == idem_cache_key and call["nx"] is False
+        ]
+        self.assertTrue(fallback_sets)
+        self.assertLessEqual(fallback_sets[-1]["ex"], 5)
 
 
 if __name__ == "__main__":
