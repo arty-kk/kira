@@ -44,7 +44,7 @@ class AsyncioExecutionModelTests(unittest.TestCase):
             return None
 
         with patch.object(welcome, "run_coro_sync", side_effect=_fake_runner) as runner_mock:
-            welcome.send_group_welcome_task(1, payload)
+            welcome.send_group_welcome_task.run(1, payload)
 
         runner_mock.assert_called_once()
         self.assertEqual(runner_mock.call_args.kwargs["timeout"], welcome.WELCOME_GROUP_RUN_TIMEOUT_SEC)
