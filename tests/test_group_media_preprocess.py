@@ -712,5 +712,64 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
         preprocess_mock.assert_not_called()
 
 
+class GroupFallbackModerationTests(unittest.IsolatedAsyncioTestCase):
+    def _make_message(self, *, content_type, document=None):
+        return types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, type=group.ChatType.GROUP),
+            message_id=2001,
+            content_type=content_type,
+            document=document,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            text=None,
+            caption=None,
+            entities=[],
+            caption_entities=[],
+        )
+
+    async def test_fallback_calls_moderation_for_trusted_chat_video_only(self) -> None:
+        message = self._make_message(content_type=group.ContentType.VIDEO)
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[])),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)) as moderation_mock,
+        ):
+            await group.on_group_fallback_moderation(message)
+            moderation_mock.assert_awaited_once_with(123, message)
+
+            for covered_type in (group.ContentType.TEXT, group.ContentType.VOICE, group.ContentType.PHOTO):
+                await group.on_group_fallback_moderation(self._make_message(content_type=covered_type))
+
+            image_doc = types.SimpleNamespace(mime_type="image/png")
+            await group.on_group_fallback_moderation(
+                self._make_message(content_type=group.ContentType.DOCUMENT, document=image_doc)
+            )
+
+        moderation_mock.assert_awaited_once()
+
+    async def test_fallback_calls_moderation_for_comment_target_video_only(self) -> None:
+        message = self._make_message(content_type=group.ContentType.VIDEO)
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[], COMMENT_TARGET_CHAT_IDS=[123], COMMENT_SOURCE_CHANNEL_IDS=[])),
+            patch.object(group, "_first_delivery", AsyncMock(return_value=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)) as moderation_mock,
+        ):
+            await group.on_group_fallback_moderation(message)
+            moderation_mock.assert_awaited_once_with(123, message)
+
+            for covered_type in (group.ContentType.TEXT, group.ContentType.VOICE, group.ContentType.PHOTO):
+                await group.on_group_fallback_moderation(self._make_message(content_type=covered_type))
+
+            image_doc = types.SimpleNamespace(mime_type="image/jpeg")
+            await group.on_group_fallback_moderation(
+                self._make_message(content_type=group.ContentType.DOCUMENT, document=image_doc)
+            )
+
+        moderation_mock.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()
