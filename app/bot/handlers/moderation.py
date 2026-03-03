@@ -474,6 +474,7 @@ async def handle_passive_moderation(
         reason_text = ""
         reason_code = ""
         ai_flag_signal = False
+        light_ai_flags: tuple[str, ...] = ()
         if light_status != "clean":
             reason_map = {
                 "flood": "Frequent messages (flood/spam)",
@@ -491,6 +492,7 @@ async def handle_passive_moderation(
             status = "flagged"
             ai_flag_signal = light_status == "toxic"
             if light_status == "toxic":
+                light_ai_flags = get_last_ai_moderation_flags()
                 ai_category = get_last_ai_moderation_category()
                 if ai_category:
                     reason_text = f"AI moderation policy violation ({ai_category})"
@@ -624,6 +626,8 @@ async def handle_passive_moderation(
         if ai_flag_signal and _mid and status != "blocked":
             try:
                 ai_flags = get_last_ai_moderation_flags()
+                if not ai_flags:
+                    ai_flags = light_ai_flags
                 should_delete_ai = bool(getattr(settings, "MODERATION_DELETE_FLAGGED", False)) or should_delete_ai_flagged_message(ai_flags)
                 if should_delete_ai:
                     await _delete_message_safe(chat_id, _mid)

@@ -943,6 +943,38 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         delete_mock.assert_awaited_once_with(100, 77)
         send_alert_mock.assert_not_called()
 
+    async def test_handle_passive_moderation_toxic_preserves_light_ai_flags_after_deep_check(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=False, MODERATION_DELETE_FLAGGED=False, MODERATION_DELETE_ON_AI_FLAG=True, MODERATION_DELETE_FLAG_INCOME_PROMO=True)),
+            patch.object(moderation, "get_targets", return_value=[999]),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=["https://example.com"]),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "get_last_ai_moderation_flags", side_effect=[("income_promo",), ()]),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "analytics_record_moderation", AsyncMock()),
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_send_alert_with_actions", AsyncMock()) as send_alert_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="toxic text",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "flagged")
+        delete_mock.assert_awaited_once_with(100, 77)
+        send_alert_mock.assert_not_called()
+
     async def test_handle_passive_moderation_blocked_delete_unchanged(self) -> None:
         fake_redis = _FakeRedis()
 
