@@ -62,6 +62,32 @@ def get_targets() -> list[int]:
         targets.add(notify_chat_id)
     return sorted(targets)
 
+async def _check_light_with_flags(
+    chat_id: int,
+    user_id: int,
+    text: str,
+    entities: list[dict[str, Any]] | None,
+    *,
+    source: str,
+    allow_ai_for_source: bool,
+    policy: dict[str, Any],
+    image_b64: str | None,
+    image_mime: str | None,
+) -> tuple[str, tuple[str, ...], str]:
+    light_status = await check_light(
+        chat_id,
+        user_id,
+        text,
+        entities,
+        source=source,
+        allow_ai_for_source=allow_ai_for_source,
+        policy=policy,
+        image_b64=image_b64,
+        image_mime=image_mime,
+    )
+    return light_status, get_last_ai_moderation_flags(), get_last_ai_moderation_category()
+
+
 def _linked_channel_cache_key(chat_id: int) -> str:
     return f"linked_channel_id:{chat_id}"
 
@@ -445,9 +471,11 @@ async def handle_passive_moderation(
             _serialize_entities(getattr(message, "entities", [])) +
             _serialize_entities(getattr(message, "caption_entities", []))
         )
+        light_ai_flags: tuple[str, ...] = ()
+        light_ai_category = ""
         try:
-            light_status = await asyncio.wait_for(
-                check_light(
+            light_result = await asyncio.wait_for(
+                _check_light_with_flags(
                     chat_id,
                     _uid,
                     text,
@@ -460,6 +488,10 @@ async def handle_passive_moderation(
                 ),
                 timeout=getattr(settings, "MOD_LIGHT_TIMEOUT", 2.0),
             )
+            if isinstance(light_result, tuple) and len(light_result) == 3:
+                light_status, light_ai_flags, light_ai_category = light_result
+            else:
+                light_status = str(light_result or "clean")
         except asyncio.TimeoutError:
             logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
             light_status = "light_timeout_risk"
@@ -474,7 +506,6 @@ async def handle_passive_moderation(
         reason_text = ""
         reason_code = ""
         ai_flag_signal = False
-        light_ai_flags: tuple[str, ...] = ()
         if light_status != "clean":
             reason_map = {
                 "flood": "Frequent messages (flood/spam)",
@@ -492,8 +523,7 @@ async def handle_passive_moderation(
             status = "flagged"
             ai_flag_signal = light_status == "toxic"
             if light_status == "toxic":
-                light_ai_flags = get_last_ai_moderation_flags()
-                ai_category = get_last_ai_moderation_category()
+                ai_category = light_ai_category or get_last_ai_moderation_category()
                 if ai_category:
                     reason_text = f"AI moderation policy violation ({ai_category})"
 
