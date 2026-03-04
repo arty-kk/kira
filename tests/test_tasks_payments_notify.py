@@ -98,6 +98,7 @@ def _load_payments_module():
     }
 
     target_modules["app.bot.utils.telegram_safe"].send_message_safe = AsyncMock()
+    target_modules["app.bot.utils.telegram_safe"].send_message_safe_with_reason = AsyncMock()
     target_modules["app.bot.i18n"].t = AsyncMock(return_value="")
     target_modules["app.clients.telegram_client"].get_bot = lambda: object()
 
@@ -199,10 +200,10 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
             update_calls.append(stmt)
             return stmt
 
-        send_mock = AsyncMock(return_value=object())
+        send_mock = AsyncMock(return_value=SimpleNamespace(message=object(), error_code=None))
 
         with (
-            patch.object(payments, "send_message_safe", send_mock),
+            patch.object(payments, "send_message_safe_with_reason", send_mock),
             patch.object(payments, "session_scope", _fake_session_scope),
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
@@ -256,7 +257,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "send_message_safe", AsyncMock(return_value=None)),
+            patch.object(payments, "send_message_safe_with_reason", AsyncMock(return_value=SimpleNamespace(message=None, error_code="unknown_send_error"))),
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
@@ -271,7 +272,49 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             update_calls[1].values_kwargs,
-            {"lease_token": None, "leased_at": None, "updated_at": "now"},
+            {"lease_token": None, "leased_at": None, "updated_at": "now", "last_error": "notify_error_code=unknown_send_error"},
+        )
+
+    async def test_notify_sets_loop_error_code_on_temporary_failure(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            id=12,
+            user_id=99,
+            kind="buy",
+            requests_amount=5,
+            gift_title=None,
+            gift_emoji=None,
+            gift_code=None,
+            stars_amount=10,
+            telegram_payment_charge_id="charge_loop",
+            notified_at=None,
+            lease_token="lease-token",
+        )
+        db = _FakeDB([1, 1])
+        update_calls = []
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        def _fake_update(*_args, **_kwargs):
+            stmt = _UpdateChain()
+            update_calls.append(stmt)
+            return stmt
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(payments, "send_message_safe_with_reason", AsyncMock(return_value=SimpleNamespace(message=None, error_code="loop_closed"))),
+            patch.object(payments, "t", AsyncMock(return_value="sent")),
+            patch.object(payments, "update", _fake_update),
+            patch.object(payments, "func", _Func()),
+        ):
+            await payments._notify_payment_result(outbox, remaining=1, duplicate=False, lease_token="lease-token")
+
+        self.assertIsNone(outbox.notified_at)
+        self.assertEqual(
+            update_calls[1].values_kwargs,
+            {"lease_token": None, "leased_at": None, "updated_at": "now", "last_error": "notify_error_code=loop_closed"},
         )
 
     async def test_notify_releases_claim_when_send_raises_before_finalize(self):
@@ -303,7 +346,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "send_message_safe", AsyncMock(side_effect=[RuntimeError("boom"), object()])),
+            patch.object(payments, "send_message_safe_with_reason", AsyncMock(side_effect=[RuntimeError("boom"), SimpleNamespace(message=object(), error_code=None)])),
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", _fake_update),
             patch.object(payments, "func", _Func()),
@@ -316,7 +359,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(update_calls), 4)
         self.assertEqual(
             update_calls[1].values_kwargs,
-            {"lease_token": None, "leased_at": None, "updated_at": "now"},
+            {"lease_token": None, "leased_at": None, "updated_at": "now", "last_error": "notify_error_code=unknown_send_error"},
         )
         self.assertEqual(
             update_calls[3].values_kwargs,
@@ -346,7 +389,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
         async def _fake_session_scope(*_args, **_kwargs):
             yield db
 
-        send_mock = AsyncMock(return_value=object())
+        send_mock = AsyncMock(return_value=SimpleNamespace(message=object(), error_code=None))
         push_mock = AsyncMock(return_value=None)
 
         def _fake_update(*_args, **_kwargs):
@@ -356,7 +399,7 @@ class NotifyPaymentResultTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "send_message_safe", send_mock),
+            patch.object(payments, "send_message_safe_with_reason", send_mock),
             patch.object(payments, "push_message", push_mock),
             patch.object(payments, "t", AsyncMock(return_value="gift sent")),
             patch.object(payments, "update", _fake_update),
@@ -389,10 +432,12 @@ class _FakeRequeueNotifyDB:
     def __init__(self, charge_id):
         self.charge_id = charge_id
         self.claimed_once = False
+        self.last_claim_stmt = None
 
     async def execute(self, stmt, params=None):
         stmt_text = str(stmt)
         if params is not None and "RETURNING telegram_payment_charge_id, lease_token" in stmt_text:
+            self.last_claim_stmt = stmt_text
             if self.claimed_once:
                 return _FakeRequeueNotifyResult([])
             self.claimed_once = True
@@ -424,11 +469,11 @@ class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
         async def _fake_session_scope(*_args, **_kwargs):
             yield db
 
-        send_mock = AsyncMock(side_effect=[None, object()])
+        send_mock = AsyncMock(side_effect=[SimpleNamespace(message=None, error_code="loop_closed"), SimpleNamespace(message=object(), error_code=None)])
 
         with (
             patch.object(payments, "session_scope", _fake_session_scope),
-            patch.object(payments, "send_message_safe", send_mock),
+            patch.object(payments, "send_message_safe_with_reason", send_mock),
             patch.object(payments, "t", AsyncMock(return_value="sent")),
             patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
             patch.object(payments, "func", _Func()),
@@ -446,7 +491,56 @@ class RequeueAppliedNotifyFlowTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNotNone(outbox.notified_at)
         self.assertEqual(send_mock.await_count, 2)
+        self.assertIn("notify_error_code=loop_closed", db.last_claim_stmt)
+        self.assertIn("CASE", db.last_claim_stmt)
         payments.add_paid_requests.assert_not_awaited()
+
+    async def test_gift_reaction_is_scheduled_when_notify_send_fails(self):
+        payments = _load_payments_module()
+        outbox = SimpleNamespace(
+            id=41,
+            user_id=77,
+            kind="gift",
+            status="applied",
+            requests_amount=4,
+            gift_title="Matcha",
+            gift_emoji="🍵",
+            gift_code="matcha",
+            stars_amount=100,
+            telegram_payment_charge_id="charge_notify_fail_gift",
+            notified_at=None,
+            lease_token="lease-token",
+        )
+        db = _FakeDB([1, 1, 1, 1])
+
+        @asynccontextmanager
+        async def _fake_session_scope(*_args, **_kwargs):
+            yield db
+
+        with (
+            patch.object(payments, "session_scope", _fake_session_scope),
+            patch.object(
+                payments,
+                "send_message_safe_with_reason",
+                AsyncMock(return_value=SimpleNamespace(message=None, error_code="loop_closed")),
+            ),
+            patch.object(payments, "t", AsyncMock(return_value="sent")),
+            patch.object(payments, "update", lambda *_args, **_kwargs: _UpdateChain()),
+            patch.object(payments, "func", _Func()),
+            patch.object(payments.celery, "send_task") as send_task_mock,
+        ):
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True, lease_token="lease-token")
+            self.assertIsNone(outbox.notified_at)
+
+            await payments._notify_payment_result(outbox, remaining=15, duplicate=True, lease_token="lease-token")
+
+        self.assertEqual(send_task_mock.call_count, 2)
+        first_call = send_task_mock.call_args_list[0]
+        second_call = send_task_mock.call_args_list[1]
+        self.assertEqual(first_call.args[0], "gifts.react")
+        self.assertEqual(second_call.args[0], "gifts.react")
+        self.assertEqual(first_call.kwargs["args"][6], "charge_notify_fail_gift")
+        self.assertEqual(second_call.kwargs["args"][6], "charge_notify_fail_gift")
 
 
 

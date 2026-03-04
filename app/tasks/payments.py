@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.bot.utils.telegram_safe import send_message_safe
+from app.bot.utils.telegram_safe import send_message_safe_with_reason
 from app.bot.i18n import t
 from app.clients.telegram_client import get_bot
 from app.core.db import session_scope
@@ -19,7 +19,6 @@ from app.tasks.celery_app import celery, run_coro_sync
 from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
-bot = get_bot()
 REQUEUE_PENDING_OUTBOX_BATCH_SIZE = 100
 OUTBOX_LEASE_TTL_SECONDS = 300
 PROCESS_OUTBOX_TIME_LIMIT_SEC = 90
@@ -187,8 +186,15 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
         else:
             message_text = await _tr("payments.gift_delivered", "✅ Gift delivered.")
 
-    async def _release_notify_lease() -> None:
+    async def _release_notify_lease(*, error_code: str | None = None) -> None:
         async with session_scope(stmt_timeout_ms=3000) as db:
+            values = {
+                "lease_token": None,
+                "leased_at": None,
+                "updated_at": func.now(),
+            }
+            if error_code:
+                values["last_error"] = f"notify_error_code={error_code}"
             release_stmt = (
                 update(PaymentOutbox)
                 .where(
@@ -196,23 +202,51 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
                     PaymentOutbox.notified_at.is_(None),
                     PaymentOutbox.lease_token == lease_token,
                 )
-                .values(lease_token=None, leased_at=None, updated_at=func.now())
+                .values(**values)
             )
             await db.execute(release_stmt)
 
+    gift_label = ""
+    if outbox.kind == "gift" and outbox.gift_title:
+        gift_label = f"{outbox.gift_emoji or ''} {outbox.gift_title}".strip()
+        try:
+            # gifts.react is idempotent by charge_id via redis sent/lock keys
+            # (gift_react_sent:* and gift_react_lock:*), so scheduling is safe
+            # even when payment notify is retried.
+            celery.send_task(
+                "gifts.react",
+                args=[
+                    int(outbox.user_id),
+                    int(outbox.user_id),
+                    str(outbox.gift_code or ""),
+                    str(gift_label),
+                    int(outbox.requests_amount or 0),
+                    int(outbox.stars_amount or 0),
+                    str(outbox.telegram_payment_charge_id),
+                    None,
+                    None,
+                ],
+            )
+        except Exception:
+            logger.exception("payment_outbox: failed to schedule gift reaction")
+
     try:
-        sent_message = await send_message_safe(bot, int(outbox.user_id), message_text, parse_mode="HTML")
+        bot = get_bot()
+        send_result = await send_message_safe_with_reason(bot, int(outbox.user_id), message_text, parse_mode="HTML")
     except Exception:
-        await _release_notify_lease()
+        await _release_notify_lease(error_code="unknown_send_error")
         raise
 
+    sent_message = send_result.message
     if sent_message is None:
-        await _release_notify_lease()
+        notify_error_code = send_result.error_code or "unknown_send_error"
+        await _release_notify_lease(error_code=notify_error_code)
 
         logger.warning(
-            "payment_outbox: уведомление пропущено charge_id=%s user_id=%s",
+            "payment_outbox: уведомление пропущено charge_id=%s user_id=%s notify_error_code=%s",
             outbox.telegram_payment_charge_id,
             outbox.user_id,
+            notify_error_code,
         )
         return
 
@@ -240,7 +274,6 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
     outbox.notified_at = datetime.now(timezone.utc)
 
     if outbox.kind == "gift" and outbox.gift_title and not duplicate:
-        gift_label = f"{outbox.gift_emoji or ''} {outbox.gift_title}".strip()
         note = f"[ContextNote] Gift received: {gift_label}."
         try:
             await push_message(
@@ -252,24 +285,6 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             )
         except Exception:
             logger.exception("payment_outbox: failed to push gift note")
-
-        try:
-            celery.send_task(
-                "gifts.react",
-                args=[
-                    int(outbox.user_id),
-                    int(outbox.user_id),
-                    str(outbox.gift_code or ""),
-                    str(gift_label),
-                    int(outbox.requests_amount or 0),
-                    int(outbox.stars_amount or 0),
-                    str(outbox.telegram_payment_charge_id),
-                    None,
-                    None,
-                ],
-            )
-        except Exception:
-            logger.exception("payment_outbox: failed to schedule gift reaction")
 
 
 @celery.task(
@@ -386,7 +401,12 @@ async def requeue_applied_unnotified_outbox(batch_size: int = REQUEUE_PENDING_OU
                 WHERE status = 'applied'
                   AND notified_at IS NULL
                   AND (leased_at IS NULL OR leased_at < now() - make_interval(secs => :ttl_seconds))
-                ORDER BY id
+                ORDER BY
+                    CASE
+                      WHEN last_error = 'notify_error_code=loop_closed' THEN 0
+                      ELSE 1
+                    END,
+                    id
                 LIMIT :batch_size
                 FOR UPDATE SKIP LOCKED
             )

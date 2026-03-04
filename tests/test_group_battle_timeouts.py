@@ -215,7 +215,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         mod.consts.BOT_ID = 4242
 
@@ -242,7 +242,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         start_task = SimpleNamespace(apply_async=Mock())
         prev_battle_module = sys.modules.get("app.tasks.battle")
@@ -270,7 +270,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         gid = "g-start"
         redis.hashes[f"game:{gid}"] = {
@@ -328,7 +328,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         gid = "g-guard"
         redis.hashes[f"game:{gid}"] = {
@@ -350,7 +350,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         gid = "g-idempotent"
         redis.hashes[f"game:{gid}"] = {
@@ -375,7 +375,7 @@ class GroupBattleTimeoutTests(unittest.IsolatedAsyncioTestCase):
         redis = FakeRedis()
         bot = FakeBot()
         mod.get_redis = lambda: redis
-        mod.bot = bot
+        mod.get_bot = lambda: bot
 
         gid = "g-delete-msg"
         redis.hashes[f"game:{gid}"] = {
