@@ -140,29 +140,57 @@ async def start_bot(stop_event: asyncio.Event | None = None) -> None:
         logger.exception("Failed to load welcome messages – using empty dict")
         WELCOME_MESSAGES.clear()
 
+    webhook_kwargs = {
+        "url": settings.WEBHOOK_URL + settings.WEBHOOK_PATH,
+        "drop_pending_updates": settings.WEBHOOK_DROP_PENDING_UPDATES,
+        "allowed_updates": [
+            "message",
+            "message_reaction",
+            "callback_query",
+            "chat_member",
+            "my_chat_member",
+            "inline_query",
+            "pre_checkout_query",
+        ],
+    }
+    cert_arg = (
+        {"certificate": FSInputFile(settings.WEBHOOK_CERT)}
+        if settings.USE_SELF_SIGNED_CERT
+        else {}
+    )
+    registration_max_attempts = max(1, int(getattr(settings, "WEBHOOK_REGISTRATION_MAX_ATTEMPTS", 5)))
+    registration_retry_delay_sec = max(
+        0.0,
+        float(getattr(settings, "WEBHOOK_REGISTRATION_RETRY_DELAY_SEC", 2.0)),
+    )
+
     try:
-        cert_arg = (
-            {"certificate": FSInputFile(settings.WEBHOOK_CERT)}
-            if settings.USE_SELF_SIGNED_CERT
-            else {}
-        )
-        await asyncio.wait_for(
-            bot.set_webhook(
-                url=settings.WEBHOOK_URL + settings.WEBHOOK_PATH,
-                **cert_arg,
-                drop_pending_updates=settings.WEBHOOK_DROP_PENDING_UPDATES,
-                allowed_updates=[
-                    "message",
-                    "message_reaction",
-                    "callback_query",
-                    "chat_member",
-                    "my_chat_member",
-                    "inline_query",
-                    "pre_checkout_query",
-                ],
-            ),
-            timeout=60,
-        )
+        last_exc = None
+        for attempt in range(1, registration_max_attempts + 1):
+            try:
+                await asyncio.wait_for(
+                    bot.set_webhook(
+                        **webhook_kwargs,
+                        **cert_arg,
+                    ),
+                    timeout=60,
+                )
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= registration_max_attempts:
+                    raise
+                logger.warning(
+                    "Webhook registration attempt %d/%d failed; retrying in %.1fs",
+                    attempt,
+                    registration_max_attempts,
+                    registration_retry_delay_sec,
+                )
+                await asyncio.sleep(registration_retry_delay_sec)
+
+        if last_exc is None:
+            logger.info("Webhook registered: %s", webhook_kwargs["url"])
     except asyncio.TimeoutError as exc:
         logger.error("Timeout while setting webhook")
         if settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION:

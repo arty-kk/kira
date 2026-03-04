@@ -238,6 +238,12 @@ class Settings:
     WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION: bool = field(
         default_factory=lambda: _get_env("WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION", "false", conv=_parse_bool)
     )
+    WEBHOOK_REGISTRATION_MAX_ATTEMPTS: int = field(
+        default_factory=lambda: _get_env("WEBHOOK_REGISTRATION_MAX_ATTEMPTS", "5", conv=int)
+    )
+    WEBHOOK_REGISTRATION_RETRY_DELAY_SEC: float = field(
+        default_factory=lambda: _get_env("WEBHOOK_REGISTRATION_RETRY_DELAY_SEC", "2", conv=float)
+    )
     WEBHOOK_CERT: str = field(init=False)
     WEBHOOK_KEY: str = field(init=False)
     USE_SELF_SIGNED_CERT: bool = field(default_factory=lambda: _get_env("USE_SELF_SIGNED_CERT", "false", conv=_parse_bool))
