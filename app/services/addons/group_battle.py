@@ -24,13 +24,6 @@ from redis.exceptions import LockError
 
 logger = logging.getLogger(__name__)
 
-bot = None
-
-
-def _runtime_bot():
-    return bot or get_bot()
-
-
 timedelta_ = timedelta
 T_START = timedelta_(minutes=10)
 T_MOVE = timedelta_(seconds=60)
@@ -83,19 +76,19 @@ async def launch_battle(p1_id: str, p2_id: str, chat_id: int | str | None = None
         if not reserved:
             logger.info("launch_battle skipped in %s: active game already present", chat_id)
             try:
-                await _runtime_bot().send_message(chat_id, "⚠️ A battle is already in progress. Please wait.")
+                await get_bot().send_message(chat_id, "⚠️ A battle is already in progress. Please wait.")
             except Exception:
                 pass
             return
 
         try:
-            m1 = await _runtime_bot().get_chat_member(chat_id, int(p1_id))
-            m2 = await _runtime_bot().get_chat_member(chat_id, int(p2_id))
+            m1 = await get_bot().get_chat_member(chat_id, int(p1_id))
+            m2 = await get_bot().get_chat_member(chat_id, int(p2_id))
         except Exception:
             await redis.delete(f"active_game:{chat_id}")
             logger.info("launch_battle: participant not found in chat %s", chat_id)
             try:
-                await _runtime_bot().send_message(chat_id, "⚠️ Both participants must be in this chat.")
+                await get_bot().send_message(chat_id, "⚠️ Both participants must be in this chat.")
             except Exception:
                 pass
             return
@@ -117,7 +110,7 @@ async def launch_battle(p1_id: str, p2_id: str, chat_id: int | str | None = None
         ]])
 
         try:
-            msg = await _runtime_bot().send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
+            msg = await get_bot().send_message(chat_id, text, parse_mode="HTML", reply_markup=kb)
         except Exception:
             try:
                 await redis.delete(f"active_game:{chat_id}")
@@ -242,7 +235,7 @@ async def check_battle_timeout(gid: str, expected_phase_version: int | None = No
                 msg_id_raw = game.get("msg_id")
                 if msg_id_raw:
                     try:
-                        await _runtime_bot().delete_message(chat_id=chat_id, message_id=int(msg_id_raw))
+                        await get_bot().delete_message(chat_id=chat_id, message_id=int(msg_id_raw))
                     except Exception:
                         logger.debug("Failed to delete stale battle message for %s", gid, exc_info=True)
                 await redis.hincrby(key, "version", 1)
@@ -290,7 +283,7 @@ async def check_move_timeout(gid: str, expected_phase_version: int | None = None
                 if chat_id is None:
                     return
                 chat_id = int(chat_id)
-                await _runtime_bot().send_message(
+                await get_bot().send_message(
                     chat_id,
                     "❌ <b>Battle canceled</b>: move not made in time.",
                     parse_mode="HTML",
@@ -383,7 +376,7 @@ async def on_battle_start(query: CallbackQuery) -> None:
                     InlineKeyboardButton(text="✂️ Scissors", callback_data=f"battle_move:{gid}:scissors"),
                 ]])
                 try:
-                    await _runtime_bot().edit_message_text(
+                    await get_bot().edit_message_text(
                         chat_id=chat_id,
                         message_id=msg_id,
                         text=(
@@ -505,7 +498,7 @@ async def on_battle_move(query: CallbackQuery) -> None:
         wait_id = game['player2_id'] if field == "choice1" else game['player1_id']
         wait_name = escape(game['player2_name'] if field == "choice1" else game['player1_name'])
         try:
-            await _runtime_bot().edit_message_text(
+            await get_bot().edit_message_text(
                 chat_id=chat_id,
                 message_id=msg_id,
                 text=(
@@ -586,7 +579,7 @@ async def conclude_game(gid: str) -> None:
             except Exception:
                 logger.exception("Failed to store bot outcome stats for game %s", gid)
 
-        await _runtime_bot().edit_message_text(
+        await get_bot().edit_message_text(
             chat_id=chat_id,
             message_id=int(game['msg_id']),
             text=result,
