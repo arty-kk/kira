@@ -32,6 +32,9 @@ from app.services.addons.passive_moderation import (
     get_last_ai_moderation_category,
     get_last_ai_moderation_flags,
     should_delete_ai_flagged_message,
+    is_emoji_flood_text,
+    is_symbol_noise_text,
+    count_message_emojis,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import (
@@ -516,6 +519,10 @@ async def handle_passive_moderation(
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "AI moderation policy violation",
                 "sexual_content": "Sexual/erotic content policy violation",
+                "emoji_flood": "Emoji flood / visual spam",
+                "symbol_noise": "Obfuscated symbol/noise flood",
+                "custom_emoji_spam": "Custom emoji flood",
+                "emoji_overlimit": "Too many emojis in one message",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
@@ -1301,6 +1308,26 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
 
+    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 5) or 0)
+    if max_emoji_per_message > 0 and count_message_emojis(raw, [
+        {
+            "type": str(e.type.value if hasattr(e.type, "value") else e.type),
+            "offset": int(getattr(e, "offset", 0) or 0),
+            "length": int(getattr(e, "length", 0) or 0),
+        }
+        for e in ents
+    ]) > max_emoji_per_message:
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("emoji_overlimit"), user_id=u.id)
+        return await _delete_and_handle("emoji_overlimit")
+
+    if is_emoji_flood_text(raw):
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("emoji_flood"), user_id=u.id)
+        return await _delete_and_handle("emoji_flood")
+
+    if is_symbol_noise_text(raw):
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("symbol_noise"), user_id=u.id)
+        return await _delete_and_handle("symbol_noise")
+
     if bool(getattr(settings, "MODERATION_DELETE_NON_MEMBER_MENTIONS", False)):
         def _norm_uname(uname: str | None) -> str:
             return (uname or "").lstrip("@").strip().lower()
@@ -1382,6 +1409,17 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             if t in ("mention", "text_mention"):
                 await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("mention"), user_id=u.id)
                 return await _delete_and_handle("mention")
+
+    custom_emoji_threshold = int(getattr(settings, "MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD", 12) or 0)
+    if custom_emoji_threshold > 0:
+        custom_emoji_count = sum(
+            1
+            for e in ents
+            if str(e.type.value if hasattr(e.type, "value") else e.type).lower() == "custom_emoji"
+        )
+        if custom_emoji_count >= custom_emoji_threshold:
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("custom_emoji_spam"), user_id=u.id)
+            return await _delete_and_handle("custom_emoji_spam")
 
     if not settings.MODERATION_ALLOW_CUSTOM_EMOJI:
         for e in ents:

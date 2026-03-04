@@ -195,6 +195,87 @@ def contains_nsfw_text_signal(text: str) -> bool:
         return False
     return any(p.search(normalized) for p in _NSFW_TEXT_PATTERNS)
 
+
+_EMOJI_FLOOD_RE = re.compile(
+    "["
+    "\U0001F300-\U0001F5FF"
+    "\U0001F600-\U0001F64F"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F700-\U0001F77F"
+    "\U0001F780-\U0001F7FF"
+    "\U0001F800-\U0001F8FF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FAFF"
+    "\u2600-\u26FF"
+    "\u2700-\u27BF"
+    "]"
+)
+
+
+def is_emoji_flood_text(text: str) -> bool:
+    raw = _strip_zero_width(unicodedata.normalize("NFKC", text or ""))
+    compact = "".join(ch for ch in raw if not ch.isspace())
+    if len(compact) < 24:
+        return False
+
+    emoji_count = sum(1 for ch in compact if _EMOJI_FLOOD_RE.match(ch))
+    if emoji_count < int(getattr(settings, "MODERATION_EMOJI_FLOOD_MIN_COUNT", 16)):
+        return False
+
+    emoji_ratio = emoji_count / max(1, len(compact))
+    if emoji_ratio >= float(getattr(settings, "MODERATION_EMOJI_FLOOD_MIN_RATIO", 0.55)):
+        return True
+
+    max_run = 1
+    cur = 1
+    for i in range(1, len(compact)):
+        if compact[i] == compact[i - 1]:
+            cur += 1
+            max_run = max(max_run, cur)
+        else:
+            cur = 1
+    return max_run >= int(getattr(settings, "MODERATION_EMOJI_FLOOD_MAX_RUN", 10))
+
+
+def is_symbol_noise_text(text: str) -> bool:
+    raw = _strip_zero_width(unicodedata.normalize("NFKC", text or ""))
+    compact = "".join(ch for ch in raw if not ch.isspace())
+    if len(compact) < int(getattr(settings, "MODERATION_SYMBOL_NOISE_MIN_LEN", 48)):
+        return False
+
+    alnum = sum(1 for ch in compact if ch.isalnum())
+    symbol = sum(1 for ch in compact if unicodedata.category(ch).startswith(("P", "S")))
+    digit = sum(1 for ch in compact if ch.isdigit())
+    unique = len(set(compact))
+
+    max_run = 1
+    cur = 1
+    for i in range(1, len(compact)):
+        if compact[i] == compact[i - 1]:
+            cur += 1
+            max_run = max(max_run, cur)
+        else:
+            cur = 1
+
+    symbol_ratio = symbol / max(1, len(compact))
+    alnum_ratio = alnum / max(1, len(compact))
+    digit_ratio = digit / max(1, len(compact))
+
+    if max_run >= int(getattr(settings, "MODERATION_SYMBOL_NOISE_MAX_RUN", 14)):
+        return True
+    if symbol_ratio >= float(getattr(settings, "MODERATION_SYMBOL_NOISE_MIN_SYMBOL_RATIO", 0.6)) and alnum_ratio <= 0.4:
+        return True
+    if len(compact) >= 80 and unique <= int(getattr(settings, "MODERATION_SYMBOL_NOISE_MAX_UNIQUE", 10)) and digit_ratio >= 0.45:
+        return True
+    return False
+
+
+def count_message_emojis(text: str, entities: List[dict] | None = None) -> int:
+    raw = _strip_zero_width(unicodedata.normalize("NFKC", text or ""))
+    unicode_emoji_count = sum(1 for ch in raw if _EMOJI_FLOOD_RE.match(ch))
+    custom_emoji_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "custom_emoji")
+    return unicode_emoji_count + custom_emoji_count
+
 def sanitize_for_context(
     text: str,
     entities: List[dict] | None = None,
@@ -681,7 +762,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic", "emoji_flood", "symbol_noise", "custom_emoji_spam", "emoji_overlimit"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -689,6 +770,16 @@ async def check_light(
     # Channel/bot sources are checked with link-policy only in light mode.
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
+
+    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 5) or 0)
+    if source == "user" and max_emoji_per_message > 0 and count_message_emojis(text or "", entities) > max_emoji_per_message:
+        return "emoji_overlimit"
+
+    if source == "user" and is_emoji_flood_text(text or ""):
+        return "emoji_flood"
+
+    if source == "user" and is_symbol_noise_text(text or ""):
+        return "symbol_noise"
 
     urls = extract_urls(text or "", entities)
     logger.debug("check_light: urls=%r", urls)
@@ -698,6 +789,11 @@ async def check_light(
     mention_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "mention")
     if mention_count > int(getattr(settings, "MODERATION_SPAM_MENTION_THRESHOLD", 5)):
         return "spam_mentions"
+
+    custom_emoji_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "custom_emoji")
+    custom_emoji_threshold = int(getattr(settings, "MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD", 12) or 0)
+    if custom_emoji_threshold > 0 and custom_emoji_count >= custom_emoji_threshold:
+        return "custom_emoji_spam"
 
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"

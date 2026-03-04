@@ -31,6 +31,7 @@ class ModerationMentionsMembershipTests(unittest.IsolatedAsyncioTestCase):
             MODERATION_ALLOW_GAMES=True,
             MODERATION_ALLOW_DICE=True,
             MODERATION_ALLOW_CUSTOM_EMOJI=True,
+            MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD=12,
             MODERATION_INLINE_BOT_MSGS_DELETE=False,
             MODERATION_STORIES_DELETE=False,
             MODERATION_VOICE_DELETE=False,
@@ -167,6 +168,33 @@ class ModerationMentionsMembershipTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(handled)
         delete_mock.assert_awaited_once()
         self.assertIn("mention_non_member", flag_mock.await_args.kwargs["reason"])
+
+    async def test_custom_emoji_spam_deleted_even_when_custom_emoji_allowed(self):
+        entities = [types.SimpleNamespace(type="custom_emoji", offset=i, length=1) for i in range(12)]
+        message = self._message("x" * 12, entities)
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None))
+        bot_stub = types.SimpleNamespace(get_chat=AsyncMock(), get_chat_member=AsyncMock())
+
+        with (
+            patch.object(moderation, "settings", self._settings()),
+            patch.object(moderation, "redis_client", redis_stub),
+            patch.object(moderation, "bot", bot_stub),
+            patch.object(moderation, "_trusted_scope_ids", return_value=(set(), set(), set())),
+            patch.object(moderation, "_is_fully_trusted_actor_or_action", AsyncMock(return_value=False)),
+            patch.object(moderation, "is_from_linked_channel", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)),
+            patch.object(moderation, "_is_new_user", AsyncMock(return_value=False)),
+            patch.object(moderation, "extract_urls", return_value=[]),
+            patch.object(moderation, "contains_any_link_obfuscated", return_value=False),
+            patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertTrue(handled)
+        delete_mock.assert_awaited_once()
+        self.assertIn("emoji_overlimit", flag_mock.await_args.kwargs["reason"])
 
 
 if __name__ == "__main__":
