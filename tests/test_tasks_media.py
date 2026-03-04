@@ -219,6 +219,59 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(fake_redis.queue), 1)
         send_error.assert_not_awaited()
 
+
+    async def test_preprocess_skip_responder_enqueue_runs_only_moderation(self) -> None:
+        fake_redis = _FakeRedis()
+        payload = {
+            "chat_id": 10,
+            "message_id": 30,
+            "user_id": 40,
+            "file_id": "abc",
+            "caption": "cap",
+            "caption_log": "cap",
+            "skip_responder_enqueue": True,
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "_download_file_to_tmp", AsyncMock(return_value="/tmp/f.jpg")),
+            patch.object(media, "strict_image_load", AsyncMock(return_value=object())),
+            patch.object(media, "sanitize_and_compress", return_value=b"jpeg"),
+            patch.object(media, "_enqueue", AsyncMock()) as enqueue_mock,
+            patch.object(media, "_store_context_and_recent", AsyncMock()) as store_context_mock,
+            patch.object(media.passive_moderate, "delay") as passive_delay,
+            patch("app.tasks.media.os.path.exists", return_value=False),
+        ):
+            consts_mock.redis_client = fake_redis
+            consts_mock.redis_queue = fake_redis
+            result = await media._preprocess(payload)
+
+        self.assertEqual(result, "ok")
+        enqueue_mock.assert_not_awaited()
+        store_context_mock.assert_not_awaited()
+        passive_delay.assert_called_once()
+
+    async def test_preprocess_skip_responder_enqueue_suppresses_user_errors(self) -> None:
+        payload = {
+            "chat_id": 10,
+            "message_id": 31,
+            "user_id": 40,
+            "file_id": "abc",
+            "skip_responder_enqueue": True,
+        }
+        with (
+            patch.object(
+                media,
+                "_download_file_to_tmp",
+                AsyncMock(side_effect=ValueError("входной файл слишком большой для обработки")),
+            ),
+            patch.object(media, "_send_error", AsyncMock()) as send_error_mock,
+            patch("app.tasks.media.os.path.exists", return_value=False),
+        ):
+            result = await media._preprocess(payload)
+
+        self.assertEqual(result, "skipped:validation")
+        send_error_mock.assert_not_awaited()
+
     async def test_preprocess_returns_specific_reason_when_input_exceeds_media_limit(self) -> None:
         payload = {
             "chat_id": 10,

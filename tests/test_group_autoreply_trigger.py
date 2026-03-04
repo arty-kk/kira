@@ -261,7 +261,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         buffer_mock.assert_not_called()
         dispatch_mock.assert_called_once()
 
-    async def test_reply_gate_image_still_dispatches_passive_moderation(self) -> None:
+    async def test_reply_gate_image_still_dispatches_preprocess_moderation(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=90,
@@ -284,8 +284,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
             stack.enter_context(patch.object(group, "_reply_gate_requires_mention", return_value=True))
             stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
             stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
-            stack.enter_context(patch.object(group.preprocess_group_image, "delay"))
-            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+            delay_mock = stack.enter_context(patch.object(group.preprocess_group_image, "delay"))
 
             await group._handle_group_image_message_common(
                 message,
@@ -296,7 +295,10 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 content_type_for_analytics="photo",
             )
 
-        dispatch_mock.assert_called_once()
+        delay_mock.assert_called_once()
+        payload = delay_mock.call_args.args[0]
+        self.assertTrue(payload["skip_responder_enqueue"])
+        self.assertEqual(payload["file_id"], "photo-file-id")
 
     async def test_mentions_other_still_dispatches_passive_moderation(self) -> None:
         message = types.SimpleNamespace(
@@ -1008,8 +1010,10 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
             )
 
         reject_mock.assert_not_called()
-        delay_mock.assert_not_called()
-        dispatch_mock.assert_called_once()
+        delay_mock.assert_called_once()
+        payload = delay_mock.call_args.args[0]
+        self.assertTrue(payload["skip_responder_enqueue"])
+        dispatch_mock.assert_not_called()
 
     async def test_album_with_mention_rejects_and_skips_enqueue(self) -> None:
         message = types.SimpleNamespace(

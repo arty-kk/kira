@@ -7,7 +7,7 @@ from app.bot.handlers import group
 
 
 class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
-    async def test_group_image_common_does_not_enqueue_on_caption_without_mention(self) -> None:
+    async def test_group_image_common_dispatches_preprocess_for_caption_without_mention(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=776,
@@ -32,7 +32,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_mentions_other_user", return_value=False),
             patch.object(group, "_user_id_val", return_value=42),
             patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)),
-            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
+            patch.object(group, "_channel_obj", return_value=None),
             patch.object(group.preprocess_group_image, "delay", delay_mock),
             patch.object(group, "reject_image_and_reply", reject_mock),
         ):
@@ -45,11 +45,13 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
                 content_type_for_analytics="photo",
             )
 
-        delay_mock.assert_not_called()
+        delay_mock.assert_called_once()
+        payload = delay_mock.call_args.args[0]
+        self.assertTrue(payload["skip_responder_enqueue"])
+        self.assertEqual(payload["file_id"], "photo-file-id")
         reject_mock.assert_not_called()
-        dispatch_mock.assert_called_once()
 
-    async def test_group_document_image_common_does_not_enqueue_without_mention(self) -> None:
+    async def test_group_document_image_common_dispatches_preprocess_without_mention(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=775,
@@ -73,7 +75,7 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group, "_mentions_other_user", return_value=False),
             patch.object(group, "_user_id_val", return_value=42),
             patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=False)),
-            patch.object(group, "_dispatch_passive_moderation") as dispatch_mock,
+            patch.object(group, "_channel_obj", return_value=None),
             patch.object(group.preprocess_group_image, "delay", delay_mock),
         ):
             await group._handle_group_image_message_common(
@@ -85,8 +87,10 @@ class GroupImageEnqueueTests(unittest.IsolatedAsyncioTestCase):
                 content_type_for_analytics="document",
             )
 
-        delay_mock.assert_not_called()
-        dispatch_mock.assert_called_once()
+        delay_mock.assert_called_once()
+        payload = delay_mock.call_args.args[0]
+        self.assertTrue(payload["skip_responder_enqueue"])
+        self.assertEqual(payload["document_id"], "doc-file-id")
 
     async def test_group_image_common_enqueues_preprocess_without_inline_image(self) -> None:
         message = types.SimpleNamespace(

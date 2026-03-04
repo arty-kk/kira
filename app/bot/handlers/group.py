@@ -1416,32 +1416,39 @@ async def _handle_group_image_message_common(
     ents = _extract_entities(message)
     model_caption, log_caption = split_context_text(caption, ents, allow_web=False)
 
+    def _dispatch_image_moderation_only(*, user_id_val: int, is_comment_context: bool) -> None:
+        channel_local = _channel_obj(message)
+        preprocess_group_image.delay(
+            {
+                "chat_id": cid,
+                "message_id": message.message_id,
+                "user_id": user_id_val,
+                "trigger": None,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "channel_id": channel_local.id if channel_local else None,
+                "linked_chat_id": int(getattr(message.chat, "linked_chat_id", 0) or 0),
+                "channel_title": getattr(channel_local, "title", None) if channel_local else None,
+                "chat_title": getattr(message.chat, "title", None),
+                "entities": ents,
+                "caption": model_caption,
+                "caption_log": log_caption,
+                "file_id": file_id,
+                "document_id": document_id,
+                "mime_type": mime_type,
+                "suffix": suffix,
+                "enforce_on_topic": False,
+                "allow_web": False,
+                "skip_responder_enqueue": True,
+                "content_type_for_analytics": content_type_for_analytics,
+            }
+        )
+
     if _reply_gate_requires_mention(message):
         user_id_val = _user_id_val(message, is_channel)
         is_comment_context = await _resolve_group_comment_context(message)
-        payload = {
-            "chat_id": cid,
-            "text": model_caption,
-            "user_id": user_id_val,
-            "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
-            "is_group": True,
-            "msg_id": message.message_id,
-            "is_channel_post": is_channel,
-            "is_comment_context": is_comment_context,
-            "trigger": None,
-            "enforce_on_topic": False,
-            "entities": ents,
-        }
-        _dispatch_passive_moderation(
-            message,
-            payload,
-            text=log_caption,
-            ents=ents,
-            is_channel=is_channel,
-            user_id_val=user_id_val,
-            is_comment_context=is_comment_context,
-            trusted_repost=False,
-        )
+        _dispatch_image_moderation_only(user_id_val=user_id_val, is_comment_context=is_comment_context)
         return
 
     trusted_repost = _is_trusted_scope_repost(message)
@@ -1471,29 +1478,7 @@ async def _handle_group_image_message_common(
     if not trigger:
         user_id_val = _user_id_val(message, is_channel)
         is_comment_context = await _resolve_group_comment_context(message)
-        payload = {
-            "chat_id": cid,
-            "text": model_caption,
-            "user_id": user_id_val,
-            "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
-            "is_group": True,
-            "msg_id": message.message_id,
-            "is_channel_post": is_channel,
-            "is_comment_context": is_comment_context,
-            "trigger": trigger,
-            "enforce_on_topic": False,
-            "entities": ents,
-        }
-        _dispatch_passive_moderation(
-            message,
-            payload,
-            text=log_caption,
-            ents=ents,
-            is_channel=is_channel,
-            user_id_val=user_id_val,
-            is_comment_context=is_comment_context,
-            trusted_repost=False,
-        )
+        _dispatch_image_moderation_only(user_id_val=user_id_val, is_comment_context=is_comment_context)
         return
 
     if not is_single_media(message):
