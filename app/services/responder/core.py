@@ -228,6 +228,7 @@ async def _compute_on_topic_relevance(
     embedding_model: str | None,
     rag_precheck_source: str | None,
     rag_query_source: str = "resolved",
+    skip_autoreply_strict_gate: bool = False,
 ) -> tuple[bool, List[Any] | None, RagQueryContext]:
     on_topic_flag = False
     on_topic_hits = None
@@ -286,28 +287,11 @@ async def _compute_on_topic_relevance(
             apply_mmr = not (trigger == "check_on_topic" and disable_mmr_for_autoreply)
 
             if trigger == "check_on_topic":
-                trigger_threshold = float(
-                    getattr(settings, "AUTOREPLY_GENERATION_RELEVANCE_THRESHOLD", settings.RELEVANCE_THRESHOLD)
-                    or settings.RELEVANCE_THRESHOLD
-                )
                 generation_threshold = float(
                     getattr(settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28
                 )
-                on_topic_flag, on_topic_hits = await is_relevant(
-                    query_to_model,
-                    model=effective_embedding_model,
-                    threshold=trigger_threshold,
-                    return_hits=True,
-                    persona_owner_id=persona_owner_id,
-                    knowledge_owner_id=knowledge_owner_id,
-                    knowledge_kb_id=knowledge_kb_id,
-                    strict_autoreply_gate=True,
-                    query_embedding=rag_query_context.query_embedding,
-                    embedding_model=rag_query_context.embedding_model,
-                    query_embedding_reuse_counter=reuse_counter,
-                    apply_mmr=apply_mmr,
-                )
-                if on_topic_flag:
+                if skip_autoreply_strict_gate:
+                    on_topic_flag = True
                     _flag, generation_hits = await is_relevant(
                         query_to_model,
                         model=effective_embedding_model,
@@ -324,6 +308,42 @@ async def _compute_on_topic_relevance(
                     )
                     if generation_hits:
                         on_topic_hits = generation_hits
+                else:
+                    trigger_threshold = float(
+                        getattr(settings, "AUTOREPLY_GENERATION_RELEVANCE_THRESHOLD", settings.RELEVANCE_THRESHOLD)
+                        or settings.RELEVANCE_THRESHOLD
+                    )
+                    on_topic_flag, on_topic_hits = await is_relevant(
+                        query_to_model,
+                        model=effective_embedding_model,
+                        threshold=trigger_threshold,
+                        return_hits=True,
+                        persona_owner_id=persona_owner_id,
+                        knowledge_owner_id=knowledge_owner_id,
+                        knowledge_kb_id=knowledge_kb_id,
+                        strict_autoreply_gate=True,
+                        query_embedding=rag_query_context.query_embedding,
+                        embedding_model=rag_query_context.embedding_model,
+                        query_embedding_reuse_counter=reuse_counter,
+                        apply_mmr=apply_mmr,
+                    )
+                    if on_topic_flag:
+                        _flag, generation_hits = await is_relevant(
+                            query_to_model,
+                            model=effective_embedding_model,
+                            threshold=generation_threshold,
+                            return_hits=True,
+                            persona_owner_id=persona_owner_id,
+                            knowledge_owner_id=knowledge_owner_id,
+                            knowledge_kb_id=knowledge_kb_id,
+                            strict_autoreply_gate=False,
+                            query_embedding=rag_query_context.query_embedding,
+                            embedding_model=rag_query_context.embedding_model,
+                            query_embedding_reuse_counter=reuse_counter,
+                            apply_mmr=apply_mmr,
+                        )
+                        if generation_hits:
+                            on_topic_hits = generation_hits
             else:
                 on_topic_flag, on_topic_hits = await is_relevant(
                     query_to_model,
@@ -1083,6 +1103,7 @@ async def respond_to_user(
     query_embedding: List[float] | None = None,
     embedding_model: str | None = None,
     rag_precheck_source: str | None = None,
+    skip_autoreply_strict_gate: bool = False,
 ) -> str:
 
     redis = get_redis()
@@ -1546,62 +1567,9 @@ async def respond_to_user(
                     except Exception:
                         logger.debug("analytics(record_ping_response) failed", exc_info=True)
 
-    if internal_mode:
-        resolved = query
-    else:
-        pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((query or "").strip()))
-        try:
-            _coref_src: list[dict] = []
-            if (chat_id != user_id) and (not is_api):
-                try:
-                    g_tail = await get_group_stm_tail(
-                        chat_id,
-                        cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
-                        max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
-                    )
-                    _coref_src.extend(
-                        _group_coref_source_from_tail(
-                            g_tail,
-                            user_id=user_id,
-                        )
-                    )
-                except Exception as e:
-                    logger.debug("group coref context failed chat=%s: %r", chat_id, e)
-
-            _coref_src.extend(list(history or []))
-            if ctx_ephemeral_history:
-                _coref_src.extend(ctx_ephemeral_history)
-            coref_hist = _history_tail_for_coref(
-                _coref_src,
-                max_messages=min(6, int(getattr(settings, "COREF_CONTEXT_MAX_MESSAGES", 6) or 6)),
-            )
-        except Exception:
-            coref_hist = []
-
-        if pre_emoji_only:
-            resolved = query
-        else:
-            try:
-                resolved = await resolve_coref(query, coref_hist)
-                if resolved != query:
-                    logger.info(
-                        "COREF_REWRITE: chat=%s user=%s trigger=%s from=%r to=%r",
-                        chat_id,
-                        user_id,
-                        trigger,
-                        query[:200],
-                        resolved[:200],
-                    )
-                elif getattr(settings, "LLM_AUDIT", False):
-                    logger.info("[TRACE] coref: %r -> %r", query[:200], resolved[:200])
-            except Exception as e:
-                logger.warning("resolve_coref failed: %s", e)
-                resolved = query
-
-    safe_resolved = resolved
-    effective_user_text = (safe_resolved or "").strip() or (query or "").strip()
-    rewrite_changed = bool((safe_resolved or "").strip() and (safe_resolved or "") != (query or ""))
-    rewrite_applied = bool(rewrite_changed and effective_user_text)
+    effective_user_text = (query or "").strip()
+    rewrite_changed = False
+    rewrite_applied = False
     is_empty_after_strip = not effective_user_text
 
     if is_empty_after_strip and not is_channel_post and not image_b64:
@@ -1686,14 +1654,78 @@ async def respond_to_user(
         channel_desc = f'the "{safe_ch}" channel' if safe_ch else "the linked channel"
         ctx_sys_blocks.append(RESPONDER_FORWARDED_CHANNEL_POST_TEMPLATE.format(channel_desc=channel_desc))
 
-    rag_query_raw = query
-    rag_query_for_relevance = effective_user_text if rewrite_applied else rag_query_raw
-    rag_query_source = "rewritten" if rewrite_applied else "raw"
-    rag_embedding_for_relevance = None if rewrite_applied else request_embedding_context.query_embedding
-    rag_hits_for_relevance = None if rewrite_applied else precomputed_rag_hits
-    rag_precheck_source_for_relevance = None if rewrite_applied else rag_precheck_source
+    async def _apply_coref_rewrite(current_query: str) -> tuple[str, bool, bool]:
+        if internal_mode or not (current_query or "").strip():
+            return current_query, False, False
+        pre_emoji_only = bool(EMOJI_OR_SYMBOLS_ONLY.match((current_query or "").strip()))
+        if pre_emoji_only:
+            return current_query, False, False
+
+        try:
+            _coref_src: list[dict] = []
+            if (chat_id != user_id) and (not is_api):
+                try:
+                    g_tail = await get_group_stm_tail(
+                        chat_id,
+                        cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
+                        max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
+                    )
+                    _coref_src.extend(
+                        _group_coref_source_from_tail(
+                            g_tail,
+                            user_id=user_id,
+                        )
+                    )
+                except Exception as e:
+                    logger.debug("group coref context failed chat=%s: %r", chat_id, e)
+
+            _coref_src.extend(list(history or []))
+            if ctx_ephemeral_history:
+                _coref_src.extend(ctx_ephemeral_history)
+            coref_hist = _history_tail_for_coref(
+                _coref_src,
+                max_messages=min(6, int(getattr(settings, "COREF_CONTEXT_MAX_MESSAGES", 6) or 6)),
+            )
+        except Exception:
+            coref_hist = []
+
+        try:
+            resolved = await resolve_coref(current_query, coref_hist)
+            resolved_text = (resolved or "").strip() or current_query
+            local_rewrite_changed = bool(resolved_text and resolved_text != current_query)
+            local_rewrite_applied = bool(local_rewrite_changed and resolved_text)
+            if local_rewrite_changed:
+                logger.info(
+                    "COREF_REWRITE: chat=%s user=%s trigger=%s from=%r to=%r",
+                    chat_id,
+                    user_id,
+                    trigger,
+                    current_query[:200],
+                    resolved_text[:200],
+                )
+                return resolved_text, local_rewrite_changed, local_rewrite_applied
+            if getattr(settings, "LLM_AUDIT", False):
+                logger.info("[TRACE] coref: %r -> %r", current_query[:200], resolved_text[:200])
+            return current_query, False, False
+        except Exception as e:
+            logger.warning("resolve_coref failed: %s", e)
+            return current_query, False, False
 
     query_to_model = effective_user_text
+    query_to_model, rewrite_changed, rewrite_applied = await _apply_coref_rewrite(query_to_model)
+
+    rag_query_for_relevance = query_to_model
+    rag_query_source = "rewritten" if rewrite_applied else "raw"
+    # Full-generation RAG runs on the query used by the model. If query text
+    # changed due to rewrite, raw precheck artifacts must not be reused.
+    rag_embedding_for_relevance = request_embedding_context.query_embedding
+    rag_hits_for_relevance = precomputed_rag_hits
+    rag_precheck_source_for_relevance = rag_precheck_source
+    if rewrite_applied:
+        rag_embedding_for_relevance = None
+        rag_hits_for_relevance = None
+        rag_precheck_source_for_relevance = None
+
     reply = None
     ltm_frags_t = None
     ltm_text_t = None
@@ -1733,6 +1765,7 @@ async def respond_to_user(
             embedding_model=request_embedding_context.embedding_model,
             rag_precheck_source=rag_precheck_source_for_relevance,
             rag_query_source=rag_query_source,
+            skip_autoreply_strict_gate=skip_autoreply_strict_gate,
         )
         logger.info(
             "RAG query embedding context",
@@ -1747,7 +1780,12 @@ async def respond_to_user(
             await record_context(chat_id, checked=True, on_topic=bool(on_topic_flag))
         except Exception:
             logger.debug("analytics(record_context check) failed", exc_info=True)
-        if enforce_on_topic and not on_topic_flag:
+        should_suppress_for_on_topic_gate = bool(
+            enforce_on_topic
+            and not on_topic_flag
+            and not (trigger == "check_on_topic" and skip_autoreply_strict_gate)
+        )
+        if should_suppress_for_on_topic_gate:
             logger.info("RAG gating: no hits → suppress reply (chat=%s user=%s)", chat_id, user_id)
             try:
                 await record_context(chat_id, checked=True, on_topic=False, suppressed=True)
