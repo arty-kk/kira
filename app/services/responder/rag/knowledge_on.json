@@ -27312,191 +27312,449 @@
     ]
   },
   {
-    "id": "currency-uc-pubg",
-    "category": "Игровая валюта",
-    "text": "UC — внутриигровая валюта PUBG Mobile",
-    "tags": [
-      "uc",
-      "юси",
-      "юс",
-      "пабг юси",
-      "uc pubg",
-      "валюта pubg",
-      "донат pubg",
-      "монеты pubg"
-    ]
+    "id": "game-mlbb",
+    "category": "Игровая аббревиатура",
+    "fact": "MLBB — Mobile Legends: Bang Bang, мобильная MOBA игра",
+    "triggers": ["mlbb", "млбб", "млб", "mobile legends", "mobile legends bang bang", "мобайл легендс", "мобайл легендс бэнг бэнг", "mobile legend bang bang"]
   },
   {
-    "id": "currency-diamonds-mlbb",
-    "category": "Игровая валюта",
-    "text": "Diamonds — внутриигровая валюта Mobile Legends: Bang Bang",
-    "tags": [
-      "diamonds mlbb",
-      "алмазы млбб",
-      "алмазы mobile legends",
-      "diamonds mobile legends",
-      "диаманты млбб",
-      "донат млбб",
-      "кристаллы млбб"
-    ]
+    "id": "game-pubg-mobile",
+    "category": "Игровая аббревиатура",
+    "fact": "PUBG Mobile — королевская битва от Tencent",
+    "triggers": ["pubg mobile", "пубг мобайл", "pubg", "пубг", "пубг моб", "pubg mob"]
   },
   {
-    "id": "currency-genesis-crystals",
-    "category": "Игровая валюта",
-    "text": "Genesis Crystals — премиум валюта Genshin Impact",
-    "tags": [
-      "genesis crystals",
-      "кристаллы генезиса",
-      "генезис кристаллы",
-      "донат геншин",
-      "валюта genshin",
-      "кристаллы геншин"
-    ]
+    "id": "game-genshin-impact",
+    "category": "Игровая аббревиатура",
+    "fact": "Genshin Impact — action RPG от miHoYo",
+    "triggers": ["genshin impact", "геншин импакт", "геншин", "ginsin impact", "ginsin"]
   },
   {
-    "id": "currency-stellar-jade",
-    "category": "Игровая валюта",
-    "text": "Stellar Jade — основная валюта Honkai Star Rail",
-    "tags": [
-      "stellar jade",
-      "стеллар джейд",
-      "звездный нефрит",
-      "нефрит хонкай",
-      "валюта honkai",
-      "донат hsr"
-    ]
+    "id": "game-honkai-star-rail",
+    "category": "Игровая аббревиатура",
+    "fact": "Honkai Star Rail — SRPG от HoYoverse",
+    "triggers": ["honkai star rail", "хонкай стар рейл", "хонкай", "hsr", "honkaistarrail"]
   },
   {
-    "id": "currency-diamonds-free-fire",
-    "category": "Игровая валюта",
-    "text": "Diamonds — премиум валюта Free Fire",
-    "tags": [
-      "diamonds free fire",
-      "алмазы фри фаер",
-      "алмазы free fire",
-      "донат free fire",
-      "валюта free fire"
-    ]
+    "id": "game-free-fire",
+    "category": "Игровая аббревиатура",
+    "fact": "Free Fire — мобильный королевский бой от Garena",
+    "triggers": ["free fire", "фри фаер", "фри файр", "ff", "файр"]
   },
   {
-    "id": "currency-robux",
-    "category": "Игровая валюта",
-    "text": "Robux — внутриигровая валюта Roblox",
-    "tags": [
-      "robux",
-      "робуксы",
-      "робаксы",
-      "валюта roblox",
-      "донат roblox",
-      "robux купить"
-    ]
+    "id": "game-roblox",
+    "category": "Игровая аббревиатура",
+    "fact": "Roblox — платформа с играми от пользователей",
+    "triggers": ["roblox", "роблокс", "rob lox", "rob loxx", "roblox games"]
   },
   {
-    "id": "currency-gems-brawl-stars",
-    "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Brawl Stars",
-    "tags": [
-      "gems brawl stars",
-      "гемы бравл",
-      "кристаллы бравл старс",
-      "донат бравл",
-      "валюта brawl stars"
-    ]
+    "id": "game-brawl-stars",
+    "category": "Игровая аббревиатура",
+    "fact": "Brawl Stars — мобильная арена-экшн от Supercell",
+    "triggers": ["brawl stars", "бравл старс", "бравл", "brawl", "brl stars"]
   },
   {
-    "id": "currency-gems-clash",
-    "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Clash of Clans и Clash Royale",
-    "tags": [
-      "gems coc",
-      "gems clash royale",
-      "гемы клаш",
-      "гемы clash of clans",
-      "алмазы клаш",
-      "донат клаш"
-    ]
+    "id": "game-clash-royale",
+    "category": "Игровая аббревиатура",
+    "fact": "Clash Royale — карточная стратегия от Supercell",
+    "triggers": ["clash royale", "клаш рояль", "крэш ройал", "cr", "clashroyale"]
   },
   {
-    "id": "currency-wild-cores",
-    "category": "Игровая валюта",
-    "text": "Wild Cores — премиум валюта LOL: Wild Rift",
-    "tags": [
-      "wild cores",
-      "вайлд коры",
-      "кор валюты wild rift",
-      "донат wild rift",
-      "валюта вайлд рифт"
-    ]
+    "id": "game-clash-of-clans",
+    "category": "Игровая аббревиатура",
+    "fact": "Clash of Clans — стратегия-база от Supercell",
+    "triggers": ["clash of clans", "клаш оф кланс", "кланс", "coc", "clashclans"]
   },
   {
-    "id": "currency-cod-points",
-    "category": "Игровая валюта",
-    "text": "CP (COD Points) — внутриигровая валюта Call of Duty Mobile",
-    "tags": [
-      "cp cod",
-      "cod points",
-      "код поинты",
-      "донат cod mobile",
-      "валюта cod"
-    ]
+    "id": "game-lol-wild-rift",
+    "category": "Игровая аббревиатура",
+    "fact": "LoL: Wild Rift — мобильная League of Legends",
+    "triggers": ["wild rift", "лол вайлд рифт", "wildrift", "lol wildrift", "вайлдрифт"]
+  },
+
+  {
+    "id": "game-minecraft",
+    "category": "Игровая аббревиатура",
+    "fact": "Minecraft — песочница про строительство и выживание",
+    "triggers": ["minecraft", "майнкрафт", "майн", "mc", "mine craft", "майн крафт"]
   },
   {
-    "id": "currency-v-bucks",
-    "category": "Игровая валюта",
-    "text": "V-Bucks — внутриигровая валюта Fortnite",
-    "tags": [
-      "v bucks",
-      "v-bucks",
-      "в баксы",
-      "вбаксы",
-      "vbucks fortnite",
-      "донат fortnite",
-      "валюта fortnite"
-    ]
+    "id": "game-fortnite",
+    "category": "Игровая аббревиатура",
+    "fact": "Fortnite — королевская битва и режимы от Epic Games",
+    "triggers": ["fortnite", "фортнайт", "форт", "fn", "форнайт", "fort night"]
   },
   {
-    "id": "currency-valorant-points",
-    "category": "Игровая валюта",
-    "text": "Valorant Points — премиум валюта Valorant",
-    "tags": [
-      "valorant points",
-      "vp valorant",
-      "вп валарант",
-      "поинты valorant",
-      "донат valorant",
-      "валюта valorant"
-    ]
+    "id": "game-cs2",
+    "category": "Игровая аббревиатура",
+    "fact": "CS2 — Counter-Strike 2, командный шутер от Valve",
+    "triggers": ["cs2", "кс2", "counter-strike 2", "counter strike 2", "контр страйк 2", "кс 2", "cs 2"]
   },
   {
-    "id": "currency-riot-points",
-    "category": "Игровая валюта",
-    "text": "Riot Points — премиум валюта League of Legends",
-    "tags": [
-      "riot points",
-      "rp lol",
-      "рп лол",
-      "поинты league of legends",
-      "донат lol",
-      "валюта league of legends"
-    ]
+    "id": "game-csgo",
+    "category": "Игровая аббревиатура",
+    "fact": "CS:GO — Counter-Strike: Global Offensive, командный шутер (предшественник CS2)",
+    "triggers": ["csgo", "cs:go", "ксго", "кс гоу", "контр страйк го", "counter strike go", "counter-strike global offensive"]
   },
   {
-    "id": "currency-apex-coins",
-    "category": "Игровая валюта",
-    "text": "Apex Coins — премиум валюта Apex Legends",
-    "tags": [
-      "apex coins",
-      "апекс коинс",
-      "монеты apex",
-      "донат apex legends",
-      "валюта apex"
-    ]
+    "id": "game-dota2",
+    "category": "Игровая аббревиатура",
+    "fact": "Dota 2 — MOBA от Valve",
+    "triggers": ["dota 2", "дота 2", "дота", "dota2", "d2", "dotA"]
+  },
+  {
+    "id": "game-league-of-legends",
+    "category": "Игровая аббревиатура",
+    "fact": "LoL — League of Legends, MOBA от Riot Games",
+    "triggers": ["lol", "league of legends", "лига легенд", "лол", "лoл", "league legends", "лоЛ"]
+  },
+  {
+    "id": "game-valorant",
+    "category": "Игровая аббревиатура",
+    "fact": "VALORANT — тактический шутер от Riot Games",
+    "triggers": ["valorant", "валарант", "валорант", "valo", "вало", "валоран"]
+  },
+  {
+    "id": "game-apex-legends",
+    "category": "Игровая аббревиатура",
+    "fact": "Apex Legends — королевская битва от Respawn/EA",
+    "triggers": ["apex legends", "apex", "апекс", "апекс легендс", "apexlegends", "эйпекс"]
+  },
+  {
+    "id": "game-overwatch-2",
+    "category": "Игровая аббревиатура",
+    "fact": "Overwatch 2 — командный геройский шутер от Blizzard",
+    "triggers": ["overwatch 2", "overwatch2", "ow2", "овервотч 2", "овервотч", "ow 2"]
+  },
+  {
+    "id": "game-rocket-league",
+    "category": "Игровая аббревиатура",
+    "fact": "Rocket League — футбол на машинах от Psyonix",
+    "triggers": ["rocket league", "рокет лига", "рокет", "rl", "rocketleague", "ракета лига"]
+  },
+  {
+    "id": "game-gta-v",
+    "category": "Игровая аббревиатура",
+    "fact": "GTA V — Grand Theft Auto V, экшен от Rockstar",
+    "triggers": ["gta v", "gta5", "gta 5", "гта 5", "гта", "grand theft auto v", "grand theft auto 5"]
+  },
+  {
+    "id": "game-gta-online",
+    "category": "Игровая аббревиатура",
+    "fact": "GTA Online — онлайн-режим во вселенной GTA V",
+    "triggers": ["gta online", "гта онлайн", "gtao", "гтао", "gta onl", "гта онлаин"]
+  },
+  {
+    "id": "game-call-of-duty",
+    "category": "Игровая аббревиатура",
+    "fact": "CoD — Call of Duty, серия шутеров",
+    "triggers": ["cod", "coD", "call of duty", "кол оф дьюти", "колда", "код", "кал оф дюти"]
+  },
+  {
+    "id": "game-cod-mobile",
+    "category": "Игровая аббревиатура",
+    "fact": "CoD Mobile — Call of Duty: Mobile, мобильный шутер",
+    "triggers": ["cod mobile", "call of duty mobile", "код мобайл", "колда мобайл", "codm", "co dm"]
+  },
+  {
+    "id": "game-cod-warzone",
+    "category": "Игровая аббревиатура",
+    "fact": "Warzone — королевская битва во вселенной Call of Duty",
+    "triggers": ["warzone", "cod warzone", "call of duty warzone", "варзон", "варзона", "ворзон"]
+  },
+  {
+    "id": "game-mobile-legends-adventure",
+    "category": "Игровая аббревиатура",
+    "fact": "MLA — Mobile Legends: Adventure, idle RPG во вселенной Mobile Legends",
+    "triggers": ["mla", "mobile legends adventure", "мла", "мобайл легендс адвенчур", "mobile legends: adventure"]
+  },
+  {
+    "id": "game-among-us",
+    "category": "Игровая аббревиатура",
+    "fact": "Among Us — кооперативная игра про предателя",
+    "triggers": ["among us", "амонг ас", "амонг", "amongus", "амонгус"]
+  },
+  {
+    "id": "game-fall-guys",
+    "category": "Игровая аббревиатура",
+    "fact": "Fall Guys — party battle royale с испытаниями",
+    "triggers": ["fall guys", "фол гайс", "фолл гайс", "fallguys", "fg"]
+  },
+  {
+    "id": "game-fifa-ea-fc",
+    "category": "Игровая аббревиатура",
+    "fact": "FIFA / EA SPORTS FC — футбольный симулятор (серия EA)",
+    "triggers": ["fifa", "фифа", "ea fc", "eafc", "ea sports fc", "фк", "фс", "fc 24", "fc24"]
+  },
+  {
+    "id": "game-efootball",
+    "category": "Игровая аббревиатура",
+    "fact": "eFootball — футбольный симулятор от Konami (ранее PES)",
+    "triggers": ["efootball", "e football", "ифутбол", "pes", "пес", "pro evolution soccer", "про эволюшн соккер"]
+  },
+  {
+    "id": "game-world-of-warcraft",
+    "category": "Игровая аббревиатура",
+    "fact": "WoW — World of Warcraft, MMORPG от Blizzard",
+    "triggers": ["wow", "world of warcraft", "варкрафт", "воw", "вов", "ворлд оф варкрафт", "worldofwarcraft"]
+  },
+  {
+    "id": "game-hearthstone",
+    "category": "Игровая аббревиатура",
+    "fact": "HS — Hearthstone, карточная игра от Blizzard",
+    "triggers": ["hearthstone", "хартстоун", "хс", "hs", "heartstone", "хсстоун"]
+  },
+  {
+    "id": "game-diablo-4",
+    "category": "Игровая аббревиатура",
+    "fact": "D4 — Diablo IV, action RPG от Blizzard",
+    "triggers": ["diablo 4", "diablo iv", "дьябло 4", "диабло 4", "d4", "d iv"]
+  },
+  {
+    "id": "game-path-of-exile",
+    "category": "Игровая аббревиатура",
+    "fact": "PoE — Path of Exile, action RPG от Grinding Gear Games",
+    "triggers": ["path of exile", "poe", "поe", "пое", "пас оф экзайл", "pathofexile"]
+  },
+  {
+    "id": "game-terraria",
+    "category": "Игровая аббревиатура",
+    "fact": "Terraria — 2D песочница про исследование и крафт",
+    "triggers": ["terraria", "террария", "терария", "тераррия", "terraria game"]
+  },
+  {
+    "id": "game-stardew-valley",
+    "category": "Игровая аббревиатура",
+    "fact": "Stardew Valley — симулятор фермы и жизни",
+    "triggers": ["stardew valley", "старду валли", "старду", "stardew", "стардиу", "stardewvalley"]
+  },
+  {
+    "id": "game-the-sims-4",
+    "category": "Игровая аббревиатура",
+    "fact": "The Sims 4 — симулятор жизни от EA",
+    "triggers": ["the sims 4", "sims 4", "симс 4", "симсы 4", "ts4", "симс"]
+  },
+  {
+    "id": "game-elden-ring",
+    "category": "Игровая аббревиатура",
+    "fact": "Elden Ring — action RPG от FromSoftware",
+    "triggers": ["elden ring", "элден ринг", "елден ринг", "эр", "eldenring"]
+  },
+  {
+    "id": "game-dark-souls",
+    "category": "Игровая аббревиатура",
+    "fact": "Dark Souls — серия хардкорных action RPG от FromSoftware",
+    "triggers": ["dark souls", "дарк соулс", "дарк", "ds", "дс", "dark souls 3", "ds3", "дс3"]
+  },
+  {
+    "id": "game-sekiro",
+    "category": "Игровая аббревиатура",
+    "fact": "Sekiro — Sekiro: Shadows Die Twice, экшен от FromSoftware",
+    "triggers": ["sekiro", "секиро", "sekiro shadows die twice", "shadows die twice", "сдт"]
+  },
+  {
+    "id": "game-cyberpunk-2077",
+    "category": "Игровая аббревиатура",
+    "fact": "Cyberpunk 2077 — RPG в киберпанк-сеттинге от CD PROJEKT RED",
+    "triggers": ["cyberpunk 2077", "cyberpunk", "киберпанк 2077", "киберпанк", "cp2077", "цп 2077"]
+  },
+  {
+    "id": "game-the-witcher-3",
+    "category": "Игровая аббревиатура",
+    "fact": "The Witcher 3 — сюжетная RPG от CD PROJEKT RED",
+    "triggers": ["witcher 3", "the witcher 3", "ведьмак 3", "ведьмак", "tw3", "в3"]
+  },
+  {
+    "id": "game-skyrim",
+    "category": "Игровая аббревиатура",
+    "fact": "Skyrim — The Elder Scrolls V: Skyrim, RPG от Bethesda",
+    "triggers": ["skyrim", "скайрим", "tes v", "tes5", "elder scrolls v", "эс5", "тес 5"]
+  },
+  {
+    "id": "game-rdr2",
+    "category": "Игровая аббревиатура",
+    "fact": "RDR2 — Red Dead Redemption 2, вестерн-экшен от Rockstar",
+    "triggers": ["rdr2", "red dead redemption 2", "ред дед 2", "рдр2", "rdr 2", "reddeadredemption2"]
+  },
+  {
+    "id": "game-honkai-impact-3rd",
+    "category": "Игровая аббревиатура",
+    "fact": "HI3 — Honkai Impact 3rd, action RPG от HoYoverse",
+    "triggers": ["honkai impact 3rd", "honkai impact", "hi3", "хи3", "хонкай импакт", "хонкай импакт 3"]
+  },
+  {
+    "id": "game-zenless-zone-zero",
+    "category": "Игровая аббревиатура",
+    "fact": "ZZZ — Zenless Zone Zero, action RPG от HoYoverse",
+    "triggers": ["zenless zone zero", "zzz", "ззз", "зенлесс зон зеро", "зенлес", "zenless"]
+  },
+  {
+    "id": "game-identity-v",
+    "category": "Игровая аббревиатура",
+    "fact": "Identity V — асимметричный хоррор-экшен от NetEase",
+    "triggers": ["identity v", "айдентиити 5", "айденти v", "identityv", "идентиити", "ив"]
+  },
+  {
+    "id": "game-arena-of-valor",
+    "category": "Игровая аббревиатура",
+    "fact": "AoV — Arena of Valor, мобильная MOBA",
+    "triggers": ["arena of valor", "aov", "аов", "арена оф валор", "арена валор", "a o v"]
+  },
+  {
+    "id": "game-call-of-duty-modern-warfare",
+    "category": "Игровая аббревиатура",
+    "fact": "MW — Modern Warfare, подсерия Call of Duty",
+    "triggers": ["mw", "modern warfare", "мв", "модерн варфер", "модерн варфейр", "cod mw"]
+  },
+  {
+    "id": "game-battlefield",
+    "category": "Игровая аббревиатура",
+    "fact": "BF — Battlefield, серия шутеров",
+    "triggers": ["battlefield", "bf", "бф", "батлфилд", "battle field", "bf 2042", "bf2042"]
+  },
+  {
+    "id": "game-rainbow-six-siege",
+    "category": "Игровая аббревиатура",
+    "fact": "R6S — Tom Clancy’s Rainbow Six Siege, тактический шутер",
+    "triggers": ["rainbow six siege", "r6s", "р6с", "rainbowsixsiege", "рейнбоу 6", "радуга 6"]
+  },
+  {
+    "id": "game-garrys-mod",
+    "category": "Игровая аббревиатура",
+    "fact": "GMod — Garry’s Mod, песочница на Source",
+    "triggers": ["gmod", "g mod", "garry's mod", "гаррис мод", "гаррис", "гмод"]
+  },
+  {
+    "id": "game-team-fortress-2",
+    "category": "Игровая аббревиатура",
+    "fact": "TF2 — Team Fortress 2, командный шутер от Valve",
+    "triggers": ["tf2", "team fortress 2", "тим фортресс 2", "тф2", "teamfortress2"]
+  },
+  {
+    "id": "game-halo",
+    "category": "Игровая аббревиатура",
+    "fact": "Halo — серия шутеров от Microsoft",
+    "triggers": ["halo", "хейло", "хало", "halo infinite", "хало инфинит"]
+  },
+  {
+    "id": "game-warframe",
+    "category": "Игровая аббревиатура",
+    "fact": "Warframe — кооперативный экшен про ниндзя в космосе",
+    "triggers": ["warframe", "варфрейм", "варфрейм", "wf", "вф", "war frame"]
+  },
+  {
+    "id": "game-destiny-2",
+    "category": "Игровая аббревиатура",
+    "fact": "Destiny 2 — онлайн-шутер/лоутер от Bungie",
+    "triggers": ["destiny 2", "destiny2", "дестини 2", "дестени 2", "d2", "д2 destiny"]
+  },
+  {
+    "id": "game-escape-from-tarkov",
+    "category": "Игровая аббревиатура",
+    "fact": "EFT — Escape from Tarkov, хардкорный лутер-шутер",
+    "triggers": ["escape from tarkov", "tarkov", "тарков", "eft", "ефт", "эфт", "эскейп фром тарков"]
+  },
+  {
+    "id": "game-stalker",
+    "category": "Игровая аббревиатура",
+    "fact": "S.T.A.L.K.E.R. — серия шутеров в Зоне",
+    "triggers": ["stalker", "сталкер", "s.t.a.l.k.e.r", "stalker 2", "сталкер 2", "сталк"]
+  },
+  {
+    "id": "game-world-of-tanks",
+    "category": "Игровая аббревиатура",
+    "fact": "WoT — World of Tanks, танковый онлайн-экшен",
+    "triggers": ["world of tanks", "wot", "вот", "ворлд оф танкс", "танки", "worldoftanks"]
+  },
+  {
+    "id": "game-world-of-tanks-blitz",
+    "category": "Игровая аббревиатура",
+    "fact": "WoTB — World of Tanks Blitz, мобильная/портативная версия WoT",
+    "triggers": ["world of tanks blitz", "wotb", "вотб", "танки блиц", "wot blitz", "ворлд оф танкс блиц"]
+  },
+  {
+    "id": "game-war-thunder",
+    "category": "Игровая аббревиатура",
+    "fact": "War Thunder — онлайн-экшен про технику",
+    "triggers": ["war thunder", "вар тандер", "вартандер", "wt", "вт", "war-thunder"]
+  },
+  {
+    "id": "game-mortal-kombat",
+    "category": "Игровая аббревиатура",
+    "fact": "MK — Mortal Kombat, серия файтингов",
+    "triggers": ["mortal kombat", "mk", "мк", "мортал комбат", "мортал", "mk11", "mk 11"]
+  },
+  {
+    "id": "game-tekken",
+    "category": "Игровая аббревиатура",
+    "fact": "Tekken — серия файтингов от Bandai Namco",
+    "triggers": ["tekken", "теккен", "tekken 8", "теккен 8", "tk"]
+  },
+  {
+    "id": "game-god-of-war",
+    "category": "Игровая аббревиатура",
+    "fact": "GoW — God of War, серия экшенов",
+    "triggers": ["god of war", "gow", "гоу", "год оф вар", "бог войны", "go w"]
+  },
+  {
+    "id": "game-last-of-us",
+    "category": "Игровая аббревиатура",
+    "fact": "TLoU — The Last of Us, сюжетный экшен",
+    "triggers": ["the last of us", "tlou", "тлоу", "ласт оф ас", "ласт оф ус", "thelastofus"]
+  },
+  {
+    "id": "game-honkai-star-rail-abbr",
+    "category": "Игровая аббревиатура",
+    "fact": "HSR — сокращение от Honkai: Star Rail",
+    "triggers": ["hsr", "хср", "h s r", "хонкай ср", "стар рейл hsr"]
+  },
+  {
+    "id": "game-genshin-abbr",
+    "category": "Игровая аббревиатура",
+    "fact": "GI — сокращение от Genshin Impact",
+    "triggers": ["gi", "джи ай", "гй", "геншин gi", "genshin gi"]
+  },
+  {
+    "id": "game-metro",
+    "category": "Игровая аббревиатура",
+    "fact": "Metro — серия шутеров по вселенной «Метро»",
+    "triggers": ["metro", "метро", "metro exodus", "метро исход", "metro 2033", "метро 2033"]
+  },
+  {
+    "id": "game-hades",
+    "category": "Игровая аббревиатура",
+    "fact": "Hades — roguelike экшен от Supergiant Games",
+    "triggers": ["hades", "хадес", "хадес игра", "hades game"]
+  },
+  {
+    "id": "game-hollow-knight",
+    "category": "Игровая аббревиатура",
+    "fact": "Hollow Knight — метроидвания",
+    "triggers": ["hollow knight", "холлоу найт", "холоу найт", "hk", "хк", "hollowknight"]
+  },
+  {
+    "id": "game-dead-by-daylight",
+    "category": "Игровая аббревиатура",
+    "fact": "DbD — Dead by Daylight, асимметричный хоррор",
+    "triggers": ["dead by daylight", "dbd", "дбд", "дед бай дейлайт", "дейд бай дейлайт", "deadbydaylight"]
+  },
+  {
+    "id": "game-geometry-dash",
+    "category": "Игровая аббревиатура",
+    "fact": "GD — Geometry Dash, ритм-платформер",
+    "triggers": ["geometry dash", "gd", "гд", "геометри дэш", "геометри деш", "geometrydash"]
+  },
+  {
+    "id": "game-pokemon-go",
+    "category": "Игровая аббревиатура",
+    "fact": "Pokémon GO — мобильная AR-игра про покемонов",
+    "triggers": ["pokemon go", "pokémon go", "покемон го", "покемоны го", "pogo", "по-го"]
   },
   {
     "id": "currency-fifa-points",
     "category": "Игровая валюта",
-    "text": "FIFA Points — внутриигровая валюта Ultimate Team",
-    "tags": [
+    "fact": "FIFA Points — внутриигровая валюта Ultimate Team",
+    "triggers": [
       "fifa points",
       "поинты fifa",
       "донат fifa",
@@ -27507,8 +27765,8 @@
   {
     "id": "currency-gta-shark-cards",
     "category": "Игровая валюта",
-    "text": "GTA$ — внутриигровая валюта GTA Online",
-    "tags": [
+    "fact": "GTA$ — внутриигровая валюта GTA Online",
+    "triggers": [
       "gta деньги",
       "gta dollars",
       "gta online деньги",
@@ -27518,73 +27776,10 @@
     ]
   },
   {
-    "id": "currency-overwatch-coins",
-    "category": "Игровая валюта",
-    "text": "Overwatch Coins — премиум валюта Overwatch 2",
-    "tags": [
-      "overwatch coins",
-      "монеты overwatch",
-      "донат overwatch",
-      "валюта overwatch 2",
-      "коины overwatch"
-    ]
-  },
-  {
-    "id": "currency-steam-wallet",
-    "category": "Игровая валюта",
-    "text": "Steam Wallet — баланс кошелька Steam",
-    "tags": [
-      "steam wallet",
-      "стим кошелек",
-      "баланс steam",
-      "деньги steam",
-      "пополнить steam",
-      "валюта steam"
-    ]
-  },
-  {
-    "id": "currency-playstation-wallet",
-    "category": "Игровая валюта",
-    "text": "PlayStation Wallet — баланс кошелька PlayStation Store",
-    "tags": [
-      "ps wallet",
-      "кошелек playstation",
-      "баланс psn",
-      "деньги playstation",
-      "донат playstation",
-      "валюта psn"
-    ]
-  },
-  {
-    "id": "currency-nintendo-eshop",
-    "category": "Игровая валюта",
-    "text": "Nintendo eShop Balance — баланс магазина Nintendo",
-    "tags": [
-      "eshop баланс",
-      "баланс nintendo",
-      "деньги nintendo",
-      "донат nintendo",
-      "валюта nintendo",
-      "eshop деньги"
-    ]
-  },
-  {
-    "id": "currency-minecraft-coins",
-    "category": "Игровая валюта",
-    "text": "Minecraft Coins — валюта Minecraft Marketplace",
-    "tags": [
-      "minecraft coins",
-      "коины майнкрафт",
-      "монеты minecraft",
-      "донат minecraft",
-      "валюта minecraft"
-    ]
-  },
-  {
     "id": "currency-ark-crystals",
     "category": "Игровая валюта",
-    "text": "Crystals — премиум валюта Lost Ark",
-    "tags": [
+    "fact": "Crystals — премиум валюта Lost Ark",
+    "triggers": [
       "lost ark crystals",
       "кристаллы lost ark",
       "донат lost ark",
@@ -27593,34 +27788,10 @@
     ]
   },
   {
-    "id": "currency-warframe-platinum",
-    "category": "Игровая валюта",
-    "text": "Platinum — премиум валюта Warframe",
-    "tags": [
-      "warframe platinum",
-      "платина варфрейм",
-      "платина warframe",
-      "донат warframe",
-      "валюта warframe"
-    ]
-  },
-  {
-    "id": "currency-rainbow-six-credits",
-    "category": "Игровая валюта",
-    "text": "R6 Credits — премиум валюта Rainbow Six Siege",
-    "tags": [
-      "r6 credits",
-      "кредиты r6",
-      "донат rainbow six",
-      "валюта rainbow six",
-      "credits siege"
-    ]
-  },
-  {
     "id": "currency-arknights-originium",
     "category": "Игровая валюта",
-    "text": "Originium — премиум валюта Arknights",
-    "tags": [
+    "fact": "Originium — премиум валюта Arknights",
+    "triggers": [
       "originium",
       "оригиниум",
       "донат arknights",
@@ -27631,714 +27802,275 @@
   {
     "id": "currency-uc-pubg",
     "category": "Игровая валюта",
-    "text": "UC — внутриигровая валюта PUBG Mobile",
-    "tags": ["uc", "юси", "юс", "пабг юси", "uc pubg", "валюта pubg", "донат pubg", "монеты pubg"]
+    "fact": "UC — внутриигровая валюта PUBG Mobile",
+    "triggers": ["uc", "юси", "юс", "пабг юси", "uc pubg", "валюта pubg", "донат pubg", "монеты pubg"]
   },
   {
     "id": "currency-diamonds-mlbb",
     "category": "Игровая валюта",
-    "text": "Diamonds — внутриигровая валюта Mobile Legends: Bang Bang",
-    "tags": ["diamonds mlbb", "алмазы млбб", "алмазы mobile legends", "diamonds mobile legends", "диаманты млбб", "донат млбб", "кристаллы млбб"]
+    "fact": "Diamonds — внутриигровая валюта Mobile Legends: Bang Bang",
+    "triggers": ["diamonds mlbb", "алмазы млбб", "алмазы mobile legends", "diamonds mobile legends", "диаманты млбб", "донат млбб", "кристаллы млбб"]
   },
   {
     "id": "currency-genesis-crystals",
     "category": "Игровая валюта",
-    "text": "Genesis Crystals — премиум валюта Genshin Impact",
-    "tags": ["genesis crystals", "кристаллы генезиса", "генезис кристаллы", "донат геншин", "валюта genshin", "кристаллы геншин"]
+    "fact": "Genesis Crystals — премиум валюта Genshin Impact",
+    "triggers": ["genesis crystals", "кристаллы генезиса", "генезис кристаллы", "донат геншин", "валюта genshin", "кристаллы геншин"]
   },
   {
     "id": "currency-stellar-jade",
     "category": "Игровая валюта",
-    "text": "Stellar Jade — основная валюта Honkai: Star Rail",
-    "tags": ["stellar jade", "стеллар джейд", "звездный нефрит", "нефрит хонкай", "валюта honkai", "донат hsr"]
+    "fact": "Stellar Jade — основная валюта Honkai: Star Rail",
+    "triggers": ["stellar jade", "стеллар джейд", "звездный нефрит", "нефрит хонкай", "валюта honkai", "донат hsr"]
   },
   {
     "id": "currency-diamonds-free-fire",
     "category": "Игровая валюта",
-    "text": "Diamonds — премиум валюта Free Fire",
-    "tags": ["diamonds free fire", "алмазы фри фаер", "алмазы free fire", "донат free fire", "валюта free fire"]
+    "fact": "Diamonds — премиум валюта Free Fire",
+    "triggers": ["diamonds free fire", "алмазы фри фаер", "алмазы free fire", "донат free fire", "валюта free fire"]
   },
   {
     "id": "currency-robux",
     "category": "Игровая валюта",
-    "text": "Robux — внутриигровая валюта Roblox",
-    "tags": ["robux", "робуксы", "робаксы", "валюта roblox", "донат roblox", "robux купить"]
+    "fact": "Robux — внутриигровая валюта Roblox",
+    "triggers": ["robux", "робуксы", "робаксы", "валюта roblox", "донат roblox", "robux купить"]
   },
   {
     "id": "currency-gems-brawl-stars",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Brawl Stars",
-    "tags": ["gems brawl stars", "гемы бравл", "кристаллы бравл старс", "донат бравл", "валюта brawl stars"]
+    "fact": "Gems — премиум валюта Brawl Stars",
+    "triggers": ["gems brawl stars", "гемы бравл", "кристаллы бравл старс", "донат бравл", "валюта brawl stars"]
   },
   {
     "id": "currency-gems-clash",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Clash of Clans и Clash Royale",
-    "tags": ["gems coc", "gems clash royale", "гемы клаш", "гемы clash of clans", "алмазы клаш", "донат клаш"]
+    "fact": "Gems — премиум валюта Clash of Clans и Clash Royale",
+    "triggers": ["gems coc", "gems clash royale", "гемы клаш", "гемы clash of clans", "алмазы клаш", "донат клаш"]
   },
   {
     "id": "currency-wild-cores",
     "category": "Игровая валюта",
-    "text": "Wild Cores — премиум валюта League of Legends: Wild Rift",
-    "tags": ["wild cores", "вайлд коры", "wild rift cores", "донат wild rift", "валюта вайлд рифт"]
+    "fact": "Wild Cores — премиум валюта League of Legends: Wild Rift",
+    "triggers": ["wild cores", "вайлд коры", "wild rift cores", "донат wild rift", "валюта вайлд рифт"]
   },
   {
     "id": "currency-cod-points",
     "category": "Игровая валюта",
-    "text": "CP (COD Points) — внутриигровая валюта Call of Duty Mobile",
-    "tags": ["cp cod", "cod points", "код поинты", "донат cod mobile", "валюта cod"]
+    "fact": "CP (COD Points) — внутриигровая валюта Call of Duty Mobile",
+    "triggers": ["cp cod", "cod points", "код поинты", "донат cod mobile", "валюта cod"]
   },
 
   {
     "id": "currency-v-bucks",
     "category": "Игровая валюта",
-    "text": "V-Bucks — внутриигровая валюта Fortnite",
-    "tags": ["v bucks", "v-bucks", "vbucks", "в баксы", "вбаксы", "донат fortnite", "валюта fortnite"]
+    "fact": "V-Bucks — внутриигровая валюта Fortnite",
+    "triggers": ["v bucks", "v-bucks", "vbucks", "в баксы", "вбаксы", "донат fortnite", "валюта fortnite"]
   },
   {
     "id": "currency-valorant-points",
     "category": "Игровая валюта",
-    "text": "Valorant Points (VP) — премиум валюта Valorant",
-    "tags": ["valorant points", "vp valorant", "валарант поинты", "вп валарант", "донат valorant", "валюта valorant"]
+    "fact": "Valorant Points (VP) — премиум валюта Valorant",
+    "triggers": ["valorant points", "vp valorant", "валарант поинты", "вп валарант", "донат valorant", "валюта valorant"]
   },
   {
     "id": "currency-riot-points",
     "category": "Игровая валюта",
-    "text": "Riot Points (RP) — премиум валюта League of Legends",
-    "tags": ["riot points", "rp lol", "рп лол", "поинты лол", "донат lol", "валюта league of legends"]
+    "fact": "Riot Points (RP) — премиум валюта League of Legends",
+    "triggers": ["riot points", "rp lol", "рп лол", "поинты лол", "донат lol", "валюта league of legends"]
   },
   {
     "id": "currency-apex-coins",
     "category": "Игровая валюта",
-    "text": "Apex Coins — премиум валюта Apex Legends",
-    "tags": ["apex coins", "апекс коинс", "монеты apex", "донат apex legends", "валюта apex legends"]
+    "fact": "Apex Coins — премиум валюта Apex Legends",
+    "triggers": ["apex coins", "апекс коинс", "монеты apex", "донат apex legends", "валюта apex legends"]
   },
   {
     "id": "currency-fc-points",
     "category": "Игровая валюта",
-    "text": "FC Points (FIFA/EA SPORTS FC Points) — валюта Ultimate Team",
-    "tags": ["fc points", "fifa points", "поинты fifa", "поинты fc", "донат ultimate team", "валюта ea fc"]
+    "fact": "FC Points (FIFA/EA SPORTS FC Points) — валюта Ultimate Team",
+    "triggers": ["fc points", "fifa points", "поинты fifa", "поинты fc", "донат ultimate team", "валюта ea fc"]
   },
   {
     "id": "currency-gta-online-gta-dollars",
     "category": "Игровая валюта",
-    "text": "GTA$ — внутриигровая валюта GTA Online",
-    "tags": ["gta$", "gta dollars", "деньги gta online", "gta online деньги", "шарк карты", "donat gta online", "донат gta online"]
+    "fact": "GTA$ — внутриигровая валюта GTA Online",
+    "triggers": ["gta$", "gta dollars", "деньги gta online", "gta online деньги", "шарк карты", "donat gta online", "донат gta online"]
   },
   {
     "id": "currency-destiny-2-silver",
     "category": "Игровая валюта",
-    "text": "Silver — премиум валюта Destiny 2",
-    "tags": ["destiny 2 silver", "silver destiny", "серебро destiny", "донат destiny 2", "валюта destiny 2"]
+    "fact": "Silver — премиум валюта Destiny 2",
+    "triggers": ["destiny 2 silver", "silver destiny", "серебро destiny", "донат destiny 2", "валюта destiny 2"]
   },
   {
     "id": "currency-rocket-league-credits",
     "category": "Игровая валюта",
-    "text": "Credits — премиум валюта Rocket League",
-    "tags": ["rocket league credits", "credits rl", "кредиты рокет лиг", "донат rocket league", "валюта rocket league"]
+    "fact": "Credits — премиум валюта Rocket League",
+    "triggers": ["rocket league credits", "credits rl", "кредиты рокет лиг", "донат rocket league", "валюта rocket league"]
   },
   {
     "id": "currency-overwatch-coins",
     "category": "Игровая валюта",
-    "text": "Overwatch Coins — премиум валюта Overwatch 2",
-    "tags": ["overwatch coins", "коины overwatch", "монеты overwatch 2", "донат overwatch", "валюта overwatch 2"]
+    "fact": "Overwatch Coins — премиум валюта Overwatch 2",
+    "triggers": ["overwatch coins", "коины overwatch", "монеты overwatch 2", "донат overwatch", "валюта overwatch 2"]
   },
   {
     "id": "currency-pokemon-go-pokecoins",
     "category": "Игровая валюта",
-    "text": "PokéCoins — премиум валюта Pokémon GO",
-    "tags": ["pokecoins", "pokécoins", "покекоины", "поке коинс", "монеты pokemon go", "донат pokemon go", "валюта pokemon go"]
+    "fact": "PokéCoins — премиум валюта Pokémon GO",
+    "triggers": ["pokecoins", "pokécoins", "покекоины", "поке коинс", "монеты pokemon go", "донат pokemon go", "валюта pokemon go"]
   },
   {
     "id": "currency-hearthstone-runestones",
     "category": "Игровая валюта",
-    "text": "Runestones — премиум валюта Hearthstone",
-    "tags": ["runestones", "рунстоуны", "рунстоуны hearthstone", "донат hearthstone", "валюта hearthstone", "камни hearthstone"]
+    "fact": "Runestones — премиум валюта Hearthstone",
+    "triggers": ["runestones", "рунстоуны", "рунстоуны hearthstone", "донат hearthstone", "валюта hearthstone", "камни hearthstone"]
   },
   {
     "id": "currency-diablo-immortal-eternal-orbs",
     "category": "Игровая валюта",
-    "text": "Eternal Orbs — премиум валюта Diablo Immortal",
-    "tags": ["eternal orbs", "орбы diablo immortal", "вечные сферы", "донат diablo immortal", "валюта diablo immortal"]
+    "fact": "Eternal Orbs — премиум валюта Diablo Immortal",
+    "triggers": ["eternal orbs", "орбы diablo immortal", "вечные сферы", "донат diablo immortal", "валюта diablo immortal"]
   },
 
   {
     "id": "currency-warframe-platinum",
     "category": "Игровая валюта",
-    "text": "Platinum — премиум валюта Warframe",
-    "tags": ["warframe platinum", "платина warframe", "платина варфрейм", "донат warframe", "валюта warframe"]
+    "fact": "Platinum — премиум валюта Warframe",
+    "triggers": ["warframe platinum", "платина warframe", "платина варфрейм", "донат warframe", "валюта warframe"]
   },
   {
     "id": "currency-path-of-exile-points",
     "category": "Игровая валюта",
-    "text": "Points — премиум валюта Path of Exile (для MTX)",
-    "tags": ["poe points", "path of exile points", "поинты poe", "донат path of exile", "валюта poe", "mtx poe"]
+    "fact": "Points — премиум валюта Path of Exile (для MTX)",
+    "triggers": ["poe points", "path of exile points", "поинты poe", "донат path of exile", "валюта poe", "mtx poe"]
   },
   {
     "id": "currency-war-thunder-golden-eagles",
     "category": "Игровая валюта",
-    "text": "Golden Eagles — премиум валюта War Thunder",
-    "tags": ["golden eagles", "голден иглс", "золотые орлы", "донат war thunder", "валюта war thunder", "ge war thunder"]
+    "fact": "Golden Eagles — премиум валюта War Thunder",
+    "triggers": ["golden eagles", "голден иглс", "золотые орлы", "донат war thunder", "валюта war thunder", "ge war thunder"]
   },
   {
     "id": "currency-world-of-tanks-gold",
     "category": "Игровая валюта",
-    "text": "Gold — премиум валюта World of Tanks",
-    "tags": ["wot gold", "world of tanks gold", "золото wot", "донат wot", "валюта world of tanks", "голд wot"]
+    "fact": "Gold — премиум валюта World of Tanks",
+    "triggers": ["wot gold", "world of tanks gold", "золото wot", "донат wot", "валюта world of tanks", "голд wot"]
   },
   {
     "id": "currency-world-of-warships-doubloons",
     "category": "Игровая валюта",
-    "text": "Doubloons — премиум валюта World of Warships",
-    "tags": ["doubloons", "дублоны", "дублоны wows", "донат world of warships", "валюта wows", "wows doubloons"]
+    "fact": "Doubloons — премиум валюта World of Warships",
+    "triggers": ["doubloons", "дублоны", "дублоны wows", "донат world of warships", "валюта wows", "wows doubloons"]
   },
   {
     "id": "currency-rainbow-six-credits",
     "category": "Игровая валюта",
-    "text": "R6 Credits — премиум валюта Rainbow Six Siege",
-    "tags": ["r6 credits", "кредиты r6", "донат rainbow six siege", "валюта siege", "credits siege", "r6 кредиты"]
+    "fact": "R6 Credits — премиум валюта Rainbow Six Siege",
+    "triggers": ["r6 credits", "кредиты r6", "донат rainbow six siege", "валюта siege", "credits siege", "r6 кредиты"]
   },
   {
     "id": "currency-smite-gems",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта SMITE",
-    "tags": ["smite gems", "гемы smite", "донат smite", "валюта smite", "gems hi-rez"]
+    "fact": "Gems — премиум валюта SMITE",
+    "triggers": ["smite gems", "гемы smite", "донат smite", "валюта smite", "gems hi-rez"]
   },
   {
     "id": "currency-paladins-crystals",
     "category": "Игровая валюта",
-    "text": "Crystals — премиум валюта Paladins",
-    "tags": ["paladins crystals", "кристаллы paladins", "донат paladins", "валюта paladins", "crystals hi-rez"]
+    "fact": "Crystals — премиум валюта Paladins",
+    "triggers": ["paladins crystals", "кристаллы paladins", "донат paladins", "валюта paladins", "crystals hi-rez"]
   },
 
   {
     "id": "currency-minecraft-coins",
     "category": "Игровая валюта",
-    "text": "Minecoins (Minecraft Coins) — валюта Minecraft Marketplace",
-    "tags": ["minecoins", "minecraft coins", "коины майнкрафт", "монеты minecraft", "донат minecraft", "валюта minecraft marketplace"]
+    "fact": "Minecoins (Minecraft Coins) — валюта Minecraft Marketplace",
+    "triggers": ["minecoins", "minecraft coins", "коины майнкрафт", "монеты minecraft", "донат minecraft", "валюта minecraft marketplace"]
   },
   {
     "id": "currency-hay-day-diamonds",
     "category": "Игровая валюта",
-    "text": "Diamonds — премиум валюта Hay Day",
-    "tags": ["hay day diamonds", "алмазы hay day", "донат hay day", "валюта hay day", "диаманты hay day"]
+    "fact": "Diamonds — премиум валюта Hay Day",
+    "triggers": ["hay day diamonds", "алмазы hay day", "донат hay day", "валюта hay day", "диаманты hay day"]
   },
   {
     "id": "currency-boom-beach-diamonds",
     "category": "Игровая валюта",
-    "text": "Diamonds — премиум валюта Boom Beach",
-    "tags": ["boom beach diamonds", "алмазы boom beach", "донат boom beach", "валюта boom beach"]
+    "fact": "Diamonds — премиум валюта Boom Beach",
+    "triggers": ["boom beach diamonds", "алмазы boom beach", "донат boom beach", "валюта boom beach"]
   },
   {
     "id": "currency-township-t-cash",
     "category": "Игровая валюта",
-    "text": "T-Cash — премиум валюта Township",
-    "tags": ["t-cash", "tcash", "т кэш", "ти кэш", "донат township", "валюта township"]
+    "fact": "T-Cash — премиум валюта Township",
+    "triggers": ["t-cash", "tcash", "т кэш", "ти кэш", "донат township", "валюта township"]
   },
   {
     "id": "currency-raid-shadow-legends-gems",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта RAID: Shadow Legends",
-    "tags": ["raid gems", "gems raid", "гемы raid", "донат raid shadow legends", "валюта raid", "кристаллы raid"]
+    "fact": "Gems — премиум валюта RAID: Shadow Legends",
+    "triggers": ["raid gems", "gems raid", "гемы raid", "донат raid shadow legends", "валюта raid", "кристаллы raid"]
   },
   {
     "id": "currency-afk-arena-diamonds",
     "category": "Игровая валюта",
-    "text": "Diamonds — премиум валюта AFK Arena",
-    "tags": ["afk arena diamonds", "алмазы afk arena", "донат afk arena", "валюта afk arena", "диаманты afk"]
+    "fact": "Diamonds — премиум валюта AFK Arena",
+    "triggers": ["afk arena diamonds", "алмазы afk arena", "донат afk arena", "валюта afk arena", "диаманты afk"]
   },
   {
     "id": "currency-summoners-war-crystals",
     "category": "Игровая валюта",
-    "text": "Crystals — премиум валюта Summoners War",
-    "tags": ["summoners war crystals", "кристаллы summoners war", "донат summoners war", "валюта summoners war", "суммонерс вар кристаллы"]
+    "fact": "Crystals — премиум валюта Summoners War",
+    "triggers": ["summoners war crystals", "кристаллы summoners war", "донат summoners war", "валюта summoners war", "суммонерс вар кристаллы"]
   },
   {
     "id": "currency-rise-of-kingdoms-gems",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Rise of Kingdoms",
-    "tags": ["rise of kingdoms gems", "rok gems", "гемы rok", "донат rise of kingdoms", "валюта rok"]
+    "fact": "Gems — премиум валюта Rise of Kingdoms",
+    "triggers": ["rise of kingdoms gems", "rok gems", "гемы rok", "донат rise of kingdoms", "валюта rok"]
   },
   {
     "id": "currency-lords-mobile-gems",
     "category": "Игровая валюта",
-    "text": "Gems — премиум валюта Lords Mobile",
-    "tags": ["lords mobile gems", "гемы lords mobile", "донат lords mobile", "валюта lords mobile"]
+    "fact": "Gems — премиум валюта Lords Mobile",
+    "triggers": ["lords mobile gems", "гемы lords mobile", "донат lords mobile", "валюта lords mobile"]
   },
   {
     "id": "currency-candy-crush-gold-bars",
     "category": "Игровая валюта",
-    "text": "Gold Bars — премиум валюта Candy Crush Saga",
-    "tags": ["candy crush gold bars", "gold bars candy crush", "золотые слитки candy crush", "донат candy crush", "валюта candy crush"]
+    "fact": "Gold Bars — премиум валюта Candy Crush Saga",
+    "triggers": ["candy crush gold bars", "gold bars candy crush", "золотые слитки candy crush", "донат candy crush", "валюта candy crush"]
   },
 
   {
     "id": "currency-steam-wallet",
     "category": "Игровая валюта",
-    "text": "Steam Wallet — баланс кошелька Steam",
-    "tags": ["steam wallet", "стим кошелек", "баланс steam", "деньги steam", "пополнить steam", "валюта steam"]
+    "fact": "Steam Wallet — баланс кошелька Steam",
+    "triggers": ["steam wallet", "стим кошелек", "баланс steam", "деньги steam", "пополнить steam", "валюта steam"]
   },
   {
     "id": "currency-playstation-wallet",
     "category": "Игровая валюта",
-    "text": "PlayStation Store Wallet — баланс кошелька PSN",
-    "tags": ["ps wallet", "кошелек playstation", "баланс psn", "деньги psn", "пополнить psn", "валюта ps store"]
+    "fact": "PlayStation Store Wallet — баланс кошелька PSN",
+    "triggers": ["ps wallet", "кошелек playstation", "баланс psn", "деньги psn", "пополнить psn", "валюта ps store"]
   },
   {
     "id": "currency-xbox-microsoft-balance",
     "category": "Игровая валюта",
-    "text": "Microsoft Account Balance — баланс для покупок в Xbox/Microsoft Store",
-    "tags": ["xbox balance", "баланс xbox", "microsoft balance", "баланс microsoft", "пополнить xbox", "кошелек xbox"]
+    "fact": "Microsoft Account Balance — баланс для покупок в Xbox/Microsoft Store",
+    "triggers": ["xbox balance", "баланс xbox", "microsoft balance", "баланс microsoft", "пополнить xbox", "кошелек xbox"]
   },
   {
     "id": "currency-nintendo-eshop-balance",
     "category": "Игровая валюта",
-    "text": "Nintendo eShop Balance — баланс магазина Nintendo",
-    "tags": ["eshop balance", "eshop баланс", "баланс nintendo", "пополнить nintendo", "деньги nintendo", "кошелек nintendo"]
+    "fact": "Nintendo eShop Balance — баланс магазина Nintendo",
+    "triggers": ["eshop balance", "eshop баланс", "баланс nintendo", "пополнить nintendo", "деньги nintendo", "кошелек nintendo"]
   },
   {
     "id": "currency-battlenet-balance",
     "category": "Игровая валюта",
-    "text": "Battle.net Balance — баланс кошелька Battle.net",
-    "tags": ["battlenet balance", "battle.net balance", "баланс battlenet", "кошелек battlenet", "пополнить battle.net", "донат battlenet"]
-  },
-  {
-    "id": "game-mlbb",
-    "category": "Игровая аббревиатура",
-    "text": "MLBB — Mobile Legends: Bang Bang, мобильная MOBA игра",
-    "tags": ["mlbb", "млбб", "млб", "mobile legends", "mobile legends bang bang", "мобайл легендс", "мобайл легендс бэнг бэнг", "mobile legend bang bang"]
-  },
-  {
-    "id": "game-pubg-mobile",
-    "category": "Игровая аббревиатура",
-    "text": "PUBG Mobile — королевская битва от Tencent",
-    "tags": ["pubg mobile", "пубг мобайл", "pubg", "пубг", "пубг моб", "pubg mob"]
-  },
-  {
-    "id": "game-genshin-impact",
-    "category": "Игровая аббревиатура",
-    "text": "Genshin Impact — action RPG от miHoYo",
-    "tags": ["genshin impact", "геншин импакт", "геншин", "ginsin impact", "ginsin"]
-  },
-  {
-    "id": "game-honkai-star-rail",
-    "category": "Игровая аббревиатура",
-    "text": "Honkai Star Rail — SRPG от HoYoverse",
-    "tags": ["honkai star rail", "хонкай стар рейл", "хонкай", "hsr", "honkaistarrail"]
-  },
-  {
-    "id": "game-free-fire",
-    "category": "Игровая аббревиатура",
-    "text": "Free Fire — мобильный королевский бой от Garena",
-    "tags": ["free fire", "фри фаер", "фри файр", "ff", "файр"]
-  },
-  {
-    "id": "game-roblox",
-    "category": "Игровая аббревиатура",
-    "text": "Roblox — платформа с играми от пользователей",
-    "tags": ["roblox", "роблокс", "rob lox", "rob loxx", "roblox games"]
-  },
-  {
-    "id": "game-brawl-stars",
-    "category": "Игровая аббревиатура",
-    "text": "Brawl Stars — мобильная арена-экшн от Supercell",
-    "tags": ["brawl stars", "бравл старс", "бравл", "brawl", "brl stars"]
-  },
-  {
-    "id": "game-clash-royale",
-    "category": "Игровая аббревиатура",
-    "text": "Clash Royale — карточная стратегия от Supercell",
-    "tags": ["clash royale", "клаш рояль", "крэш ройал", "cr", "clashroyale"]
-  },
-  {
-    "id": "game-clash-of-clans",
-    "category": "Игровая аббревиатура",
-    "text": "Clash of Clans — стратегия-база от Supercell",
-    "tags": ["clash of clans", "клаш оф кланс", "кланс", "coc", "clashclans"]
-  },
-  {
-    "id": "game-lol-wild-rift",
-    "category": "Игровая аббревиатура",
-    "text": "LoL: Wild Rift — мобильная League of Legends",
-    "tags": ["wild rift", "лол вайлд рифт", "wildrift", "lol wildrift", "вайлдрифт"]
-  },
-
-  {
-    "id": "game-minecraft",
-    "category": "Игровая аббревиатура",
-    "text": "Minecraft — песочница про строительство и выживание",
-    "tags": ["minecraft", "майнкрафт", "майн", "mc", "mine craft", "майн крафт"]
-  },
-  {
-    "id": "game-fortnite",
-    "category": "Игровая аббревиатура",
-    "text": "Fortnite — королевская битва и режимы от Epic Games",
-    "tags": ["fortnite", "фортнайт", "форт", "fn", "форнайт", "fort night"]
-  },
-  {
-    "id": "game-cs2",
-    "category": "Игровая аббревиатура",
-    "text": "CS2 — Counter-Strike 2, командный шутер от Valve",
-    "tags": ["cs2", "кс2", "counter-strike 2", "counter strike 2", "контр страйк 2", "кс 2", "cs 2"]
-  },
-  {
-    "id": "game-csgo",
-    "category": "Игровая аббревиатура",
-    "text": "CS:GO — Counter-Strike: Global Offensive, командный шутер (предшественник CS2)",
-    "tags": ["csgo", "cs:go", "ксго", "кс гоу", "контр страйк го", "counter strike go", "counter-strike global offensive"]
-  },
-  {
-    "id": "game-dota2",
-    "category": "Игровая аббревиатура",
-    "text": "Dota 2 — MOBA от Valve",
-    "tags": ["dota 2", "дота 2", "дота", "dota2", "d2", "dotA"]
-  },
-  {
-    "id": "game-league-of-legends",
-    "category": "Игровая аббревиатура",
-    "text": "LoL — League of Legends, MOBA от Riot Games",
-    "tags": ["lol", "league of legends", "лига легенд", "лол", "лoл", "league legends", "лоЛ"]
-  },
-  {
-    "id": "game-valorant",
-    "category": "Игровая аббревиатура",
-    "text": "VALORANT — тактический шутер от Riot Games",
-    "tags": ["valorant", "валарант", "валорант", "valo", "вало", "валоран"]
-  },
-  {
-    "id": "game-apex-legends",
-    "category": "Игровая аббревиатура",
-    "text": "Apex Legends — королевская битва от Respawn/EA",
-    "tags": ["apex legends", "apex", "апекс", "апекс легендс", "apexlegends", "эйпекс"]
-  },
-  {
-    "id": "game-overwatch-2",
-    "category": "Игровая аббревиатура",
-    "text": "Overwatch 2 — командный геройский шутер от Blizzard",
-    "tags": ["overwatch 2", "overwatch2", "ow2", "овервотч 2", "овервотч", "ow 2"]
-  },
-  {
-    "id": "game-rocket-league",
-    "category": "Игровая аббревиатура",
-    "text": "Rocket League — футбол на машинах от Psyonix",
-    "tags": ["rocket league", "рокет лига", "рокет", "rl", "rocketleague", "ракета лига"]
-  },
-  {
-    "id": "game-gta-v",
-    "category": "Игровая аббревиатура",
-    "text": "GTA V — Grand Theft Auto V, экшен от Rockstar",
-    "tags": ["gta v", "gta5", "gta 5", "гта 5", "гта", "grand theft auto v", "grand theft auto 5"]
-  },
-  {
-    "id": "game-gta-online",
-    "category": "Игровая аббревиатура",
-    "text": "GTA Online — онлайн-режим во вселенной GTA V",
-    "tags": ["gta online", "гта онлайн", "gtao", "гтао", "gta onl", "гта онлаин"]
-  },
-  {
-    "id": "game-call-of-duty",
-    "category": "Игровая аббревиатура",
-    "text": "CoD — Call of Duty, серия шутеров",
-    "tags": ["cod", "coD", "call of duty", "кол оф дьюти", "колда", "код", "кал оф дюти"]
-  },
-  {
-    "id": "game-cod-mobile",
-    "category": "Игровая аббревиатура",
-    "text": "CoD Mobile — Call of Duty: Mobile, мобильный шутер",
-    "tags": ["cod mobile", "call of duty mobile", "код мобайл", "колда мобайл", "codm", "co dm"]
-  },
-  {
-    "id": "game-cod-warzone",
-    "category": "Игровая аббревиатура",
-    "text": "Warzone — королевская битва во вселенной Call of Duty",
-    "tags": ["warzone", "cod warzone", "call of duty warzone", "варзон", "варзона", "ворзон"]
-  },
-  {
-    "id": "game-mobile-legends-adventure",
-    "category": "Игровая аббревиатура",
-    "text": "MLA — Mobile Legends: Adventure, idle RPG во вселенной Mobile Legends",
-    "tags": ["mla", "mobile legends adventure", "мла", "мобайл легендс адвенчур", "mobile legends: adventure"]
-  },
-  {
-    "id": "game-among-us",
-    "category": "Игровая аббревиатура",
-    "text": "Among Us — кооперативная игра про предателя",
-    "tags": ["among us", "амонг ас", "амонг", "amongus", "амонгус"]
-  },
-  {
-    "id": "game-fall-guys",
-    "category": "Игровая аббревиатура",
-    "text": "Fall Guys — party battle royale с испытаниями",
-    "tags": ["fall guys", "фол гайс", "фолл гайс", "fallguys", "fg"]
-  },
-  {
-    "id": "game-fifa-ea-fc",
-    "category": "Игровая аббревиатура",
-    "text": "FIFA / EA SPORTS FC — футбольный симулятор (серия EA)",
-    "tags": ["fifa", "фифа", "ea fc", "eafc", "ea sports fc", "фк", "фс", "fc 24", "fc24"]
-  },
-  {
-    "id": "game-efootball",
-    "category": "Игровая аббревиатура",
-    "text": "eFootball — футбольный симулятор от Konami (ранее PES)",
-    "tags": ["efootball", "e football", "ифутбол", "pes", "пес", "pro evolution soccer", "про эволюшн соккер"]
-  },
-  {
-    "id": "game-world-of-warcraft",
-    "category": "Игровая аббревиатура",
-    "text": "WoW — World of Warcraft, MMORPG от Blizzard",
-    "tags": ["wow", "world of warcraft", "варкрафт", "воw", "вов", "ворлд оф варкрафт", "worldofwarcraft"]
-  },
-  {
-    "id": "game-hearthstone",
-    "category": "Игровая аббревиатура",
-    "text": "HS — Hearthstone, карточная игра от Blizzard",
-    "tags": ["hearthstone", "хартстоун", "хс", "hs", "heartstone", "хсстоун"]
-  },
-  {
-    "id": "game-diablo-4",
-    "category": "Игровая аббревиатура",
-    "text": "D4 — Diablo IV, action RPG от Blizzard",
-    "tags": ["diablo 4", "diablo iv", "дьябло 4", "диабло 4", "d4", "d iv"]
-  },
-  {
-    "id": "game-path-of-exile",
-    "category": "Игровая аббревиатура",
-    "text": "PoE — Path of Exile, action RPG от Grinding Gear Games",
-    "tags": ["path of exile", "poe", "поe", "пое", "пас оф экзайл", "pathofexile"]
-  },
-  {
-    "id": "game-terraria",
-    "category": "Игровая аббревиатура",
-    "text": "Terraria — 2D песочница про исследование и крафт",
-    "tags": ["terraria", "террария", "терария", "тераррия", "terraria game"]
-  },
-  {
-    "id": "game-stardew-valley",
-    "category": "Игровая аббревиатура",
-    "text": "Stardew Valley — симулятор фермы и жизни",
-    "tags": ["stardew valley", "старду валли", "старду", "stardew", "стардиу", "stardewvalley"]
-  },
-  {
-    "id": "game-the-sims-4",
-    "category": "Игровая аббревиатура",
-    "text": "The Sims 4 — симулятор жизни от EA",
-    "tags": ["the sims 4", "sims 4", "симс 4", "симсы 4", "ts4", "симс"]
-  },
-  {
-    "id": "game-elden-ring",
-    "category": "Игровая аббревиатура",
-    "text": "Elden Ring — action RPG от FromSoftware",
-    "tags": ["elden ring", "элден ринг", "елден ринг", "эр", "eldenring"]
-  },
-  {
-    "id": "game-dark-souls",
-    "category": "Игровая аббревиатура",
-    "text": "Dark Souls — серия хардкорных action RPG от FromSoftware",
-    "tags": ["dark souls", "дарк соулс", "дарк", "ds", "дс", "dark souls 3", "ds3", "дс3"]
-  },
-  {
-    "id": "game-sekiro",
-    "category": "Игровая аббревиатура",
-    "text": "Sekiro — Sekiro: Shadows Die Twice, экшен от FromSoftware",
-    "tags": ["sekiro", "секиро", "sekiro shadows die twice", "shadows die twice", "сдт"]
-  },
-  {
-    "id": "game-cyberpunk-2077",
-    "category": "Игровая аббревиатура",
-    "text": "Cyberpunk 2077 — RPG в киберпанк-сеттинге от CD PROJEKT RED",
-    "tags": ["cyberpunk 2077", "cyberpunk", "киберпанк 2077", "киберпанк", "cp2077", "цп 2077"]
-  },
-  {
-    "id": "game-the-witcher-3",
-    "category": "Игровая аббревиатура",
-    "text": "The Witcher 3 — сюжетная RPG от CD PROJEKT RED",
-    "tags": ["witcher 3", "the witcher 3", "ведьмак 3", "ведьмак", "tw3", "в3"]
-  },
-  {
-    "id": "game-skyrim",
-    "category": "Игровая аббревиатура",
-    "text": "Skyrim — The Elder Scrolls V: Skyrim, RPG от Bethesda",
-    "tags": ["skyrim", "скайрим", "tes v", "tes5", "elder scrolls v", "эс5", "тес 5"]
-  },
-  {
-    "id": "game-rdr2",
-    "category": "Игровая аббревиатура",
-    "text": "RDR2 — Red Dead Redemption 2, вестерн-экшен от Rockstar",
-    "tags": ["rdr2", "red dead redemption 2", "ред дед 2", "рдр2", "rdr 2", "reddeadredemption2"]
-  },
-  {
-    "id": "game-honkai-impact-3rd",
-    "category": "Игровая аббревиатура",
-    "text": "HI3 — Honkai Impact 3rd, action RPG от HoYoverse",
-    "tags": ["honkai impact 3rd", "honkai impact", "hi3", "хи3", "хонкай импакт", "хонкай импакт 3"]
-  },
-  {
-    "id": "game-zenless-zone-zero",
-    "category": "Игровая аббревиатура",
-    "text": "ZZZ — Zenless Zone Zero, action RPG от HoYoverse",
-    "tags": ["zenless zone zero", "zzz", "ззз", "зенлесс зон зеро", "зенлес", "zenless"]
-  },
-  {
-    "id": "game-identity-v",
-    "category": "Игровая аббревиатура",
-    "text": "Identity V — асимметричный хоррор-экшен от NetEase",
-    "tags": ["identity v", "айдентиити 5", "айденти v", "identityv", "идентиити", "ив"]
-  },
-  {
-    "id": "game-arena-of-valor",
-    "category": "Игровая аббревиатура",
-    "text": "AoV — Arena of Valor, мобильная MOBA",
-    "tags": ["arena of valor", "aov", "аов", "арена оф валор", "арена валор", "a o v"]
-  },
-  {
-    "id": "game-call-of-duty-modern-warfare",
-    "category": "Игровая аббревиатура",
-    "text": "MW — Modern Warfare, подсерия Call of Duty",
-    "tags": ["mw", "modern warfare", "мв", "модерн варфер", "модерн варфейр", "cod mw"]
-  },
-  {
-    "id": "game-battlefield",
-    "category": "Игровая аббревиатура",
-    "text": "BF — Battlefield, серия шутеров",
-    "tags": ["battlefield", "bf", "бф", "батлфилд", "battle field", "bf 2042", "bf2042"]
-  },
-  {
-    "id": "game-rainbow-six-siege",
-    "category": "Игровая аббревиатура",
-    "text": "R6S — Tom Clancy’s Rainbow Six Siege, тактический шутер",
-    "tags": ["rainbow six siege", "r6s", "р6с", "rainbowsixsiege", "рейнбоу 6", "радуга 6"]
-  },
-  {
-    "id": "game-garrys-mod",
-    "category": "Игровая аббревиатура",
-    "text": "GMod — Garry’s Mod, песочница на Source",
-    "tags": ["gmod", "g mod", "garry's mod", "гаррис мод", "гаррис", "гмод"]
-  },
-  {
-    "id": "game-team-fortress-2",
-    "category": "Игровая аббревиатура",
-    "text": "TF2 — Team Fortress 2, командный шутер от Valve",
-    "tags": ["tf2", "team fortress 2", "тим фортресс 2", "тф2", "teamfortress2"]
-  },
-  {
-    "id": "game-halo",
-    "category": "Игровая аббревиатура",
-    "text": "Halo — серия шутеров от Microsoft",
-    "tags": ["halo", "хейло", "хало", "halo infinite", "хало инфинит"]
-  },
-  {
-    "id": "game-warframe",
-    "category": "Игровая аббревиатура",
-    "text": "Warframe — кооперативный экшен про ниндзя в космосе",
-    "tags": ["warframe", "варфрейм", "варфрейм", "wf", "вф", "war frame"]
-  },
-  {
-    "id": "game-destiny-2",
-    "category": "Игровая аббревиатура",
-    "text": "Destiny 2 — онлайн-шутер/лоутер от Bungie",
-    "tags": ["destiny 2", "destiny2", "дестини 2", "дестени 2", "d2", "д2 destiny"]
-  },
-  {
-    "id": "game-escape-from-tarkov",
-    "category": "Игровая аббревиатура",
-    "text": "EFT — Escape from Tarkov, хардкорный лутер-шутер",
-    "tags": ["escape from tarkov", "tarkov", "тарков", "eft", "ефт", "эфт", "эскейп фром тарков"]
-  },
-  {
-    "id": "game-stalker",
-    "category": "Игровая аббревиатура",
-    "text": "S.T.A.L.K.E.R. — серия шутеров в Зоне",
-    "tags": ["stalker", "сталкер", "s.t.a.l.k.e.r", "stalker 2", "сталкер 2", "сталк"]
-  },
-  {
-    "id": "game-world-of-tanks",
-    "category": "Игровая аббревиатура",
-    "text": "WoT — World of Tanks, танковый онлайн-экшен",
-    "tags": ["world of tanks", "wot", "вот", "ворлд оф танкс", "танки", "worldoftanks"]
-  },
-  {
-    "id": "game-world-of-tanks-blitz",
-    "category": "Игровая аббревиатура",
-    "text": "WoTB — World of Tanks Blitz, мобильная/портативная версия WoT",
-    "tags": ["world of tanks blitz", "wotb", "вотб", "танки блиц", "wot blitz", "ворлд оф танкс блиц"]
-  },
-  {
-    "id": "game-war-thunder",
-    "category": "Игровая аббревиатура",
-    "text": "War Thunder — онлайн-экшен про технику",
-    "tags": ["war thunder", "вар тандер", "вартандер", "wt", "вт", "war-thunder"]
-  },
-  {
-    "id": "game-mortal-kombat",
-    "category": "Игровая аббревиатура",
-    "text": "MK — Mortal Kombat, серия файтингов",
-    "tags": ["mortal kombat", "mk", "мк", "мортал комбат", "мортал", "mk11", "mk 11"]
-  },
-  {
-    "id": "game-tekken",
-    "category": "Игровая аббревиатура",
-    "text": "Tekken — серия файтингов от Bandai Namco",
-    "tags": ["tekken", "теккен", "tekken 8", "теккен 8", "tk"]
-  },
-  {
-    "id": "game-god-of-war",
-    "category": "Игровая аббревиатура",
-    "text": "GoW — God of War, серия экшенов",
-    "tags": ["god of war", "gow", "гоу", "год оф вар", "бог войны", "go w"]
-  },
-  {
-    "id": "game-last-of-us",
-    "category": "Игровая аббревиатура",
-    "text": "TLoU — The Last of Us, сюжетный экшен",
-    "tags": ["the last of us", "tlou", "тлоу", "ласт оф ас", "ласт оф ус", "thelastofus"]
-  },
-  {
-    "id": "game-honkai-star-rail-abbr",
-    "category": "Игровая аббревиатура",
-    "text": "HSR — сокращение от Honkai: Star Rail",
-    "tags": ["hsr", "хср", "h s r", "хонкай ср", "стар рейл hsr"]
-  },
-  {
-    "id": "game-genshin-abbr",
-    "category": "Игровая аббревиатура",
-    "text": "GI — сокращение от Genshin Impact",
-    "tags": ["gi", "джи ай", "гй", "геншин gi", "genshin gi"]
-  },
-  {
-    "id": "game-metro",
-    "category": "Игровая аббревиатура",
-    "text": "Metro — серия шутеров по вселенной «Метро»",
-    "tags": ["metro", "метро", "metro exodus", "метро исход", "metro 2033", "метро 2033"]
-  },
-  {
-    "id": "game-hades",
-    "category": "Игровая аббревиатура",
-    "text": "Hades — roguelike экшен от Supergiant Games",
-    "tags": ["hades", "хадес", "хадес игра", "hades game"]
-  },
-  {
-    "id": "game-hollow-knight",
-    "category": "Игровая аббревиатура",
-    "text": "Hollow Knight — метроидвания",
-    "tags": ["hollow knight", "холлоу найт", "холоу найт", "hk", "хк", "hollowknight"]
-  },
-  {
-    "id": "game-dead-by-daylight",
-    "category": "Игровая аббревиатура",
-    "text": "DbD — Dead by Daylight, асимметричный хоррор",
-    "tags": ["dead by daylight", "dbd", "дбд", "дед бай дейлайт", "дейд бай дейлайт", "deadbydaylight"]
-  },
-  {
-    "id": "game-geometry-dash",
-    "category": "Игровая аббревиатура",
-    "text": "GD — Geometry Dash, ритм-платформер",
-    "tags": ["geometry dash", "gd", "гд", "геометри дэш", "геометри деш", "geometrydash"]
-  },
-  {
-    "id": "game-pokemon-go",
-    "category": "Игровая аббревиатура",
-    "text": "Pokémon GO — мобильная AR-игра про покемонов",
-    "tags": ["pokemon go", "pokémon go", "покемон го", "покемоны го", "pogo", "по-го"]
+    "fact": "Battle.net Balance — баланс кошелька Battle.net",
+    "triggers": ["battlenet balance", "battle.net balance", "баланс battlenet", "кошелек battlenet", "пополнить battle.net", "донат battlenet"]
   }
 ]
