@@ -1457,101 +1457,16 @@ async def handle_job(raw, processing_key: str) -> None:
                     if is_trusted_destination:
                         attempt_key = f"{job_key}:modwait_attempt"
                         first_ts_key = f"{job_key}:modwait_first_ts"
-                        now_ts = int(time.time())
-                        ttl_sec = max(MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC * 2, 120)
-                        attempt = 1
-                        first_ts = now_ts
-                        tracking_failed = False
-                        try:
-                            attempt = int(await REDIS_QUEUE.incr(attempt_key))
-                            await REDIS_QUEUE.expire(attempt_key, ttl_sec)
-                            await REDIS_QUEUE.set(first_ts_key, now_ts, ex=ttl_sec, nx=True)
-                            first_ts_raw = await REDIS_QUEUE.get(first_ts_key)
-                            if first_ts_raw is not None:
-                                if isinstance(first_ts_raw, (bytes, bytearray)):
-                                    first_ts_raw = first_ts_raw.decode("utf-8", "ignore")
-                                first_ts = int(float(first_ts_raw))
-                        except Exception as exc:
-                            tracking_failed = True
-                            logger.warning(
-                                "MODERATION_SIGNAL_TRACKING_FAILED: chat_id=%s msg_id=%s job_key=%s error=%s",
-                                chat_id,
-                                msg_id,
-                                job_key,
-                                exc,
-                            )
-
-                        elapsed_sec = max(0, now_ts - first_ts)
-                        hit_attempt_limit = MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS > 0 and attempt >= MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS
-                        hit_wait_limit = MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC > 0 and elapsed_sec >= MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC
-                        inflight_key = f"mod:inflight:{chat_id}:{msg_id}"
-                        inflight = False
-                        try:
-                            inflight_raw = await redis.get(inflight_key)
-                            if isinstance(inflight_raw, (bytes, bytearray)):
-                                inflight_raw = inflight_raw.decode("utf-8", "ignore")
-                            inflight = inflight_raw is not None and str(inflight_raw).strip() != ""
-                        except Exception as exc:
-                            logger.warning(
-                                "MODERATION_INFLIGHT_READ_ERROR: chat_id=%s msg_id=%s key=%s error=%s",
-                                chat_id,
-                                msg_id,
-                                inflight_key,
-                                exc,
-                            )
-
-                        # For trusted moderation wait, prefer elapsed wait-limit over attempt-limit to avoid
-                        # premature terminal timeouts caused by short Redis/Celery scheduling jitter.
-                        # If wait-limit is explicitly disabled (<=0), keep attempt-limit as a hard safety cap.
-                        wait_limit_enabled = MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC > 0
-                        should_requeue = (not tracking_failed) and (
-                            (not hit_wait_limit) if wait_limit_enabled else (not hit_attempt_limit)
-                        )
-
-                        if should_requeue:
-
-                            logger.warning(
-                                "MODERATION_SIGNAL_MISSING_REQUEUE_TRUSTED: chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s inflight=%s",
-                                chat_id,
-                                msg_id,
-                                job_key,
-                                attempt,
-                                elapsed_sec,
-                                mod_status,
-                                read_failed,
-                                inflight,
-                            )
-                            with suppress(Exception):
-                                await _delete_if_inflight(REDIS_QUEUE, job_key, value)
-                            try:
-                                async with REDIS_QUEUE.pipeline() as p:
-                                    p.lrem(processing_key, 1, raw)
-                                    p.lpush(queue_key, raw)
-                                    await p.execute()
-                                remove_from_processing = False
-                                return
-                            except Exception as exc:
-                                logger.warning("Failed to requeue trusted moderation-wait job: %s", exc)
-
-                        logger.error(
-                            "MODERATION_SIGNAL_TIMEOUT_TERMINAL: terminal_reason=moderation_signal_timeout chat_id=%s msg_id=%s job_key=%s attempt=%s elapsed_sec=%s status=%s read_failed=%s inflight=%s attempt_limit_hit=%s wait_limit_hit=%s",
+                        logger.warning(
+                            "MODERATION_SIGNAL_MISSING_TRUSTED_CONTINUE: chat_id=%s msg_id=%s job_key=%s status=%s read_failed=%s",
                             chat_id,
                             msg_id,
                             job_key,
-                            attempt,
-                            elapsed_sec,
                             mod_status,
                             read_failed,
-                            inflight,
-                            hit_attempt_limit,
-                            hit_wait_limit,
                         )
                         with suppress(Exception):
                             await REDIS_QUEUE.delete(attempt_key, first_ts_key)
-                        with suppress(Exception):
-                            await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
-                        await _refund_reservation()
-                        return
 
                     logger.warning(
                         "MODERATION_SIGNAL_MISSING_CONTINUE: chat_id=%s msg_id=%s status=%s read_failed=%s",
