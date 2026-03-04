@@ -6,8 +6,9 @@ import asyncio
 import logging
 
 from celery import Celery, current_task
-from celery.signals import setup_logging as celery_setup_logging, worker_ready
+from celery.signals import setup_logging as celery_setup_logging, worker_ready, worker_shutdown
 
+from app.clients.telegram_client import close_all_bots, close_bot_for_current_loop
 from app.config import settings
 from app.core.logging_config import setup_logging
 
@@ -94,9 +95,12 @@ def run_coro_sync(coro, timeout: float | None = None):
     effective_timeout = settings.CELERY_RUN_TIMEOUT_SEC if timeout is None else timeout
 
     async def _runner():
-        if effective_timeout is None or float(effective_timeout) <= 0:
-            return await coro
-        return await asyncio.wait_for(coro, timeout=float(effective_timeout))
+        try:
+            if effective_timeout is None or float(effective_timeout) <= 0:
+                return await coro
+            return await asyncio.wait_for(coro, timeout=float(effective_timeout))
+        finally:
+            await close_bot_for_current_loop()
 
     try:
         return asyncio.run(_runner())
@@ -119,3 +123,13 @@ def _warm_up_worker(sender=None, **_kwargs) -> None:
         "Celery worker ready: %s",
         getattr(sender, "hostname", "?"),
     )
+
+
+@worker_shutdown.connect
+def _close_telegram_bot_sessions(**_kwargs) -> None:
+    try:
+        asyncio.run(close_all_bots())
+    except RuntimeError:
+        logger.debug("Celery worker shutdown: no loop available for bot close", exc_info=True)
+    except Exception:
+        logger.exception("Celery worker shutdown: failed to close telegram bot sessions")

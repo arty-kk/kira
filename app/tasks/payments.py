@@ -19,7 +19,6 @@ from app.tasks.celery_app import celery, run_coro_sync
 from app.tasks.requeue_result import RequeueResult
 
 logger = logging.getLogger(__name__)
-bot = get_bot()
 REQUEUE_PENDING_OUTBOX_BATCH_SIZE = 100
 OUTBOX_LEASE_TTL_SECONDS = 300
 PROCESS_OUTBOX_TIME_LIMIT_SEC = 90
@@ -201,6 +200,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
             await db.execute(release_stmt)
 
     try:
+        bot = get_bot()
         sent_message = await send_message_safe(bot, int(outbox.user_id), message_text, parse_mode="HTML")
     except Exception:
         await _release_notify_lease()
