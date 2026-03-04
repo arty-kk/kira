@@ -170,6 +170,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             "is_channel_post": bool(payload.get("is_channel_post")),
             "is_comment_context": bool(payload.get("is_comment_context")),
             "channel_id": payload.get("channel_id"),
+            "linked_chat_id": payload.get("linked_chat_id"),
             "channel_title": payload.get("channel_title"),
             "image_b64": jpeg_b64,
             "image_mime": "image/jpeg",

@@ -1408,8 +1408,46 @@ async def handle_job(raw, processing_key: str) -> None:
                 except Exception:
                     pass
 
+            moderation_enabled = bool(getattr(settings, "ENABLE_MODERATION", True))
+            if (not moderation_enabled) and is_group and trigger in ("mention", "check_on_topic", "channel_post"):
+                source_channel_ids = {
+                    int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])
+                }
+                source_channel_id = int(job.get("channel_id") or 0)
+                linked_channel_id = int(job.get("linked_chat_id") or 0)
+                allow_without_moderation = bool(
+                    trusted_destination_check(chat_id, None, settings)
+                    or (
+                        bool(job.get("is_comment_context"))
+                        and bool(source_channel_ids)
+                        and (
+                            source_channel_id in source_channel_ids
+                            or linked_channel_id in source_channel_ids
+                        )
+                    )
+                )
+                if allow_without_moderation:
+                    logger.info(
+                        "MODERATION_DISABLED_BYPASS: chat_id=%s msg_id=%s trigger=%s is_comment_context=%s",
+                        chat_id,
+                        msg_id,
+                        trigger,
+                        bool(job.get("is_comment_context")),
+                    )
+                else:
+                    logger.warning(
+                        "MODERATION_DISABLED_UNTRUSTED_SKIP: chat_id=%s msg_id=%s trigger=%s",
+                        chat_id,
+                        msg_id,
+                        trigger,
+                    )
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
             mod_status = ""
-            if is_group and trigger in ("mention", "check_on_topic", "channel_post"):
+            if moderation_enabled and is_group and trigger in ("mention", "check_on_topic", "channel_post"):
                 known_statuses = {"clean", "blocked", "flagged", "error"}
                 read_failed = False
                 deadline = time.monotonic() + max(0.0, float(MODERATION_STATUS_WAIT_SEC))
@@ -1448,34 +1486,18 @@ async def handle_job(raw, processing_key: str) -> None:
                     await _refund_reservation()
                     return
 
-                if (mod_status not in {"clean", "error"}) or read_failed:
-                    is_trusted_comment_context = bool(job.get("is_comment_context")) and bool(
-                        getattr(settings, "COMMENT_MODERATION_ENABLED", False)
-                    )
-                    is_trusted_destination = trusted_destination_check(chat_id, None, settings) or is_trusted_comment_context
-
-                    if is_trusted_destination:
-                        attempt_key = f"{job_key}:modwait_attempt"
-                        first_ts_key = f"{job_key}:modwait_first_ts"
-                        logger.warning(
-                            "MODERATION_SIGNAL_MISSING_TRUSTED_CONTINUE: chat_id=%s msg_id=%s job_key=%s status=%s read_failed=%s",
-                            chat_id,
-                            msg_id,
-                            job_key,
-                            mod_status,
-                            read_failed,
-                        )
-                        with suppress(Exception):
-                            await REDIS_QUEUE.delete(attempt_key, first_ts_key)
-
+                if (mod_status != "clean") or read_failed:
                     logger.warning(
-                        "MODERATION_SIGNAL_MISSING_CONTINUE: chat_id=%s msg_id=%s status=%s read_failed=%s",
+                        "MODERATION_STATUS_NOT_CLEAN_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s",
                         chat_id,
                         msg_id,
                         mod_status,
                         read_failed,
                     )
-                    mod_status = ""
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
                 else:
                     logger.info(
                         "MODERATION_STATUS_READY: chat_id=%s msg_id=%s status=%s",
