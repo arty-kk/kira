@@ -351,8 +351,44 @@ async def handle_passive_moderation(
     is_comment_context: bool | None = None,
     chat_title: str | None = None,
 ) -> str:
-
+    status = "clean"
+    reason_text = ""
+    finalize_early = False
     from_linked = False
+    _uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
+    _mid = int(getattr(message, "message_id", message_id or 0))
+
+    async def _persist_status_to_redis(*, persisted_status: str, persisted_reason: str) -> None:
+        try:
+            if _mid > 0:
+                await redis_client.hset(
+                    f"mod:msg:{chat_id}:{_mid}",
+                    mapping={
+                        "status": persisted_status,
+                        "reason": persisted_reason,
+                        "ts": int(time.time()),
+                        "user_id": int(_uid),
+                    },
+                )
+            else:
+                logger.warning(
+                    "PASSIVE_MODERATION_SKIP_PERSIST_INVALID_MESSAGE_ID: chat_id=%s msg_id=%s user_id=%s status=%s",
+                    chat_id,
+                    _mid,
+                    _uid,
+                    persisted_status,
+                )
+        except Exception as exc:
+            logger.exception(
+                "Failed to persist moderation status to Redis: chat_id=%s msg_id=%s status=%s",
+                chat_id,
+                _mid,
+                persisted_status,
+            )
+            raise ModerationSignalPersistenceError(
+                f"mod:msg persistence failed for chat_id={chat_id} msg_id={_mid} status={persisted_status}"
+            ) from exc
+
     try:
         if message:
             from_linked = await is_from_linked_channel(message)
@@ -360,19 +396,19 @@ async def handle_passive_moderation(
         if settings.MODERATION_ADMIN_EXEMPT:
             uid_for_admin = (int(getattr(getattr(message, "from_user", None), "id", 0)) if message else (int(user_id) if user_id else 0))
             if uid_for_admin and await _is_admin(chat_id, uid_for_admin):
-                return "clean"
+                finalize_early = True
     except Exception:
         pass
 
     deep_text_threshold = int(getattr(settings, "MOD_DEEP_TEXT_THRESHOLD", 400))
 
     if not ( (message and getattr(message, "from_user", None)) or user_id ):
-        return "clean"
+        finalize_early = True
 
-    if message is not None and getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE:
-        return "clean"
-    if message is None and user_id is not None and int(chat_id) == int(user_id):
-        return "clean"
+    if not finalize_early and message is not None and getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE:
+        finalize_early = True
+    if not finalize_early and message is None and user_id is not None and int(chat_id) == int(user_id):
+        finalize_early = True
 
     normalized_source = (source or "user").strip().lower()
     allowed_sources = {"user", "bot", "channel"}
@@ -402,14 +438,12 @@ async def handle_passive_moderation(
         from_linked=from_linked,
     )
     if is_fully_trusted:
-        return "clean"
+        finalize_early = True
 
-    _uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
-    _mid = int(getattr(message, "message_id", message_id or 0))
     light_throttle = f"mod_alert:light:{chat_id}:{_uid}"
     deep_throttle  = f"mod_alert:deep:{chat_id}:{_uid}"
 
-    if bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)) and _uid > 0:
+    if not finalize_early and bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)) and _uid > 0:
         try:
             blocked_key = _profile_nsfw_blocked_chat_key(chat_id, _uid)
             if await redis_client.exists(blocked_key):
@@ -423,9 +457,11 @@ async def handle_passive_moderation(
                     _mid,
                     _uid,
                 )
-                return "blocked"
+                status = "blocked"
+                reason_text = "profile_nsfw_blocked"
+                finalize_early = True
 
-            if await _is_profile_nsfw(_uid):
+            if not finalize_early and await _is_profile_nsfw(_uid):
                 if _mid:
                     await _flag(chat_id, _mid, action="restrict", reason="profile_nsfw|context=group", user_id=_uid)
                     await _delete_message_safe(chat_id, _mid)
@@ -437,12 +473,27 @@ async def handle_passive_moderation(
                     _mid,
                     _uid,
                 )
-                return "blocked"
+                status = "blocked"
+                reason_text = "profile_nsfw"
+                finalize_early = True
         except Exception:
             logger.debug("profile nsfw enforcement failed", exc_info=True)
 
-    if not (text and text.strip()) and not image_b64:
-        return "clean"
+    if not finalize_early and not (text and text.strip()) and not image_b64:
+        finalize_early = True
+
+    if finalize_early:
+        await _persist_status_to_redis(persisted_status=status, persisted_reason=reason_text)
+
+        logger.info(
+            "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s",
+            chat_id,
+            _mid,
+            _uid,
+            status,
+            reason_text,
+        )
+        return status
 
     try:
         async with redis_client.pipeline(transaction=True) as pipe:
@@ -673,15 +724,7 @@ async def handle_passive_moderation(
 
         try:
             ttl = int(getattr(settings, "MOD_FLAG_TTL_SECONDS", 86_400))
-            await redis_client.hset(
-                f"mod:msg:{chat_id}:{_mid}",
-                mapping={
-                    "status": status,
-                    "reason": reason_text,
-                    "ts": int(time.time()),
-                    "user_id": int(_uid),
-                },
-            )
+            await _persist_status_to_redis(persisted_status=status, persisted_reason=reason_text)
             if status in ("flagged", "blocked"):
                 uid = int(_uid)
                 await redis_client.sadd(f"mod_flagged_users:{chat_id}", uid)
@@ -690,6 +733,8 @@ async def handle_passive_moderation(
                     await redis_client.zrem(f"last_ping_zset:{chat_id}", str(uid))
                 except Exception:
                     pass
+        except ModerationSignalPersistenceError:
+            raise
         except Exception as exc:
             logger.exception(
                 "Failed to persist moderation status to Redis: chat_id=%s msg_id=%s status=%s",

@@ -116,6 +116,8 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "clean")
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
+        fake_redis.hset.assert_awaited_once()
+        self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-1001:88")
 
     async def test_handle_passive_moderation_untrusted_channel_source_in_trusted_group_is_not_exempt(self) -> None:
         fake_redis = _FakeRedis()
@@ -208,6 +210,8 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "clean")
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
+        fake_redis.hset.assert_awaited_once()
+        self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-10055:99")
 
     async def test_handle_passive_moderation_comment_target_admin_is_exempt(self) -> None:
         fake_redis = _FakeRedis()
@@ -253,6 +257,8 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "clean")
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
+        fake_redis.hset.assert_awaited_once()
+        self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-100777:17")
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_classify_profile_nsfw_fast_flags_when_sex_abuse_true(self) -> None:
@@ -329,6 +335,10 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_redis.pipeline_set_calls, [])
         check_light_mock.assert_not_awaited()
         check_deep_mock.assert_not_awaited()
+        fake_redis.hset.assert_awaited_once()
+        hset_key = fake_redis.hset.await_args.args[0]
+        self.assertEqual(hset_key, "mod:msg:100:77")
+        self.assertEqual(fake_redis.hset.await_args.kwargs["mapping"]["status"], "clean")
 
     async def test_handle_passive_moderation_non_empty_payload_sets_light_throttle(self) -> None:
         fake_redis = _FakeRedis()
@@ -362,6 +372,32 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         set_args, set_kwargs = fake_redis.pipeline_set_calls[0]
         self.assertEqual(set_args, ("mod_alert:light:100:42", 1))
         self.assertEqual(set_kwargs, {"ex": 60, "nx": True})
+
+    async def test_handle_passive_moderation_empty_payload_with_invalid_msg_id_skips_modmsg_persist(self) -> None:
+        fake_redis = _FakeRedis()
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "check_light", AsyncMock(return_value="clean")) as check_light_mock,
+            patch.object(moderation, "check_deep", AsyncMock(return_value=False)) as check_deep_mock,
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=100,
+                message=None,
+                text="   ",
+                entities=[],
+                image_b64=None,
+                source="user",
+                user_id=42,
+                message_id=0,
+            )
+
+        self.assertEqual(status, "clean")
+        self.assertEqual(fake_redis.pipeline_set_calls, [])
+        check_light_mock.assert_not_awaited()
+        check_deep_mock.assert_not_awaited()
+        fake_redis.hset.assert_not_awaited()
 
     async def test_handle_passive_moderation_toxic_skips_deep_and_deletes_when_flagged_delete_enabled(self) -> None:
         fake_redis = _FakeRedis()
@@ -433,6 +469,9 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         delete_mock.assert_awaited_once_with(-1001, 77)
         restrict_mock.assert_awaited_once_with(-1001, 42)
         self.assertIn("profile_nsfw_blocked", flag_mock.await_args.kwargs["reason"])
+        fake_redis.hset.assert_awaited_once()
+        self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-1001:77")
+        self.assertEqual(fake_redis.hset.await_args.kwargs["mapping"]["status"], "blocked")
 
     async def test_handle_passive_moderation_trusted_destination_enforces_profile_nsfw(self) -> None:
         fake_redis = _FakeRedis()
@@ -472,6 +511,9 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         cleanup_mock.assert_awaited_once_with(-1001, 42)
         fake_redis.set.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
         self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
+        fake_redis.hset.assert_awaited_once()
+        self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-1001:77")
+        self.assertEqual(fake_redis.hset.await_args.kwargs["mapping"]["status"], "blocked")
 
     async def test_handle_passive_moderation_profile_nsfw_check_runs_in_worker(self) -> None:
         fake_redis = _FakeRedis()
