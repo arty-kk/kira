@@ -241,6 +241,7 @@ def _load_payments_module():
     }
 
     target_modules["app.bot.utils.telegram_safe"].send_message_safe = AsyncMock()
+    target_modules["app.bot.utils.telegram_safe"].send_message_safe_with_reason = AsyncMock()
     target_modules["app.bot.i18n"].t = AsyncMock(return_value="")
     target_modules["app.clients.telegram_client"].get_bot = lambda: object()
 
