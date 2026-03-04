@@ -326,6 +326,7 @@ def _build_prompt(
     *,
     gift_label: str,
     gift_code: str,
+    ui_lang_label: str,
     fallback_lang: str,
     tone_hint: str,
     micro_style: str | None,
@@ -351,8 +352,9 @@ def _build_prompt(
         "- If GiftStreak >= 2, you may lightly signal repetition (e.g., 'you’re spoiling me'), but keep it subtle.\n"
         "\n"
         "LANGUAGE\n"
-        "- Reply in the same language the user has been using in this chat (infer from chat history).\n"
-        f"- If language is unclear, use {fallback_lang}.\n"
+        f"- Reply in {ui_lang_label} selected in app menu.\n"
+        f"- If {ui_lang_label} is unclear or unsupported, use dominant language from recent chat history.\n"
+        f"- If language is still unclear, use {fallback_lang}.\n"
         "\n"
         "STYLE\n"
         "- 1–2 short sentences. Sound like a real person, not a bot.\n"
@@ -437,6 +439,7 @@ def gifts_react(
         internal_prompt = _build_prompt(
             gift_label=str(gift_label or "").strip(),
             gift_code=str(gift_code or "").strip(),
+            ui_lang_label=fallback_lang,
             fallback_lang=fallback_lang,
             tone_hint=tone_hint,
             micro_style=micro_style,
@@ -468,6 +471,7 @@ def gifts_react(
             strict_prompt = _build_prompt(
                 gift_label=str(gift_label or "").strip(),
                 gift_code=str(gift_code or "").strip(),
+                ui_lang_label=fallback_lang,
                 fallback_lang=fallback_lang,
                 tone_hint=tone_hint,
                 micro_style=micro_style,

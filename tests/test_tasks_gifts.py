@@ -28,3 +28,23 @@ def test_fallback_reply_is_safe_and_valid_for_ru_en() -> None:
         assert gifts._looks_forbidden(reply) is False
         assert gifts._mentions_gift_once(reply, label) is True
         assert gifts._ok_reply(reply, label) is True
+
+
+def test_build_prompt_prioritizes_ui_language_then_chat_fallback() -> None:
+    prompt = gifts._build_prompt(
+        gift_label="RGB Setup",
+        gift_code="rgb_setup",
+        ui_lang_label="Russian",
+        fallback_lang="Russian",
+        tone_hint=gifts.DEFAULT_TONE_HINT,
+        micro_style=None,
+        gift_streak=1,
+        intensity_hint="warm",
+        intensity_score=0.2,
+        strict=False,
+    )
+
+    assert "LANGUAGE" in prompt
+    assert "Reply in Russian selected in app menu." in prompt
+    assert "If Russian is unclear or unsupported, use dominant language from recent chat history." in prompt
+    assert "If language is still unclear, use Russian." in prompt
