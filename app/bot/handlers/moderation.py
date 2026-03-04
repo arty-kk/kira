@@ -32,6 +32,8 @@ from app.services.addons.passive_moderation import (
     get_last_ai_moderation_category,
     get_last_ai_moderation_flags,
     should_delete_ai_flagged_message,
+    is_emoji_flood_text,
+    is_symbol_noise_text,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import (
@@ -516,6 +518,8 @@ async def handle_passive_moderation(
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "AI moderation policy violation",
                 "sexual_content": "Sexual/erotic content policy violation",
+                "emoji_flood": "Emoji flood / visual spam",
+                "symbol_noise": "Obfuscated symbol/noise flood",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
@@ -1300,6 +1304,14 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
 
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
+
+    if is_emoji_flood_text(raw):
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("emoji_flood"), user_id=u.id)
+        return await _delete_and_handle("emoji_flood")
+
+    if is_symbol_noise_text(raw):
+        await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("symbol_noise"), user_id=u.id)
+        return await _delete_and_handle("symbol_noise")
 
     if bool(getattr(settings, "MODERATION_DELETE_NON_MEMBER_MENTIONS", False)):
         def _norm_uname(uname: str | None) -> str:
