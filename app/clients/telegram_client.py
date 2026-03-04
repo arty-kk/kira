@@ -1,8 +1,3 @@
-"""Telegram Bot lifecycle helpers.
-
-Keeps bot instances scoped to an event loop to avoid cross-loop aiohttp usage.
-"""
-
 import asyncio
 from contextlib import suppress
 
@@ -19,8 +14,6 @@ def _loop_key() -> int:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # Import-time/sync contexts may not have a current loop (Python 3.12 + uvloop).
-        # Use a stable process-local bucket for such calls.
         return 0
     return id(loop)
 

@@ -459,8 +459,6 @@ class Settings:
     MODERATION_ALLOW_CUSTOM_EMOJI:     bool = field(default_factory=lambda: _get_env("MODERATION_ALLOW_CUSTOM_EMOJI",     "true",  conv=_parse_bool))
 
     # ─── Database ────────────────────────────────────────────────
-    # Periodic worker timeout incidents: tune DB_POOL_SIZE/DB_MAX_OVERFLOW first,
-    # then DB_POOL_TIMEOUT (small increments), and validate via timeout logs.
     DATABASE_URL: str = field(default_factory=lambda: _get_env("DATABASE_URL", required=True))
     DB_POOL_SIZE: int = field(default_factory=lambda: _get_env("DB_POOL_SIZE", "200", conv=int))
     DB_MAX_OVERFLOW: int = field(default_factory=lambda: _get_env("DB_MAX_OVERFLOW", "100", conv=int))
@@ -487,8 +485,6 @@ class Settings:
     CELERY_MODERATION_PREFETCH: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_PREFETCH", "1", conv=int))
     CELERY_MODERATION_MAX_IMAGE_BYTES: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_MAX_IMAGE_BYTES", str(5 * 1024 * 1024), conv=int))
     CELERY_MODERATION_MAX_PAYLOAD_BYTES: int = field(default_factory=lambda: _get_env("CELERY_MODERATION_MAX_PAYLOAD_BYTES", str(256 * 1024), conv=int))
-    # Global default for run_coro_sync; periodic refunds requeue uses task-local timeout
-    # in app/tasks/periodic.py to avoid blind global increases.
     CELERY_RUN_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("CELERY_RUN_TIMEOUT_SEC", "120", conv=float))
     MEDIA_PREPROCESS_TIMEOUT_SEC: float = field(default_factory=lambda: _get_env("MEDIA_PREPROCESS_TIMEOUT_SEC", "20", conv=float))
     MEDIA_MAX_INPUT_BYTES: int = field(default_factory=lambda: _get_env("MEDIA_MAX_INPUT_BYTES", str(30 * 1024 * 1024), conv=int))
