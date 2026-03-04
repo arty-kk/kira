@@ -63,7 +63,6 @@ class ResponderStmPromptTests(unittest.IsolatedAsyncioTestCase):
              patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=history.copy())), \
-             patch.object(core, "needs_coref", AsyncMock(return_value=False)), \
              patch.object(
                  core,
                  "_compute_on_topic_relevance",
