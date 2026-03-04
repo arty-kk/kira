@@ -139,6 +139,7 @@ class _FakeBot:
     def __init__(self):
         self.session = _FakeSession()
         self.last_set_webhook_kwargs = None
+        self.set_webhook_calls = []
         _FakeBot.last_instance = self
 
     async def get_me(self):
@@ -146,6 +147,7 @@ class _FakeBot:
 
     async def set_webhook(self, **kwargs):
         self.last_set_webhook_kwargs = kwargs
+        self.set_webhook_calls.append(kwargs)
         side_effect = _FakeBot.set_webhook_side_effect
         if isinstance(side_effect, Exception):
             raise side_effect
@@ -226,6 +228,8 @@ def _load_webhook_module():
         WEBHOOK_FEED_UPDATE_TIMEOUT_SEC=1,
         WEBHOOK_DROP_PENDING_UPDATES=True,
         WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION=False,
+        WEBHOOK_REGISTRATION_MAX_ATTEMPTS=3,
+        WEBHOOK_REGISTRATION_RETRY_DELAY_SEC=0,
         ALLOWED_GROUP_IDS=[],
         MEMORY_TTL_DAYS=1,
     )
@@ -256,7 +260,12 @@ def _load_webhook_module():
     fake_aiogram = types.ModuleType("aiogram")
     fake_aiogram.types = types.SimpleNamespace(Update=dict)
     fake_aiogram_types = types.ModuleType("aiogram.types")
-    fake_aiogram_types.FSInputFile = object
+
+    class _FakeFSInputFile:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    fake_aiogram_types.FSInputFile = _FakeFSInputFile
 
     injected_modules = {
         "app": fake_app,
@@ -308,6 +317,12 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
             sys.meta_path.insert(0, HANDLERS_FINDER)
         _FakeBot.set_webhook_side_effect = None
         webhook.settings.WEBHOOK_ALLOW_START_WITHOUT_REGISTRATION = False
+        webhook.settings.USE_SELF_SIGNED_CERT = False
+        webhook.settings.WEBHOOK_REGISTRATION_MAX_ATTEMPTS = 3
+        webhook.settings.WEBHOOK_REGISTRATION_RETRY_DELAY_SEC = 0
+        if _FakeBot.last_instance is not None:
+            _FakeBot.last_instance.set_webhook_calls.clear()
+            _FakeBot.last_instance.last_set_webhook_kwargs = None
 
 
     async def asyncTearDown(self):
@@ -378,6 +393,38 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
             await webhook.start_bot(stop_event=stop_event)
 
         self.assertTrue(any("Starting bot without successful webhook registration" in message for message in logs.output))
+
+
+    async def test_start_bot_retries_webhook_registration_until_success(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+
+        calls = {"n": 0}
+
+        def side_effect():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                return Exception("temporary error")
+            return None
+
+        _FakeBot.set_webhook_side_effect = side_effect
+
+        await webhook.start_bot(stop_event=stop_event)
+
+        self.assertIsNotNone(_FakeBot.last_instance)
+        self.assertEqual(len(_FakeBot.last_instance.set_webhook_calls), 3)
+
+    async def test_start_bot_fails_after_registration_retry_limit(self):
+        stop_event = asyncio.Event()
+        stop_event.set()
+        webhook.settings.WEBHOOK_REGISTRATION_MAX_ATTEMPTS = 2
+        _FakeBot.set_webhook_side_effect = Exception("boom")
+
+        with self.assertRaisesRegex(RuntimeError, "webhook registration failed"):
+            await webhook.start_bot(stop_event=stop_event)
+
+        self.assertIsNotNone(_FakeBot.last_instance)
+        self.assertEqual(len(_FakeBot.last_instance.set_webhook_calls), 2)
 
 
     async def test_start_command_fails_without_handler_side_effect_registration(self):
