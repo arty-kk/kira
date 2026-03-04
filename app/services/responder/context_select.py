@@ -226,6 +226,7 @@ async def rerank_with_llm(query: str, items: List[str], topk: int = 20, batch: i
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.BASE_MODEL,
+                    model_role="base",
                     input=prompt,
                     max_output_tokens=256,
                     temperature=0,
@@ -344,6 +345,7 @@ async def _expand_queries_for_ltm(query: str) -> List[str]:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.BASE_MODEL,
+                model_role="base",
                 input=prompt,
                 max_output_tokens=160,
                 temperature=0,
@@ -377,6 +379,7 @@ async def select_snippets_via_nano(
     candidates: List[str],
     max_tokens: int,
     model: Optional[str] = None,
+    model_role: Optional[str] = None,
     mtm_stage: Optional[str] = None,
 ) -> str:
     
@@ -399,10 +402,13 @@ async def select_snippets_via_nano(
         _t0 = time_module.perf_counter()
         timeout_sel = _NANO_TIMEOUT_MTM if src == "MTM" else _NANO_TIMEOUT_LTM
         chosen_model = model or settings.BASE_MODEL
+        inferred_role = "base" if model is None else "regular"
+        chosen_model_role = (model_role or inferred_role).strip().lower()
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=chosen_model,
+                model_role=chosen_model_role,
                 input=prompt,
                 max_output_tokens=max_tokens,
                 temperature=0,
@@ -578,6 +584,7 @@ async def summarize_mtm_topic(history_msgs: List[Dict], last_pairs: int = 2) -> 
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.BASE_MODEL,
+                model_role="base",
                 input=prompt,
                 max_output_tokens=100,
                 temperature=0,

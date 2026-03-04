@@ -613,11 +613,11 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
 
     try:
         resp = await asyncio.wait_for(
-            _call_openai_with_retry(
-                endpoint="responses.create",
-                model=getattr(settings, "MODERATION_PROFILE_NSFW_MODEL", "gpt-5-nano"),
-                reasoning={"effort": getattr(settings, "MODERATION_AI_REASONING_EFFORT", "low")},
-                input=[
+                _call_openai_with_retry(
+                    endpoint="responses.create",
+                    model=settings.BASE_MODEL,
+                    model_role="base",
+                    input=[
                     {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
                     {
                         "role": "user",
@@ -694,8 +694,8 @@ async def moderate_with_openai(
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
-                    model=settings.MODERATION_MODEL,
-                    reasoning={"effort": getattr(settings, "MODERATION_AI_REASONING_EFFORT", "low")},
+                    model=settings.BASE_MODEL,
+                    model_role="base",
                     input=[
                         {"role": "system", "content": [{"type": "input_text", "text": moderation_prompt}]},
                         {"role": "user", "content": user_content},
@@ -733,7 +733,7 @@ async def moderate_with_openai(
 
     logger.info(
         "moderation result: model=%s flagged=%s category=%s message_hash=%s message_len=%s flags=%s",
-        settings.MODERATION_MODEL,
+        settings.BASE_MODEL,
         flagged,
         primary_category or "-",
         msg_hash,

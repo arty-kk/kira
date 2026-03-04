@@ -146,6 +146,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                             _call_openai_with_retry(
                                 endpoint="responses.create",
                                 model=settings.REASONING_MODEL,
+                                model_role="regular",
                                 input=_compress_prompt(buf),
                                 max_output_tokens=SAFE_MAX_OUT,
                                 temperature=0,
@@ -161,6 +162,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                         _call_openai_with_retry(
                             endpoint="responses.create",
                             model=settings.REASONING_MODEL,
+                            model_role="regular",
                             input=_compress_prompt(buf),
                             max_output_tokens=SAFE_MAX_OUT,
                             temperature=0,
@@ -173,6 +175,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                     _call_openai_with_retry(
                         endpoint="responses.create",
                         model=settings.REASONING_MODEL,
+                        model_role="regular",
                         input=_merge_prompt("", merged_partials, LTM_MAX),
                         max_output_tokens=SAFE_MAX_OUT,
                         temperature=0,
@@ -187,6 +190,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                     _call_openai_with_retry(
                         endpoint="responses.create",
                         model=settings.REASONING_MODEL,
+                        model_role="regular",
                         input=_compress_prompt(picked),
                         max_output_tokens=SAFE_MAX_OUT,
                         temperature=0,
@@ -232,6 +236,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
+                    model_role="regular",
                     input=_merge_prompt(old_ltm, new_slice, LTM_MAX),
                     max_output_tokens=SAFE_MAX_OUT,
                     temperature=0,
@@ -344,6 +349,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                     _call_openai_with_retry(
                         endpoint="responses.create",
                         model=settings.REASONING_MODEL,
+                        model_role="regular",
                         instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
                         input=prompt,
                         max_output_tokens=192,
@@ -363,6 +369,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
+                    model_role="regular",
                     instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
                     input=prompt,
                     max_output_tokens=192,
@@ -380,6 +387,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
+                    model_role="regular",
                     instructions=SUMMARIZE_CONSOLIDATE_INSTRUCTIONS,
                     input=prompt,
                     max_output_tokens=192,

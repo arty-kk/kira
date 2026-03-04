@@ -903,6 +903,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.PING_MODEL,
+                model_role="regular",
                 input=[
                     _msg("system", system_msg),
                     _msg("user", prompt),

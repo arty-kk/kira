@@ -50,12 +50,12 @@ async def _rewrite_with_prompt(query: str, snippet: List[Dict[str, str]]) -> str
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
-                model="gpt-5-nano",
+                model=settings.BASE_MODEL,
+                model_role="base",
                 input=msgs,
-                reasoning={"effort": "low"},
                 max_output_tokens=160,
             ),
-            timeout=settings.REASONING_MODEL_TIMEOUT,
+            timeout=settings.BASE_MODEL_TIMEOUT,
         )
         raw = (_get_output_text(resp) or "").strip()
         if not raw:

@@ -22,6 +22,44 @@ ALLOWED_CHATS = list(getattr(settings, "ALLOWED_GROUP_IDS", []) or [])
 
 LAT_BUCKETS = [1000, 3000, 7000, 15000, 30000, 60000, 120000]
 
+
+_TRIGGER_LABELS: Dict[str, str] = {
+    "mention": "mention",
+    "check_on_topic": "auto_reply",
+    "channel_post": "channel_post",
+    "api": "api",
+    "gift": "gift",
+    "unknown": "unknown",
+}
+
+
+def _normalize_trigger_label(raw: str) -> str:
+    key = (raw or "").strip().lower()
+    if not key:
+        key = "unknown"
+    return _TRIGGER_LABELS.get(key, key)
+
+
+def _format_assistant_triggers_for_report(assistant_by_trigger: Dict[str, int]) -> str:
+    if not assistant_by_trigger:
+        return ""
+
+    rolled: Dict[str, int] = {}
+    for raw_key, cnt in assistant_by_trigger.items():
+        label = _normalize_trigger_label(_b2s(raw_key))
+        rolled[label] = rolled.get(label, 0) + int(cnt or 0)
+
+    ordered_keys = ["mention", "auto_reply", "channel_post", "api", "gift", "unknown"]
+    parts: List[str] = []
+    for key in ordered_keys:
+        if key in rolled:
+            parts.append(f"{html.escape(key)}:{rolled.pop(key)}")
+
+    for key in sorted(rolled.keys()):
+        parts.append(f"{html.escape(key)}:{rolled[key]}")
+
+    return ", ".join(parts)
+
 def _today_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -392,7 +430,7 @@ def _render_html(chat_id: int, date_human: str, snap: Dict, *, chat_title: str =
 
     lines.append("")
     lines.append("👥 <b>Social & Engagement</b>")
-    lines.append(f"▫️ <b>Addressed to persona:</b> {snap.get('addressed_to_bot', 0)}")
+    lines.append(f"▫️ <b>Direct mentions to bot:</b> {snap.get('addressed_to_bot', 0)}")
     if snap.get("link_msgs"):
         lines.append(f"▫️ <b>Messages with links:</b> {snap.get('link_msgs', 0)}")
     lines.append(f"▫️ <b>New members:</b> {snap.get('new_users_total', 0)} (unique: {snap.get('new_users_unique', 0)})")
@@ -412,8 +450,9 @@ def _render_html(chat_id: int, date_human: str, snap: Dict, *, chat_title: str =
 
     abt = snap.get("assistant_by_trigger", {})
     if abt:
-        parts = [f"{html.escape(k)}:{v}" for k, v in sorted(abt.items(), key=lambda x: x[0])]
-        lines.append("▫️ <b>Assistant triggers (by source):</b> " + ", ".join(parts))
+        parts = _format_assistant_triggers_for_report(abt)
+        if parts:
+            lines.append("▫️ <b>Assistant triggers (by source):</b> " + parts)
 
     pr = snap.get("ping_resp", {})
     ps = snap.get("ping_sent", {})
@@ -466,6 +505,7 @@ async def _llm_insights(markdown_metrics: str) -> Optional[str]:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.REASONING_MODEL,
+                model_role="regular",
                 input=[
                     {"role": "system", "content": ANALYTICS_LLM_INSIGHTS_SYSTEM_PROMPT},
                     {
@@ -495,11 +535,13 @@ async def generate_and_send_report_for_chat(chat_id: int, date_obj: datetime.dat
     chat_title = await _resolve_chat_title(chat_id)
     html_body = _render_html(chat_id, snap["date"], snap, chat_title=chat_title)
 
+    trigger_breakdown = _format_assistant_triggers_for_report(snap.get("assistant_by_trigger", {}) or {})
     metrics_text = (
         f"date={snap['date']}, "
         f"msgs={snap.get('msg_total', 0)}, "
         f"active={snap.get('active_users', 0)}, "
         f"assistant={snap.get('assistant_total', 0)}, "
+        f"assistant_triggers=[{trigger_breakdown or 'none'}], "
         f"on_topic={{checked:{snap.get('on_topic_checked', 0)}, "
         f"ok:{snap.get('on_topic_ok', 0)}, "
         f"suppressed:{snap.get('on_topic_suppressed', 0)}}}, "

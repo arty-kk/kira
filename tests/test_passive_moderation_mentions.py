@@ -674,12 +674,14 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         call_mock = AsyncMock(return_value=response)
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
         ):
             flagged = await passive_moderation.moderate_with_openai("", image_b64="Zm9v", image_mime="image/png")
 
         self.assertFalse(flagged)
+        self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
+        self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
         sent_input = call_mock.await_args.kwargs["input"]
         self.assertEqual(sent_input[1]["role"], "user")
         content = sent_input[1]["content"]
@@ -690,7 +692,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":true,"insult_abuse":false,"threat_abuse":false}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("income text")
@@ -702,7 +704,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false,"sex_abuse":true}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("sexual text")
@@ -714,7 +716,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("neutral text")
@@ -727,12 +729,14 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         call_mock = AsyncMock(return_value=response)
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
         ):
             flagged = await passive_moderation.moderate_with_openai("hello", image_b64="Zm9v", image_mime="image/png")
 
         self.assertFalse(flagged)
+        self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
+        self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
         sent_input = call_mock.await_args.kwargs["input"]
         content = sent_input[1]["content"]
         self.assertEqual(len(content), 2)

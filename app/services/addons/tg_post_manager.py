@@ -512,6 +512,7 @@ async def _rephrase_opening_once(
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input(
                     [
                         {"role": "system", "content": TG_POST_REWRITE_SYSTEM_PROMPT},
@@ -1023,6 +1024,7 @@ async def _fetch_ai_news_digest(local_now: datetime) -> list[NewsItem]:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input(
                     [
                         {"role": "system", "content": system_text},
@@ -1064,6 +1066,7 @@ async def _summarize_keywords(items: list[NewsItem]) -> str:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input(
                     [
                         {"role": "system", "content": TG_POST_TOPICS_SYSTEM_PROMPT},
@@ -1656,6 +1659,7 @@ async def _rewrite_post_without_calls(post_text: str, char_limit: int = POST_CHA
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input(
                     [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
                 ),
@@ -1692,6 +1696,7 @@ async def _judge_candidate_llm(candidate: str, story_block: str, rubric: str, re
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input([{"role": "system", "content": system_text}, {"role": "user", "content": user_text}]),
                 temperature=0.1,
                 max_output_tokens=280,
@@ -1799,6 +1804,7 @@ async def _polish_post(draft: str, story_block: str, rubric: str, char_limit: in
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input([{"role": "system", "content": system_text}, {"role": "user", "content": user_text}]),
                 temperature=0.25,
                 max_output_tokens=520,
@@ -2016,6 +2022,7 @@ async def _build_image_prompt_grounded(story: NewsItem | None, post_text: str, m
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=model,
+                model_role="regular",
                 input=_to_responses_input(
                     [{"role": "system", "content": sys}, {"role": "user", "content": usr}]
                 ),
@@ -2328,6 +2335,7 @@ async def _generate_post_image_bytes(redis, channel_id: int, story: NewsItem | N
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=tool_model,
+                model_role="regular",
                 input=_to_responses_input(
                     [
                         {"role": "system", "content": TG_POST_IMAGE_SYSTEM_PROMPT},
@@ -2729,6 +2737,7 @@ async def generate_and_post_tg() -> None:
                             _call_openai_with_retry(
                                 endpoint="responses.create",
                                 model=post_model,
+                                model_role="regular",
                                 input=_to_responses_input(messages),
                                 temperature=t,
                                 top_p=p,

@@ -167,6 +167,7 @@ async def generate_and_post_tweet() -> None:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.POST_MODEL,
+                model_role="regular",
                 input=_to_responses_input([
                     {"role": "system", "content": TWITTER_NEWS_SYSTEM_PROMPT},
                     {"role": "user", "content": news_prompt},
@@ -215,6 +216,7 @@ async def generate_and_post_tweet() -> None:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.POST_MODEL,
+                model_role="regular",
                 input=_to_responses_input(messages),
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,

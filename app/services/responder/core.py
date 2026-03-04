@@ -2080,6 +2080,7 @@ async def respond_to_user(
         if internal_plan_enabled and is_channel_post and (query_to_model or "").strip():
             try:
                 reasoning_model = settings.REASONING_MODEL if mods.get("technical_mod", 0) > 0.6 else settings.BASE_MODEL
+                reasoning_model_role = "reasoning" if mods.get("technical_mod", 0) > 0.6 else "regular"
                 ctx = _history_tail_for_plan(history_llm, limit=int(getattr(settings, "PLAN_CONTEXT_TAIL", 8) or 8))
                 plan_user = (ctx + "\n\nUSER_NOW: " + query_to_model).strip() if ctx else ("USER_NOW: " + query_to_model)
                 llm_start = time.perf_counter()
@@ -2087,6 +2088,7 @@ async def respond_to_user(
                     _call_openai_with_retry(
                         endpoint="responses.create",
                         model=reasoning_model,
+                        model_role=reasoning_model_role,
                         input=[
                             _msg("system", RESPONDER_INTERNAL_PLAN_SYSTEM_PROMPT),
                             _msg("user", plan_user),
@@ -2124,6 +2126,7 @@ async def respond_to_user(
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     model=eff_response_model,
+                    model_role=("regular" if eff_response_model in (settings.BASE_MODEL, settings.REASONING_MODEL) else ""),
                     endpoint="responses.create",
                     input=messages,
                     max_output_tokens=max_tokens,
@@ -2155,6 +2158,7 @@ async def respond_to_user(
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     model=eff_response_model,
+                    model_role=("regular" if eff_response_model in (settings.BASE_MODEL, settings.REASONING_MODEL) else ""),
                     endpoint="responses.create",
                     input=messages,
                     max_output_tokens=max_tokens,
