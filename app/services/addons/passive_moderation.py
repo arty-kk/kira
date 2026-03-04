@@ -779,6 +779,11 @@ async def check_light(
     if mention_count > int(getattr(settings, "MODERATION_SPAM_MENTION_THRESHOLD", 5)):
         return "spam_mentions"
 
+    custom_emoji_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "custom_emoji")
+    custom_emoji_threshold = int(getattr(settings, "MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD", 12) or 0)
+    if custom_emoji_threshold > 0 and custom_emoji_count >= custom_emoji_threshold:
+        return "custom_emoji_spam"
+
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 

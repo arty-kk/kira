@@ -520,6 +520,7 @@ async def handle_passive_moderation(
                 "sexual_content": "Sexual/erotic content policy violation",
                 "emoji_flood": "Emoji flood / visual spam",
                 "symbol_noise": "Obfuscated symbol/noise flood",
+                "custom_emoji_spam": "Custom emoji flood",
                 "light_timeout_risk": "Light moderation timeout (risk fallback)",
             }
             reason_text = reason_map.get(light_status, "Unknown reason")
@@ -1394,6 +1395,17 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
             if t in ("mention", "text_mention"):
                 await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("mention"), user_id=u.id)
                 return await _delete_and_handle("mention")
+
+    custom_emoji_threshold = int(getattr(settings, "MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD", 12) or 0)
+    if custom_emoji_threshold > 0:
+        custom_emoji_count = sum(
+            1
+            for e in ents
+            if str(e.type.value if hasattr(e.type, "value") else e.type).lower() == "custom_emoji"
+        )
+        if custom_emoji_count >= custom_emoji_threshold:
+            await _flag(chat_id, message.message_id, action="delete", reason=_ctx_reason("custom_emoji_spam"), user_id=u.id)
+            return await _delete_and_handle("custom_emoji_spam")
 
     if not settings.MODERATION_ALLOW_CUSTOM_EMOJI:
         for e in ents:
