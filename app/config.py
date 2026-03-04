@@ -346,17 +346,17 @@ class Settings:
         ]
     )
     #Purchase Tiers for Requests
-    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 105: 500, 220: 1000, 575: 2500})
+    PURCHASE_TIERS: Dict[int, int] = field(default_factory=lambda: {50: 250, 125: 500, 333: 1000, 833: 2500})
     GIFT_TIERS: List[Dict[str, Any]] = field(
         default_factory=lambda: [
-            {"code": "matcha",        "title": "Matcha Latte",        "emoji": "🍵", "price_stars": 30,   "requests": 6},
-            {"code": "plushie",       "title": "Kawaii Plushie",      "emoji": "🧸", "price_stars": 60,   "requests": 12},
-            {"code": "keyboard_skin", "title": "Keyboard Skin",       "emoji": "⌨️",  "price_stars": 120,  "requests": 24},
-            {"code": "cat_headset",   "title": "Cat-Ear Headset",     "emoji": "🎧", "price_stars": 240,  "requests": 48},
-            {"code": "game_pass",     "title": "Game Pass",           "emoji": "🎮", "price_stars": 480,  "requests": 96},
-            {"code": "energy_drink",  "title": "Energy Drink Crate",  "emoji": "🥤", "price_stars": 960,  "requests": 192},
-            {"code": "rgb_setup",     "title": "RGB Setup",           "emoji": "🌈", "price_stars": 1920, "requests": 384},
-            {"code": "stream_throne", "title": "Streamer Throne",     "emoji": "🪑", "price_stars": 3840, "requests": 768},
+            {"code": "matcha",        "title": "Matcha Latte",        "emoji": "🍵", "price_stars": 100,   "requests": 20},
+            {"code": "plushie",       "title": "Kawaii Plushie",      "emoji": "🧸", "price_stars": 100,   "requests": 20},
+            {"code": "keyboard_skin", "title": "Keyboard Skin",       "emoji": "⌨️",  "price_stars": 250,  "requests": 50},
+            {"code": "cat_headset",   "title": "Cat-Ear Headset",     "emoji": "🎧", "price_stars": 250,  "requests": 50},
+            {"code": "game_pass",     "title": "Game Pass",           "emoji": "🎮", "price_stars": 500,  "requests": 125},
+            {"code": "energy_drink",  "title": "Energy Drink Crate",  "emoji": "🥤", "price_stars": 500,  "requests": 125},
+            {"code": "rgb_setup",     "title": "RGB Setup",           "emoji": "🌈", "price_stars": 1000, "requests": 333},
+            {"code": "stream_throne", "title": "Streamer Throne",     "emoji": "🪑", "price_stars": 2500, "requests": 833},
         ]
     )
     PAYMENT_CURRENCY: str = field(default_factory=lambda: _get_env("PAYMENT_CURRENCY", "XTR"))
