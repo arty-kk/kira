@@ -338,7 +338,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)), \
-             patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)), \
+             patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight, \
              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)), \
              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()), \
              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()), \
@@ -374,7 +374,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         }
 
         with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)), \
-             patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)), \
+             patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight, \
              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)), \
              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()), \
              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()), \
@@ -615,7 +615,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 77,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(side_effect=queue_worker.ReplyTerminalError("terminal"))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(side_effect=queue_worker.ReplyTerminalError("terminal"))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(legacy_job), "q:in:processing")
 
         refund_reservation.assert_awaited_once_with(77)
@@ -710,7 +710,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 333,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", send_reply_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", send_reply_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         redis_stub.hget.assert_awaited_once_with("mod:msg:-100909:200", "status")
@@ -748,7 +748,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 334,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1003))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1003))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
@@ -784,24 +784,23 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 335,
         }
 
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1004))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1004))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
         typing_mock.assert_not_called()
         queue_worker.BOT.send_chat_action.assert_not_awaited()
-        refund_reservation.assert_awaited_once_with(335)
+        delete_inflight.assert_awaited_once()
+        refund_reservation.assert_not_awaited()
+        self.assertEqual(len(fake_queue.lpush_calls), 1)
 
-    async def test_group_trigger_skips_when_moderation_signal_missing_for_trusted_chat_without_inflight(self):
+    async def test_group_trigger_missing_moderation_signal_requeues_with_attempt_increment(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
         queue_worker.TYPING_ENABLED = True
         queue_worker.TYPING_SKIP_GROUPS = False
         queue_worker.BOT = types.SimpleNamespace(send_chat_action=AsyncMock(), send_message=AsyncMock())
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
 
         redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
         queue_worker.get_redis = lambda: redis_stub
@@ -822,23 +821,22 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 336,
         }
 
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MAX_MODERATION_WAIT_RETRIES", 3),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
-        delete_inflight.assert_not_awaited()
-        mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted missing moderation status must skip without requeue")
+        delete_inflight.assert_awaited_once()
+        mark_done.assert_not_awaited()
+        refund_reservation.assert_not_awaited()
+        self.assertEqual(len(fake_queue.lpush_calls), 1)
+        queued_payload = json.loads(fake_queue.lpush_calls[0][1])
+        self.assertEqual(queued_payload.get("moderation_wait_attempt"), 1)
 
-    async def test_group_trigger_skips_on_attempt_limit_without_inflight(self):
+    async def test_group_trigger_missing_moderation_signal_becomes_terminal_after_retry_limit(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
         queue_worker.TYPING_ENABLED = False
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
 
         redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
         queue_worker.get_redis = lambda: redis_stub
@@ -856,38 +854,28 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "is_channel_post": False,
             "trigger": "mention",
             "reservation_id": 336,
+            "moderation_wait_attempt": 2,
         }
 
-        fake_queue.kv["q:job:-100912:212:modwait_attempt"] = 1
-        fake_queue.kv["q:job:-100912:212:modwait_first_ts"] = 1008
-
-        error_log = unittest.mock.Mock()
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 2),              patch.object(queue_worker, "time", types.SimpleNamespace(time=lambda: 1010, monotonic=lambda: 0.0)),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker.logger, "error", error_log):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MAX_MODERATION_WAIT_RETRIES", 2),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         delete_inflight.assert_not_awaited()
         mark_done.assert_awaited_once()
         refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted moderation wait without inflight should skip")
-        self.assertEqual(error_log.call_args_list, [])
+        self.assertEqual(fake_queue.lpush_calls, [])
 
-    async def test_group_trigger_missing_moderation_signal_skips_when_wait_limit_disabled(self):
-        fake_queue = _FakeQueueRedis()
+
+    async def test_group_trigger_missing_moderation_signal_requeue_failure_sets_done_marker(self):
+        fake_queue = _FakeQueueRedis(pipeline_execute_error=Exception("pipeline broken"))
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
         queue_worker.TYPING_ENABLED = False
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
 
-        redis_stub = types.SimpleNamespace(
-            hget=AsyncMock(return_value=None),
-            get=AsyncMock(side_effect=lambda key: "token" if key == "mod:inflight:-100912:212" else None),
-            set=AsyncMock(),
-        )
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
         queue_worker.get_redis = lambda: redis_stub
 
-        mark_done = AsyncMock(return_value=1)
+        mark_done = AsyncMock(return_value=0)
         refund_reservation = AsyncMock(return_value=None)
 
         job = {
@@ -900,148 +888,53 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "is_channel_post": False,
             "trigger": "mention",
             "reservation_id": 336,
+            "moderation_wait_attempt": 0,
         }
 
-        fake_queue.kv["q:job:-100912:212:modwait_attempt"] = 1
-        fake_queue.kv["q:job:-100912:212:modwait_first_ts"] = 1008
-
-        error_log = unittest.mock.Mock()
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 2),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 0),              patch.object(queue_worker, "time", types.SimpleNamespace(time=lambda: 1010, monotonic=lambda: 0.0)),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker.logger, "error", error_log):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MAX_MODERATION_WAIT_RETRIES", 2),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(side_effect=lambda *_args, **_kwargs: fake_queue.kv.pop("q:job:-100912:212", None) or 1)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
-        delete_inflight.assert_not_awaited()
         mark_done.assert_awaited_once()
         refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted moderation missing signal should skip when wait limit disabled")
-        self.assertEqual(error_log.call_args_list, [])
+        self.assertEqual(fake_queue.kv.get("q:job:-100912:212"), "done")
+        self.assertEqual(fake_queue.lpush_calls, [])
 
-    async def test_group_trigger_missing_moderation_signal_skips_on_wait_limit(self):
-        fake_queue = _FakeQueueRedis()
+    async def test_group_trigger_missing_moderation_signal_requeue_failure_does_not_override_foreign_inflight(self):
+        fake_queue = _FakeQueueRedis(pipeline_execute_error=Exception("pipeline broken"))
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
         queue_worker.TYPING_ENABLED = False
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
 
-        redis_stub = types.SimpleNamespace(
-            hget=AsyncMock(return_value=None),
-            get=AsyncMock(side_effect=lambda key: "token" if key == "mod:inflight:-100912:212" else None),
-            set=AsyncMock(),
-        )
+        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
         queue_worker.get_redis = lambda: redis_stub
 
-        mark_done = AsyncMock(return_value=1)
+        async def _mark_done_side_effect(*_args, **_kwargs):
+            fake_queue.kv["q:job:-100913:213"] = "inflight:other-owner"
+            return 0
+
+        mark_done = AsyncMock(side_effect=_mark_done_side_effect)
         refund_reservation = AsyncMock(return_value=None)
 
         job = {
-            "chat_id": -100912,
-            "user_id": 912,
+            "chat_id": -100913,
+            "user_id": 913,
             "text": "hello",
-            "msg_id": 212,
-            "reply_to": 212,
+            "msg_id": 213,
+            "reply_to": 213,
             "is_group": True,
             "is_channel_post": False,
             "trigger": "mention",
-            "reservation_id": 336,
+            "reservation_id": 337,
+            "moderation_wait_attempt": 0,
         }
 
-        fake_queue.kv["q:job:-100912:212:modwait_first_ts"] = 1000
-
-        error_log = unittest.mock.Mock()
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 10),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 5),              patch.object(queue_worker, "time", types.SimpleNamespace(time=lambda: 1010, monotonic=lambda: 0.0)),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker.logger, "error", error_log):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MAX_MODERATION_WAIT_RETRIES", 2),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(side_effect=lambda *_args, **_kwargs: fake_queue.kv.pop("q:job:-100913:213", None) or 1)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
-        delete_inflight.assert_not_awaited()
         mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted moderation missing signal should skip on wait limit")
-        self.assertEqual(error_log.call_args_list, [])
-
-    async def test_group_trigger_missing_moderation_signal_skips_even_when_inflight_present(self):
-        fake_queue = _FakeQueueRedis()
-        queue_worker.REDIS_QUEUE = fake_queue
-        queue_worker.CHATTY_MODE = False
-        queue_worker.TYPING_ENABLED = False
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
-
-        redis_stub = types.SimpleNamespace(
-            hget=AsyncMock(return_value=None),
-            get=AsyncMock(side_effect=lambda key: "token" if key == "mod:inflight:-100912:212" else None),
-            set=AsyncMock(),
-        )
-        queue_worker.get_redis = lambda: redis_stub
-
-        mark_done = AsyncMock(return_value=1)
-        refund_reservation = AsyncMock(return_value=None)
-
-        job = {
-            "chat_id": -100912,
-            "user_id": 912,
-            "text": "hello",
-            "msg_id": 212,
-            "reply_to": 212,
-            "is_group": True,
-            "is_channel_post": False,
-            "trigger": "mention",
-            "reservation_id": 336,
-        }
-
-        fake_queue.kv["q:job:-100912:212:modwait_attempt"] = 1
-        fake_queue.kv["q:job:-100912:212:modwait_first_ts"] = 1008
-
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", 2),              patch.object(queue_worker, "MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", 5),              patch.object(queue_worker, "time", types.SimpleNamespace(time=lambda: 1010, monotonic=lambda: 0.0)),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker.asyncio, "sleep", AsyncMock()) as sleep_mock,              patch.object(queue_worker.logger, "error", unittest.mock.Mock()):
-            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
-
-        delete_inflight.assert_not_awaited()
-        mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted moderation missing signal should skip without requeue")
-        sleep_mock.assert_not_awaited()
-
-    async def test_group_trigger_missing_moderation_signal_ignores_tracking_counters_and_skips(self):
-        fake_queue = _FakeQueueRedis()
-        fake_queue.incr = AsyncMock(side_effect=Exception("redis unavailable"))
-        queue_worker.REDIS_QUEUE = fake_queue
-        queue_worker.CHATTY_MODE = False
-        queue_worker.TYPING_ENABLED = False
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [-100912])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
-
-        redis_stub = types.SimpleNamespace(
-            hget=AsyncMock(return_value=None),
-            get=AsyncMock(side_effect=lambda key: "token" if key == "mod:inflight:-100912:212" else None),
-            set=AsyncMock(),
-        )
-        queue_worker.get_redis = lambda: redis_stub
-
-        mark_done = AsyncMock(return_value=1)
-        refund_reservation = AsyncMock(return_value=None)
-
-        job = {
-            "chat_id": -100912,
-            "user_id": 912,
-            "text": "hello",
-            "msg_id": 212,
-            "reply_to": 212,
-            "is_group": True,
-            "is_channel_post": False,
-            "trigger": "mention",
-            "reservation_id": 336,
-        }
-
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", AsyncMock(return_value="reply")),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
-            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
-
-        delete_inflight.assert_not_awaited()
-        mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(336)
-        self.assertEqual(fake_queue.lpush_calls, [], "missing moderation signal should skip without tracking counters")
-
-    async def test_group_trigger_skips_when_moderation_signal_missing_for_trusted_comment_context_without_inflight(self):
+        refund_reservation.assert_awaited_once_with(337)
+        self.assertEqual(fake_queue.kv.get("q:job:-100913:213"), "inflight:other-owner")
+    async def test_group_trigger_missing_moderation_signal_requeues_for_comment_context(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
@@ -1077,54 +970,12 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
-        delete_inflight.assert_not_awaited()
-        mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(338)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted comment context without clean moderation should skip")
-
-    async def test_group_trigger_skips_when_moderation_signal_missing_for_trusted_comment_context_image_job_without_inflight(self):
-        fake_queue = _FakeQueueRedis()
-        queue_worker.REDIS_QUEUE = fake_queue
-        queue_worker.CHATTY_MODE = False
-        queue_worker.TYPING_ENABLED = True
-        queue_worker.TYPING_SKIP_GROUPS = False
-        queue_worker.BOT = types.SimpleNamespace(send_chat_action=AsyncMock(), send_message=AsyncMock())
-        setattr(queue_worker.settings, "ALLOWED_GROUP_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_TARGET_CHAT_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_SOURCE_CHANNEL_IDS", [])
-        setattr(queue_worker.settings, "COMMENT_MODERATION_ENABLED", True)
-
-        redis_stub = types.SimpleNamespace(hget=AsyncMock(return_value=None), set=AsyncMock())
-        queue_worker.get_redis = lambda: redis_stub
-
-        mark_done = AsyncMock(return_value=1)
-        refund_reservation = AsyncMock(return_value=None)
-        respond_mock = AsyncMock(return_value="reply")
-
-        job = {
-            "chat_id": -100993,
-            "user_id": 993,
-            "text": "",
-            "msg_id": 215,
-            "reply_to": 215,
-            "is_group": True,
-            "is_channel_post": False,
-            "trigger": "mention",
-            "reservation_id": 339,
-            "is_comment_context": True,
-            "image_b64": "aW1hZ2U=",
-            "image_mime": "image/jpeg",
-        }
-
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1008))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
-            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
-
-        respond_mock.assert_not_awaited()
-        delete_inflight.assert_not_awaited()
-        mark_done.assert_awaited_once()
-        refund_reservation.assert_awaited_once_with(339)
-        self.assertEqual(fake_queue.lpush_calls, [], "trusted comment context image job without clean moderation must skip")
-
+        delete_inflight.assert_awaited_once()
+        mark_done.assert_not_awaited()
+        refund_reservation.assert_not_awaited()
+        self.assertEqual(len(fake_queue.lpush_calls), 1)
+        queued_payload = json.loads(fake_queue.lpush_calls[0][1])
+        self.assertEqual(queued_payload.get("moderation_wait_attempt"), 1)
     async def test_group_trigger_clean_status_continues_for_trusted_chat(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
@@ -1154,13 +1005,13 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 337,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", AsyncMock(return_value=None)),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
         refund_reservation.assert_not_awaited()
 
-    async def test_channel_post_trigger_skips_when_moderation_signal_missing(self):
+    async def test_channel_post_trigger_requeues_when_moderation_signal_missing(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
@@ -1185,13 +1036,14 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 337,
         }
 
-        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0),              patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
-        mark_done.assert_awaited()
-        refund_reservation.assert_awaited_once_with(337)
-
+        delete_inflight.assert_awaited_once()
+        mark_done.assert_not_awaited()
+        refund_reservation.assert_not_awaited()
+        self.assertEqual(len(fake_queue.lpush_calls), 1)
     async def test_group_trigger_continues_when_moderation_status_clean(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
@@ -1215,7 +1067,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 336,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1005))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
@@ -1253,7 +1105,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         }
 
         try:
-            with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1105))),                  patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1105))),                  patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
                 await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
             redis_stub.hget.assert_not_awaited()
@@ -1300,7 +1152,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         }
 
         try:
-            with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1199))),                  patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1199))),                  patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
                 await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
             redis_stub.hget.assert_not_awaited()
@@ -1349,7 +1201,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
 
         mark_done = AsyncMock(return_value=1)
         try:
-            with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1299))),                  patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1299))),                  patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
                 await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
             redis_stub.hget.assert_not_awaited()
@@ -1399,7 +1251,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
 
         mark_done = AsyncMock(return_value=1)
         try:
-            with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1399))),                  patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),                  patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,                  patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),                  patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),                  patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_key", AsyncMock()),                  patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),                  patch.object(queue_worker, "respond_to_user", respond_mock),                  patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1399))),                  patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),                  patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),                  patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
                 await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
             redis_stub.hget.assert_not_awaited()
@@ -1435,7 +1287,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "knowledge_owner_id": 9988,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1006))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
@@ -1463,7 +1315,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 334,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1003))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1003))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
@@ -1493,7 +1345,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "knowledge_owner_id": 900,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=[])),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=[0.1, 0.2])),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=[])),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=[0.1, 0.2])),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
@@ -1525,7 +1377,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "knowledge_owner_id": 901,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=tag_hits)),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=query_embedding)),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=9003))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+        with patch.object(queue_worker, "_mark_done_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=tag_hits)),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=query_embedding)),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=9003))),              patch.object(queue_worker, "refund_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_awaited_once()
@@ -1533,8 +1385,9 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(respond_mock.await_args.kwargs.get("query_embedding"), query_embedding)
         self.assertEqual(respond_mock.await_args.kwargs.get("embedding_model"), queue_worker.settings.EMBEDDING_MODEL)
 
-    async def test_check_on_topic_skips_generation_when_moderation_signal_missing(self):
-        queue_worker.REDIS_QUEUE = _FakeQueueRedis()
+    async def test_check_on_topic_requeues_when_moderation_signal_missing(self):
+        fake_queue = _FakeQueueRedis()
+        queue_worker.REDIS_QUEUE = fake_queue
         queue_worker.CHATTY_MODE = False
         queue_worker.TYPING_ENABLED = False
 
@@ -1557,19 +1410,14 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             "reservation_id": 702,
         }
 
-        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=0)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=[(0.88, "id1", "chunk")])),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=[0.1, 0.2])),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0):
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)) as delete_inflight,              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "find_tag_hits", AsyncMock(return_value=[(0.88, "id1", "chunk")])),              patch.object(queue_worker, "_get_query_embedding", AsyncMock(return_value=[0.1, 0.2])),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)),              patch.object(queue_worker, "MODERATION_STATUS_WAIT_SEC", 0.0):
             await queue_worker.handle_job(json.dumps(job), "q:in:processing")
 
         respond_mock.assert_not_awaited()
-        mark_done.assert_awaited()
-        refund_reservation.assert_awaited_once_with(702)
-
-
-if __name__ == "__main__":
-    unittest.main()
-
-
-class VoiceFileTranscriptionRetryWrapperTests(unittest.IsolatedAsyncioTestCase):
+        delete_inflight.assert_awaited_once()
+        mark_done.assert_not_awaited()
+        refund_reservation.assert_not_awaited()
+        self.assertEqual(len(fake_queue.lpush_calls), 1)
     async def test_transcribe_voice_file_id_returns_empty_on_final_failure(self) -> None:
         async def _get_file(_file_id):
             return object()
