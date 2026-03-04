@@ -139,6 +139,7 @@ MODERATION_STATUS_POLL_SEC = float(settings.MODERATION_STATUS_POLL_SEC)
 MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS = int(settings.MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS)
 MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC = int(settings.MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC)
 MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC = int(settings.MODERATION_SIGNAL_INFLIGHT_REQUEUE_MAX_WAIT_SEC)
+MAX_MODERATION_WAIT_RETRIES = int(getattr(settings, "MAX_MODERATION_WAIT_RETRIES", 3))
 JOB_DONE_TTL = int(getattr(settings, "JOB_DONE_TTL", 86400))
 JOB_HEARTBEAT_INTERVAL = int(getattr(settings, "JOB_HEARTBEAT_INTERVAL", 10))
 REQUEUE_LOCK_TTL_SEC = int(getattr(settings, "QUEUE_REQUEUE_LOCK_TTL_SEC", 60))
@@ -1156,6 +1157,10 @@ async def handle_job(raw, processing_key: str) -> None:
     if billing_tier not in ("paid", "free", "none"):
         billing_tier = None
     entities   = job.get("entities") or []
+    try:
+        moderation_wait_attempt = int(job.get("moderation_wait_attempt") or 0)
+    except Exception:
+        moderation_wait_attempt = 0
     reservation_id = job.get("reservation_id")
     try:
         reservation_id = int(reservation_id) if reservation_id is not None else 0
@@ -1487,15 +1492,65 @@ async def handle_job(raw, processing_key: str) -> None:
                     return
 
                 if (mod_status != "clean") or read_failed:
+                    if moderation_wait_attempt >= MAX_MODERATION_WAIT_RETRIES:
+                        logger.warning(
+                            "MODERATION_STATUS_NOT_CLEAN_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s moderation_wait_attempt=%s retries_exhausted=1",
+                            chat_id,
+                            msg_id,
+                            mod_status,
+                            read_failed,
+                            moderation_wait_attempt,
+                        )
+                        with suppress(Exception):
+                            await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                        await _refund_reservation()
+                        return
+
+                    requeue_attempt = moderation_wait_attempt + 1
+                    requeue_job = dict(job)
+                    requeue_job["moderation_wait_attempt"] = requeue_attempt
+                    requeue_raw = json.dumps(requeue_job, ensure_ascii=False)
+                    try:
+                        await _delete_if_inflight(REDIS_QUEUE, job_key, value)
+                        await _delete_if_chatbusy_owner(REDIS_QUEUE, busy_key, busy_token)
+                        async with REDIS_QUEUE.pipeline() as p:
+                            p.lrem(processing_key, 1, raw)
+                            p.lpush(queue_key, requeue_raw)
+                            await p.execute()
+                        logger.warning(
+                            "MODERATION_WAIT_TIMEOUT_REQUEUED: chat_id=%s msg_id=%s status=%s read_failed=%s moderation_wait_attempt=%s",
+                            chat_id,
+                            msg_id,
+                            mod_status,
+                            read_failed,
+                            requeue_attempt,
+                        )
+                        remove_from_processing = False
+                        return
+                    except Exception as exc:
+                        logger.error(
+                            "MODERATION_WAIT_REQUEUE_FAILED: chat_id=%s msg_id=%s status=%s read_failed=%s moderation_wait_attempt=%s error=%s",
+                            chat_id,
+                            msg_id,
+                            mod_status,
+                            read_failed,
+                            requeue_attempt,
+                            exc,
+                        )
                     logger.warning(
-                        "MODERATION_STATUS_NOT_CLEAN_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s",
+                        "MODERATION_STATUS_NOT_CLEAN_SKIP: chat_id=%s msg_id=%s status=%s read_failed=%s moderation_wait_attempt=%s",
                         chat_id,
                         msg_id,
                         mod_status,
                         read_failed,
+                        moderation_wait_attempt,
                     )
+                    marked_done = 0
                     with suppress(Exception):
-                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                        marked_done = await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    if not marked_done:
+                        with suppress(Exception):
+                            await REDIS_QUEUE.set(job_key, "done", ex=JOB_DONE_TTL, nx=True)
                     await _refund_reservation()
                     return
                 else:
