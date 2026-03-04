@@ -139,9 +139,11 @@ async def _preprocess(payload: dict[str, Any]) -> str:
     message_id = _safe_int(payload.get("message_id"))
     file_id = (payload.get("file_id") or payload.get("document_id") or "").strip()
     suffix = str(payload.get("suffix") or ".jpg")
+    skip_responder_enqueue = bool(payload.get("skip_responder_enqueue"))
 
     if not file_id:
-        await _send_error(chat_id, "не найден file_id", message_id)
+        if not skip_responder_enqueue:
+            await _send_error(chat_id, "не найден file_id", message_id)
         return "skipped:no_file_id"
 
     tmp_path: str | None = None
@@ -180,11 +182,12 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             "entities": payload.get("entities") or [],
         }
 
-        enqueue_ok = await _enqueue(responder_payload)
-        if not enqueue_ok:
-            return "skipped:enqueue"
+        if not skip_responder_enqueue:
+            enqueue_ok = await _enqueue(responder_payload)
+            if not enqueue_ok:
+                return "skipped:enqueue"
 
-        await _store_context_and_recent(payload, log_caption=log_caption)
+            await _store_context_and_recent(payload, log_caption=log_caption)
 
         moderation_payload = prepare_moderation_payload(
             {
@@ -206,15 +209,18 @@ async def _preprocess(payload: dict[str, Any]) -> str:
         return "ok"
     except ValueError as exc:
         logger.warning("media.preprocess_group_image validation failed chat=%s msg=%s err=%s", chat_id, message_id, exc)
-        await _send_error(chat_id, str(exc), message_id)
+        if not skip_responder_enqueue:
+            await _send_error(chat_id, str(exc), message_id)
         return "skipped:validation"
     except asyncio.TimeoutError:
         logger.warning("media.preprocess_group_image timeout chat=%s msg=%s", chat_id, message_id)
-        await _send_error(chat_id, "время обработки истекло", message_id)
+        if not skip_responder_enqueue:
+            await _send_error(chat_id, "время обработки истекло", message_id)
         return "skipped:timeout"
     except Exception:
         logger.exception("media.preprocess_group_image failed chat=%s msg=%s", chat_id, message_id)
-        await _send_error(chat_id, "внутренняя ошибка", message_id)
+        if not skip_responder_enqueue:
+            await _send_error(chat_id, "внутренняя ошибка", message_id)
         return "error"
     finally:
         if tmp_path and os.path.exists(tmp_path):
