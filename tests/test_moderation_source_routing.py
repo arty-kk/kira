@@ -1126,15 +1126,9 @@ class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
         restrict_mock.assert_awaited_once_with(-1001, 42)
 
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
-        class _Forbidden(Exception):
-            pass
-
-        send_message = AsyncMock(side_effect=[_Forbidden("forbidden")])
-        fake_bot = types.SimpleNamespace(send_message=send_message)
-
         with (
-            patch.object(moderation, "bot", fake_bot),
-            patch.object(moderation, "TelegramForbiddenError", _Forbidden),
+            patch.object(moderation, "send_message_safe_with_reason", AsyncMock(return_value=types.SimpleNamespace(message=None, error_code="forbidden"))),
+            patch.object(moderation, "get_bot", return_value=object()),
             patch.object(moderation, "logger") as logger_mock,
         ):
             await moderation._send_alert_with_actions(
@@ -1148,16 +1142,31 @@ class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
         logger_mock.info.assert_called_once()
         logger_mock.error.assert_not_called()
 
-    async def test_send_alert_with_actions_logs_non_forbidden_failures_as_error(self) -> None:
-        send_message = AsyncMock(side_effect=[RuntimeError("boom")])
-        fake_bot = types.SimpleNamespace(send_message=send_message)
-
+    async def test_send_alert_with_actions_ignores_loop_closed_without_error_log(self) -> None:
         with (
-            patch.object(moderation, "bot", fake_bot),
+            patch.object(moderation, "send_message_safe_with_reason", AsyncMock(return_value=types.SimpleNamespace(message=None, error_code="loop_closed"))),
+            patch.object(moderation, "get_bot", return_value=object()),
             patch.object(moderation, "logger") as logger_mock,
         ):
             await moderation._send_alert_with_actions(
                 [778],
+                text="alert",
+                chat_id=100,
+                offender_id=42,
+                msg_id=10,
+            )
+
+        logger_mock.warning.assert_called_once()
+        logger_mock.error.assert_not_called()
+
+    async def test_send_alert_with_actions_logs_non_forbidden_failures_as_error(self) -> None:
+        with (
+            patch.object(moderation, "send_message_safe_with_reason", AsyncMock(return_value=types.SimpleNamespace(message=None, error_code="unknown_send_error"))),
+            patch.object(moderation, "get_bot", return_value=object()),
+            patch.object(moderation, "logger") as logger_mock,
+        ):
+            await moderation._send_alert_with_actions(
+                [779],
                 text="alert",
                 chat_id=100,
                 offender_id=42,

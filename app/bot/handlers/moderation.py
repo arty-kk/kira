@@ -48,6 +48,7 @@ from app.bot.utils.trusted_scope import (
     is_trusted_repost as trusted_repost_check,
     trusted_scope_ids as build_trusted_scope_ids,
 )
+from app.bot.utils.telegram_safe import send_message_safe_with_reason
 
 logger = logging.getLogger(__name__)
 
@@ -289,11 +290,14 @@ async def _send_alert_with_actions(targets: list[int], *, text: str, chat_id: in
         logger.warning("No moderator targets configured; skipping alert with actions")
         return
 
+    local_bot = get_bot()
+
     results = await asyncio.gather(
         *[
-            bot.send_message(
-                chat_id=int(mid),
-                text=text,
+            send_message_safe_with_reason(
+                local_bot,
+                int(mid),
+                text,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
                 reply_markup=_ban_markup(chat_id, offender_id, msg_id),
@@ -305,6 +309,21 @@ async def _send_alert_with_actions(targets: list[int], *, text: str, chat_id: in
     for mid, result in zip(targets, results):
         if isinstance(result, TelegramForbiddenError):
             logger.info("Skip moderation alert: forbidden to initiate chat with target=%s", int(mid))
+            continue
+        if getattr(result, "error_code", None) == "forbidden":
+            logger.info("Skip moderation alert: forbidden to initiate chat with target=%s", int(mid))
+            continue
+        if getattr(result, "error_code", None) == "loop_closed":
+            logger.warning("Skip moderation alert: event loop closed target=%s", int(mid))
+            continue
+        if getattr(result, "message", None) is not None:
+            continue
+        if getattr(result, "error_code", None):
+            logger.error(
+                "Failed to send moderation alert with actions target=%s error_code=%s",
+                int(mid),
+                result.error_code,
+            )
             continue
         if isinstance(result, Exception):
             logger.error(
