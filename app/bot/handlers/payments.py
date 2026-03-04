@@ -227,6 +227,30 @@ def _parse_payload(payload: str) -> Optional[ParsedPayload]:
     return None
 
 
+def _resolve_payload_amount(parsed: ParsedPayload) -> tuple[PayloadKind, int, int, Optional[Dict[str, Any]]]:
+    kind: PayloadKind = parsed.kind
+    gift: Optional[Dict[str, Any]] = None
+
+    if kind == "buy":
+        req_amt = int(parsed.req or 0)
+        tiers_map = purchase_tiers()
+        if req_amt not in tiers_map:
+            raise ValueError("Unknown purchase tier")
+        stars_amt = int(tiers_map.get(req_amt, 0) or 0)
+        if stars_amt <= 0:
+            raise ValueError("Invalid purchase tier price")
+        return kind, req_amt, stars_amt, gift
+
+    gift = find_gift(str(parsed.gift_code or ""))
+    if not gift:
+        raise ValueError("Unknown gift tier")
+    req_amt = int(gift.get("requests") or 0)
+    stars_amt = int(gift.get("stars") or 0)
+    if req_amt <= 0 or stars_amt <= 0:
+        raise ValueError("Invalid gift tier params")
+    return kind, req_amt, stars_amt, gift
+
+
 # ----------------------------
 # UX helpers (delete later, notices)
 # ----------------------------
@@ -893,10 +917,12 @@ async def on_pre_checkout(pre: PreCheckoutQuery) -> None:
     parsed = _parse_payload(pre.invoice_payload or "")
     ok = False
     try:
-        if parsed and parsed.kind == "buy":
-            ok = isinstance(parsed.req, int) and parsed.req in purchase_tiers()
-        elif parsed and parsed.kind == "gift":
-            ok = bool(find_gift(str(parsed.gift_code or "")))
+        if parsed:
+            _kind, _req_amt, stars_amt, _gift = _resolve_payload_amount(parsed)
+            ok = (
+                (getattr(pre, "currency", None) or "") == settings.PAYMENT_CURRENCY
+                and int(getattr(pre, "total_amount", 0) or 0) == int(stars_amt)
+            )
     except Exception:
         ok = False
 
@@ -942,25 +968,7 @@ async def on_payment_success(message: Message) -> None:
         if not parsed:
             raise ValueError("Invalid payload format")
 
-        kind: PayloadKind = parsed.kind
-        gift: Optional[Dict[str, Any]] = None
-
-        if kind == "buy":
-            req_amt = int(parsed.req or 0)
-            tiers_map = purchase_tiers()
-            if req_amt not in tiers_map:
-                raise ValueError("Unknown purchase tier")
-            stars_amt = int(tiers_map.get(req_amt, 0) or 0)
-            if stars_amt <= 0:
-                raise ValueError("Invalid purchase tier price")
-        else:
-            gift = find_gift(str(parsed.gift_code or ""))
-            if not gift:
-                raise ValueError("Unknown gift tier")
-            req_amt = int(gift.get("requests") or 0)
-            stars_amt = int(gift.get("stars") or 0)
-            if req_amt <= 0 or stars_amt <= 0:
-                raise ValueError("Invalid gift tier params")
+        kind, req_amt, stars_amt, gift = _resolve_payload_amount(parsed)
 
         if (getattr(sp, "currency", None) or "") != settings.PAYMENT_CURRENCY:
             raise ValueError("Currency mismatch")
