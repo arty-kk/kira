@@ -19,7 +19,9 @@ def _loop_key() -> int:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.get_event_loop()
+        # Import-time/sync contexts may not have a current loop (Python 3.12 + uvloop).
+        # Use a stable process-local bucket for such calls.
+        return 0
     return id(loop)
 
 def get_bot() -> Bot:

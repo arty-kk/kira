@@ -74,21 +74,33 @@ celery.conf.update(
 )
 
 
-def _resolve_run_context(coro) -> tuple[str | None, str | None]:
+def _resolve_run_context(coro) -> tuple[str | None, str | None, str | None, str | None]:
     coro_name = getattr(coro, "__qualname__", None)
     if not coro_name:
         coro_code = getattr(coro, "cr_code", None)
         coro_name = getattr(coro_code, "co_name", None)
 
     task_name = None
+    task_id = None
+    routing_key = None
     try:
         task_name = getattr(current_task, "name", None)
+        request = getattr(current_task, "request", None)
         if not task_name:
-            task_name = getattr(getattr(current_task, "request", None), "task", None)
+            task_name = getattr(request, "task", None)
+        task_id = getattr(request, "id", None)
+
+        delivery_info = getattr(request, "delivery_info", None)
+        if isinstance(delivery_info, dict):
+            routing_key = delivery_info.get("routing_key") or delivery_info.get("queue")
+        elif delivery_info is not None:
+            routing_key = getattr(delivery_info, "routing_key", None) or getattr(delivery_info, "queue", None)
     except Exception:
         task_name = None
+        task_id = None
+        routing_key = None
 
-    return coro_name, task_name
+    return coro_name, task_name, task_id, routing_key
 
 
 def run_coro_sync(coro, timeout: float | None = None):
@@ -105,11 +117,14 @@ def run_coro_sync(coro, timeout: float | None = None):
     try:
         return asyncio.run(_runner())
     except asyncio.TimeoutError:
-        coro_name, task_name = _resolve_run_context(coro)
+        coro_name, task_name, task_id, routing_key = _resolve_run_context(coro)
         logger.error(
             "Celery coroutine timed out",
             extra={
+                "phase": "run_coro_sync_wait_for",
                 "celery_task_name": task_name,
+                "celery_task_id": task_id,
+                "celery_queue": routing_key,
                 "coroutine_name": coro_name,
                 "timeout_sec": effective_timeout,
             },

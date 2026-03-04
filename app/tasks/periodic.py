@@ -24,6 +24,7 @@ from app.services.addons import (
 logger = logging.getLogger(__name__)
 PRICES_POST_TIME_LIMIT_SEC = 180
 PRICES_POST_RUN_TIMEOUT_SEC = 170
+REFUNDS_REQUEUE_RUN_TIMEOUT_SEC = 170
 
 
 @celery.task(name="cleanup_nonbuyers")
@@ -148,5 +149,5 @@ def payments_requeue_applied_unnotified_outbox_task():
 @celery.task(name="refunds_requeue_pending_outbox")
 def refunds_requeue_pending_outbox_task():
     logger.info("refunds_requeue_pending_outbox_task start")
-    run_coro_sync(requeue_pending_refund_outbox())
+    run_coro_sync(requeue_pending_refund_outbox(), timeout=REFUNDS_REQUEUE_RUN_TIMEOUT_SEC)
     logger.info("refunds_requeue_pending_outbox_task done")
