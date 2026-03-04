@@ -569,8 +569,8 @@ RESPONDER_CONTEXT_POLICY_PROMPT = (
 RESPONDER_KB_PROMPT_TEMPLATE = (
     "KNOWLEDGE SNIPPETS (internal)\n"
     "- Use these KB snippets as the factual source.\n"
-    "- Reply to the user based on these KB snippets without adding false info.\n"
-    "- Use only the best KB fragments in terms of meaning and situation, or ignore them.\n"
+    "- Reply naturally to the user based on these KB snippets without adding false info.\n"
+    "- Use only the best KB snippets in terms of meaning and situation, or ignore them.\n"
     "- If snippets conflict with STM/MTM/LTM on objective facts, prefer STM/MTM/LTM.\n"
     "- If a snippet is first-person, treat it as part of your biography.\n"
     "- If a snippet gives response instructions, follow them strictly.\n"
