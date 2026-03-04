@@ -4,6 +4,29 @@ from app.bot.components.constants import _LazyClient
 
 
 class ConstantsLazyClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_lazy_client_does_not_cache_client_process_wide(self) -> None:
+        class _Client:
+            def __init__(self, marker: int) -> None:
+                self.marker = marker
+
+            async def ping(self) -> int:
+                return self.marker
+
+        state = {"calls": 0}
+
+        def _factory() -> _Client:
+            state["calls"] += 1
+            return _Client(state["calls"])
+
+        lazy_client = _LazyClient(_factory)
+
+        first = await lazy_client.ping()
+        second = await lazy_client.ping()
+
+        self.assertEqual(first, 1)
+        self.assertEqual(second, 2)
+        self.assertEqual(state["calls"], 2)
+
     async def test_lazy_client_defers_factory_until_coroutine_execution(self) -> None:
         state = {"in_loop": False}
 

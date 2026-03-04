@@ -13,12 +13,9 @@ LANG_FILE = Path(__file__).parent.parent / "i18n" / "welcome_messages.json"
 class _LazyClient:
     def __init__(self, factory: Callable[[], SafeRedis]) -> None:
         self._factory = factory
-        self._client: SafeRedis | None = None
 
     def _ensure(self) -> SafeRedis:
-        if self._client is None:
-            self._client = self._factory()
-        return self._client
+        return self._factory()
 
     def __getattr__(self, name: str):
         try:

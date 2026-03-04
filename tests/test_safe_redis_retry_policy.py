@@ -77,6 +77,27 @@ class _UnknownCommandClient:
 
 
 class _Pipeline:
+    def __init__(self, *, always_timeout=False, command_stack=None):
+        self.execute_calls = 0
+        self.always_timeout = always_timeout
+        self.command_stack = command_stack or []
+
+    async def execute(self):
+        self.execute_calls += 1
+        if self.always_timeout or self.execute_calls == 1:
+            raise asyncio.TimeoutError("timeout")
+        return [True]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+
+
+class _PipelineNoStack:
     def __init__(self):
         self.execute_calls = 0
 
@@ -91,9 +112,16 @@ class _Pipeline:
         return False
 
 
-class _PipelineClient:
+class _PipelineNoStackClient:
     def __init__(self):
-        self.pipe = _Pipeline()
+        self.pipe = _PipelineNoStack()
+
+    def pipeline(self, *args, **kwargs):
+        return self.pipe
+
+class _PipelineClient:
+    def __init__(self, *, always_timeout=False, command_stack=None):
+        self.pipe = _Pipeline(always_timeout=always_timeout, command_stack=command_stack)
 
     def pipeline(self, *args, **kwargs):
         return self.pipe
@@ -143,7 +171,6 @@ class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result, 1)
                 self.assertEqual(client.calls[command_name], 2)
 
-
     async def test_direct_safe_redis_unknown_command_uses_conservative_single_attempt(self):
         client = _UnknownCommandClient()
         redis = SafeRedis(client, attempts=3)
@@ -153,16 +180,40 @@ class SafeRedisRetryPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client.calls, 1)
 
-    async def test_pipeline_execute_has_single_attempt_for_pipeline_only(self):
-        # Retry policy above is validated for direct SafeRedis calls; pipeline has its own single execute call.
-        client = _PipelineClient()
+
+    async def test_pipeline_execute_does_not_retry_non_idempotent_stack(self):
+        client = _PipelineClient(
+            always_timeout=True,
+            command_stack=[(("RPUSH", "k", "v"), {})],
+        )
         redis = SafeRedis(client, attempts=3)
 
         with self.assertRaises(asyncio.TimeoutError):
-            async with redis.pipeline(transaction=False) as pipe:
+            async with redis.pipeline(transaction=True) as pipe:
                 await pipe.execute()
 
         self.assertEqual(client.pipe.execute_calls, 1)
+
+
+    async def test_pipeline_execute_does_not_retry_without_command_stack(self):
+        client = _PipelineNoStackClient()
+        redis = SafeRedis(client, attempts=3)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            async with redis.pipeline(transaction=True) as pipe:
+                await pipe.execute()
+
+        self.assertEqual(client.pipe.execute_calls, 1)
+
+    async def test_pipeline_execute_retries_once_for_transport_errors(self):
+        client = _PipelineClient()
+        redis = SafeRedis(client, attempts=3)
+
+        async with redis.pipeline(transaction=False) as pipe:
+            result = await pipe.execute()
+
+        self.assertEqual(result, [True])
+        self.assertEqual(client.pipe.execute_calls, 2)
 
 
 if __name__ == "__main__":
