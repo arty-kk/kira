@@ -34,6 +34,28 @@ from app.clients import openai_client
 from app.services.responder import respond_to_user
 from app.services.responder.rag.keyword_filter import find_tag_hits
 from app.services.responder.rag.knowledge_proc import _get_query_embedding
+try:
+    from app.services.responder.rag.relevance import is_relevant
+except Exception:  # pragma: no cover - queue-worker unit tests may stub rag package
+    async def is_relevant(
+        query: str,
+        *,
+        model: str,
+        threshold: float,
+        return_hits: bool = False,
+        persona_owner_id: int | None = None,
+        knowledge_owner_id: int | None = None,
+        knowledge_kb_id: int | None = None,
+        strict_autoreply_gate: bool = False,
+        query_embedding=None,
+        embedding_model: str | None = None,
+        query_embedding_reuse_counter=None,
+        apply_mmr: bool = True,
+    ):
+        hits = await find_tag_hits(query, model=model, owner_id=knowledge_owner_id)
+        if return_hits:
+            return bool(hits), hits
+        return bool(hits), None
 from app.services.addons.voice_generator import (
     maybe_tts_and_send, shutdown_tts,
     will_speak, is_tts_eligible_short
@@ -1589,38 +1611,49 @@ async def handle_job(raw, processing_key: str) -> None:
             precomputed_rag_hits = None
             query_embedding = None
             embedding_model = None
+            skip_autoreply_strict_gate = False
 
             if is_group and trigger == "check_on_topic":
+                trigger_ok = False
                 try:
                     embedding_model = get_rag_embedding_model()
-                    precomputed_rag_hits = await find_tag_hits(
-                        text,
-                        model=embedding_model,
-                        owner_id=None,
-                    )
-                except Exception:
-                    logger.exception(
-                        "check_on_topic pre-check failed chat=%s user=%s",
-                        chat_id,
-                        user_id,
-                        exc_info=True,
-                    )
-                    precomputed_rag_hits = []
-
-                if not precomputed_rag_hits:
-                    with suppress(Exception):
-                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
-                    await _refund_reservation()
-                    return
-
-                try:
                     qraw = await _get_query_embedding(embedding_model, text)
                     if qraw is not None:
                         # Keep worker-side payload as-is: responder performs final
                         # dimension/shape validation against active RAG settings.
                         query_embedding = qraw
+                    trigger_threshold = float(
+                        getattr(settings, "AUTOREPLY_GENERATION_RELEVANCE_THRESHOLD", getattr(settings, "RELEVANCE_THRESHOLD", 0.28))
+                        or getattr(settings, "RELEVANCE_THRESHOLD", 0.28)
+                    )
+                    trigger_ok, _ = await is_relevant(
+                        text,
+                        model=embedding_model,
+                        threshold=trigger_threshold,
+                        return_hits=False,
+                        persona_owner_id=chat_id,
+                        knowledge_owner_id=None,
+                        knowledge_kb_id=None,
+                        strict_autoreply_gate=True,
+                        query_embedding=query_embedding,
+                        embedding_model=embedding_model,
+                    )
                 except Exception:
-                    query_embedding = None
+                    logger.exception(
+                        "check_on_topic trigger pre-check failed chat=%s user=%s",
+                        chat_id,
+                        user_id,
+                        exc_info=True,
+                    )
+                    trigger_ok = False
+
+                if not trigger_ok:
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
+                skip_autoreply_strict_gate = True
             
             resp_task = asyncio.create_task(
                 respond_to_user(
@@ -1645,7 +1678,8 @@ async def handle_job(raw, processing_key: str) -> None:
                     precomputed_rag_hits=precomputed_rag_hits,
                     query_embedding=query_embedding,
                     embedding_model=embedding_model,
-                    rag_precheck_source=("queue_worker_tag_precheck" if precomputed_rag_hits else None),
+                    rag_precheck_source=("queue_worker_autoreply_trigger_precheck" if skip_autoreply_strict_gate else None),
+                    skip_autoreply_strict_gate=skip_autoreply_strict_gate,
                 )
             )
 
