@@ -499,22 +499,22 @@ def gifts_react(
             reply = _fallback_reply(str(gift_label or "").strip(), ui_lang)
 
         if reply:
-            bot = get_bot()
-            try:
+            async def _send_reply() -> object | None:
+                bot = get_bot()
                 if reply_to_message_id:
-                    sent = run_coro_sync(
-                        send_message_safe(
-                            bot,
-                            int(chat_id),
-                            reply,
-                            reply_to_message_id=int(reply_to_message_id),
-                        ),
-                        timeout=GIFTS_REACT_RUN_TIMEOUT_SEC,
+                    return await send_message_safe(
+                        bot,
+                        int(chat_id),
+                        reply,
+                        reply_to_message_id=int(reply_to_message_id),
                     )
-                else:
-                    sent = run_coro_sync(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
-            except TypeError:
-                sent = run_coro_sync(send_message_safe(bot, int(chat_id), reply), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                return await send_message_safe(bot, int(chat_id), reply)
+
+            async def _cleanup_payment_message() -> None:
+                bot = get_bot()
+                await delete_message_safe(bot, int(chat_id), int(cleanup_message_id))
+
+            sent = run_coro_sync(_send_reply(), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
             if sent:
                 try:
                     _commit_gift_streak(int(uid))
@@ -532,7 +532,7 @@ def gifts_react(
 
             if cleanup_message_id and bool(getattr(settings, "DELETE_SUCCESSFUL_PAYMENT_MESSAGE", True)):
                 try:
-                    run_coro_sync(delete_message_safe(bot, int(chat_id), int(cleanup_message_id)), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
+                    run_coro_sync(_cleanup_payment_message(), timeout=GIFTS_REACT_RUN_TIMEOUT_SEC)
                 except Exception:
                     pass
 

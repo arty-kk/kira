@@ -29,7 +29,6 @@ from app.services.addons.analytics import record_ping_sent
 
 logger = logging.getLogger(__name__)
 
-bot = get_bot()
 
 _METRIC_INVOC = "metrics:dynamic_ping:invocations"
 _METRIC_SENT = "metrics:dynamic_ping:sent"
@@ -434,7 +433,7 @@ async def _send_with_retry(chat_id: int, text: str) -> int | None:
     attempt = 1
     while attempt <= max_attempts:
         try:
-            msg = await bot.send_message(chat_id, text, parse_mode="HTML")
+            msg = await get_bot().send_message(chat_id, text, parse_mode="HTML")
             return int(msg.message_id)
         except TelegramRetryAfter as e:
             delay = max(1, int(getattr(e, "retry_after", 5)))
@@ -636,7 +635,7 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         logger.debug("group_ping: bandit expire check failed chat_id=%s uid=%s", chat_id, uid, exc_info=True)
 
     try:
-        member = await bot.get_chat_member(chat_id, int(uid))
+        member = await get_bot().get_chat_member(chat_id, int(uid))
     except (TelegramBadRequest, TelegramForbiddenError):
         await redis.srem(f"all_users:{chat_id}", uid)
         with contextlib.suppress(RedisError):

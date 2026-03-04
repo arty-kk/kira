@@ -164,11 +164,35 @@ async def session_scope(
     session = AsyncSessionLocal()
     try:
         try:
+            first_init_started_at: float | None = None
+            first_init_label: str | None = None
+
+            async def _execute_init(statement, label: str):
+                nonlocal first_init_started_at, first_init_label
+                is_first_init = first_init_started_at is None
+                if is_first_init:
+                    first_init_started_at = time.perf_counter()
+                    first_init_label = label
+                await session.execute(statement)
+                if is_first_init and first_init_started_at is not None:
+                    duration_ms = (time.perf_counter() - first_init_started_at) * 1000
+                    log_extra = {
+                        "phase": "session_scope_init",
+                        "init_step": first_init_label,
+                        "duration_ms": round(duration_ms, 2),
+                        "read_only": bool(read_only),
+                        "stmt_timeout_ms": int(stmt_timeout_ms or 0),
+                    }
+                    if duration_ms >= 200:
+                        logger.info("session_scope init first command completed", extra=log_extra)
+                    else:
+                        logger.debug("session_scope init first command completed", extra=log_extra)
+
             if stmt_timeout_ms and stmt_timeout_ms > 0:
-                await session.execute(text(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}"))
+                await _execute_init(text(f"SET LOCAL statement_timeout = {int(stmt_timeout_ms)}"), "set_statement_timeout")
                 await session.execute(text("SET LOCAL lock_timeout = 1000"))
             if read_only:
-                await session.execute(text("SET LOCAL default_transaction_read_only = on"))
+                await _execute_init(text("SET LOCAL default_transaction_read_only = on"), "set_read_only")
 
             yield session
 
