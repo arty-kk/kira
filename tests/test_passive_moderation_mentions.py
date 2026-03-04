@@ -58,10 +58,20 @@ class _FakeRedisHandler:
 
 class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
+    async def test_check_light_flags_emoji_overlimit_for_unicode_emoji(self) -> None:
+        text = "ok " + ("😂" * 6)
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_MAX_EMOJI_PER_MESSAGE=5)),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, [], source="user")
+
+        self.assertEqual(status, "emoji_overlimit")
+
     async def test_check_light_flags_emoji_flood(self) -> None:
         text = "😂" * 40
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True)),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_MAX_EMOJI_PER_MESSAGE=100)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
         ):
             status = await passive_moderation.check_light(1, 2, text, [], source="user")
@@ -79,7 +89,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "symbol_noise")
 
 
-    async def test_check_light_flags_custom_emoji_spam(self) -> None:
+    async def test_check_light_flags_emoji_overlimit_for_custom_emoji_entities(self) -> None:
         entities = [{"type": "custom_emoji", "offset": i, "length": 1} for i in range(12)]
         with (
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD=12)),
@@ -87,7 +97,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, "text", entities, source="user")
 
-        self.assertEqual(status, "custom_emoji_spam")
+        self.assertEqual(status, "emoji_overlimit")
     async def test_check_light_returns_spam_mentions_before_resolve(self) -> None:
         text = "@a @b @c @d"
         entities = [

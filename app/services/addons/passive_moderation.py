@@ -269,6 +269,13 @@ def is_symbol_noise_text(text: str) -> bool:
         return True
     return False
 
+
+def count_message_emojis(text: str, entities: List[dict] | None = None) -> int:
+    raw = _strip_zero_width(unicodedata.normalize("NFKC", text or ""))
+    unicode_emoji_count = sum(1 for ch in raw if _EMOJI_FLOOD_RE.match(ch))
+    custom_emoji_count = sum(1 for ent in (entities or []) if str(ent.get("type") or "").lower() == "custom_emoji")
+    return unicode_emoji_count + custom_emoji_count
+
 def sanitize_for_context(
     text: str,
     entities: List[dict] | None = None,
@@ -755,7 +762,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic", "emoji_flood", "symbol_noise"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic", "emoji_flood", "symbol_noise", "custom_emoji_spam", "emoji_overlimit"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -763,6 +770,10 @@ async def check_light(
     # Channel/bot sources are checked with link-policy only in light mode.
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
+
+    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 5) or 0)
+    if source == "user" and max_emoji_per_message > 0 and count_message_emojis(text or "", entities) > max_emoji_per_message:
+        return "emoji_overlimit"
 
     if source == "user" and is_emoji_flood_text(text or ""):
         return "emoji_flood"
