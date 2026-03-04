@@ -22,6 +22,9 @@ async def send_message_safe(
     reply_markup=None,
     **kwargs,
 ) -> Optional["Message"]:
+    def _is_closed_loop_error(exc: Exception) -> bool:
+        return isinstance(exc, RuntimeError) and "event loop is closed" in str(exc).lower()
+
     try:
         kw = _strip_duplicates({"parse_mode": parse_mode, "reply_markup": reply_markup}, kwargs)
         return await bot.send_message(
@@ -50,9 +53,18 @@ async def send_message_safe(
                 except TelegramForbiddenError:
                     logger.info("send_message_safe(plain,no-reply): Forbidden chat=%s", chat_id)
                     return None
-                except Exception:
+                except Exception as e:
+                    if _is_closed_loop_error(e):
+                        logger.warning("send_message_safe: цикл событий уже закрыт, отправка пропущена")
+                        return None
                     logger.exception("send_message_safe: fallback(no-reply) failed")
                     return None
+            except Exception as e:
+                if _is_closed_loop_error(e):
+                    logger.warning("send_message_safe: цикл событий уже закрыт, отправка пропущена")
+                    return None
+                logger.exception("send_message_safe: fallback(no-reply) failed")
+                return None
         try:
             kw = _strip_duplicates({"reply_markup": reply_markup}, kwargs)
             return await bot.send_message(
@@ -61,10 +73,16 @@ async def send_message_safe(
         except TelegramForbiddenError:
             logger.info("send_message_safe (fallback): Forbidden chat=%s", chat_id)
             return None
-        except Exception:
+        except Exception as e:
+            if _is_closed_loop_error(e):
+                logger.warning("send_message_safe: цикл событий уже закрыт, отправка пропущена")
+                return None
             logger.exception("send_message_safe: fallback failed")
             return None
-    except Exception:
+    except Exception as e:
+        if _is_closed_loop_error(e):
+            logger.warning("send_message_safe: цикл событий уже закрыт, отправка пропущена")
+            return None
         logger.exception("send_message_safe: failed")
         return None
 
@@ -90,6 +108,9 @@ async def send_video_safe(
     reply_markup=None,
     **kwargs,
 ) -> Optional["Message"]:
+    def _is_closed_loop_error(exc: Exception) -> bool:
+        return isinstance(exc, RuntimeError) and "event loop is closed" in str(exc).lower()
+
     try:
         kw = _strip_duplicates({"parse_mode": parse_mode, "reply_markup": reply_markup}, kwargs)
         return await bot.send_video(
@@ -115,7 +136,10 @@ async def send_video_safe(
             except TelegramForbiddenError:
                 logger.info("send_video_safe(no-reply): Forbidden chat=%s", chat_id)
                 return None
-            except Exception:
+            except Exception as e:
+                if _is_closed_loop_error(e):
+                    logger.warning("send_video_safe: цикл событий уже закрыт, отправка пропущена")
+                    return None
                 logger.exception("send_video_safe: fallback(no-reply) failed")
                 return None
         try:
@@ -126,10 +150,16 @@ async def send_video_safe(
         except TelegramForbiddenError:
             logger.info("send_video_safe (fallback): Forbidden chat=%s", chat_id)
             return None
-        except Exception:
+        except Exception as e:
+            if _is_closed_loop_error(e):
+                logger.warning("send_video_safe: цикл событий уже закрыт, отправка пропущена")
+                return None
             logger.exception("send_video_safe: fallback failed")
             return None
-    except Exception:
+    except Exception as e:
+        if _is_closed_loop_error(e):
+            logger.warning("send_video_safe: цикл событий уже закрыт, отправка пропущена")
+            return None
         logger.exception("send_video_safe: failed")
         return None
 
@@ -145,6 +175,9 @@ async def send_invoice_safe(
     prices,
     **kwargs,
 ):
+    def _is_closed_loop_error(exc: Exception) -> bool:
+        return isinstance(exc, RuntimeError) and "event loop is closed" in str(exc).lower()
+
     try:
         return await bot.send_invoice(
             chat_id=chat_id,
@@ -162,6 +195,9 @@ async def send_invoice_safe(
     except TelegramBadRequest as e:
         logger.warning("send_invoice_safe: BadRequest chat=%s error=%s", chat_id, e)
         return None
-    except Exception:
+    except Exception as e:
+        if _is_closed_loop_error(e):
+            logger.warning("send_invoice_safe: цикл событий уже закрыт, отправка пропущена")
+            return None
         logger.exception("send_invoice_safe: failed")
         return None

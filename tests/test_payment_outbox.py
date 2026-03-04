@@ -159,6 +159,35 @@ class _SelectChain:
 
 
 class PaymentOutboxTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pre_checkout_rejects_amount_mismatch(self) -> None:
+        payments = _load_payments_module()
+
+        pre = SimpleNamespace(
+            id="pre_1",
+            invoice_payload="buy_1",
+            currency=payments.settings.PAYMENT_CURRENCY,
+            total_amount=2,
+            from_user=SimpleNamespace(id=1),
+        )
+
+        bot = SimpleNamespace(answer_pre_checkout_query=AsyncMock())
+
+        with (
+            patch.object(payments, "bot", bot),
+            patch.object(payments, "purchase_tiers", lambda: {1: 1}),
+            patch.object(payments, "clear_payment_ui", AsyncMock()),
+            patch.object(payments, "clear_payment_runtime_keys", AsyncMock()),
+            patch.object(payments, "send_transient_notice", AsyncMock()),
+            patch.object(payments, "tr", AsyncMock(side_effect=lambda *_args, **kwargs: kwargs.get("default", ""))),
+        ):
+            await payments.on_pre_checkout(pre)
+
+        bot.answer_pre_checkout_query.assert_awaited_once_with(
+            "pre_1",
+            ok=False,
+            error_message="",
+        )
+
     async def test_payment_success_enqueues_outbox_task(self) -> None:
         payments = _load_payments_module()
         fake_db = _FakeDB()

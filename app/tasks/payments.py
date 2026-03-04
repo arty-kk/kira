@@ -210,7 +210,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
         await _release_notify_lease()
 
         logger.warning(
-            "payment_outbox: notify skipped charge_id=%s user_id=%s",
+            "payment_outbox: уведомление пропущено charge_id=%s user_id=%s",
             outbox.telegram_payment_charge_id,
             outbox.user_id,
         )
@@ -231,7 +231,7 @@ async def _notify_payment_result(outbox: PaymentOutbox, remaining: Optional[int]
 
     if finalized_id is None:
         logger.warning(
-            "payment_outbox: notify finalize skipped charge_id=%s user_id=%s",
+            "payment_outbox: финализация уведомления пропущена charge_id=%s user_id=%s",
             outbox.telegram_payment_charge_id,
             outbox.user_id,
         )

@@ -148,7 +148,7 @@ _EN: Dict[str, str] = {
     "shop.title.gifts": "<b>🎁 Gifts</b>",
     "shop.subtitle.gifts": "Each gift unlocks extra requests. Pick your vibe ✨",
     "shop.title.reqs": "<b>⚡ Buy requests</b>",
-    "shop.subtitle.reqs": "Buy 💬 requests with ⭐ to keep chatting.",
+    "shop.subtitle.reqs": "Buy 💬 requests with Telegram Stars ⭐ to keep chatting.",
     "shop.balance": "📊 Requests left: 💬 <b>{remaining}</b>",
     "shop.tab.gifts": "🎁 Gifts",
     "shop.tab.requests": "⚡️ Requests",
@@ -162,7 +162,7 @@ _EN: Dict[str, str] = {
     "shop.gift.success_duplicate": "✅ Payment already processed.\n📊 Left: 💬 <b>{remaining}</b>",
 
     # Payments
-    "payments.you_have": "📊 You have 💬 <b>{remaining}</b> chat requests left.\nYou can buy more using ⭐.",
+    "payments.you_have": "📊 You have 💬 <b>{remaining}</b> chat requests left.\nYou can buy more using Telegram Stars ⭐.",
     "payments.buy_button": "💬 {req} = ⭐ {stars}",
     "payments.invoice_title": "🛒 Buy 💬 {req} chat requests",
     "payments.invoice_desc": "Get 💬 {req} chat requests for ⭐ {stars}",
@@ -173,6 +173,7 @@ _EN: Dict[str, str] = {
     "payments.success_duplicate": "✅ Payment already processed.\n📊 Requests left: 💬 <b>{remaining}</b>",
     "payments.success_duplicate_short": "✅ Payment already processed.",
     "payments.gift_delivered": "✅ Gift delivered.",
+    "payments.processing": "✅ Payment received. We are processing it now.",
     "payments.error": "⚠️ Payment error. Please try again.",
     "payments.invalid_details": "❌ Invalid payment details. Please contact support.",
     "payments.cancel_button": "❌ Cancel",
@@ -409,7 +410,7 @@ _RU: Dict[str, str] = {
     "shop.title.gifts": "<b>🎁 Подарки</b>",
     "shop.subtitle.gifts": "Каждый подарок открывает дополнительные запросы. Выбирай свой вайб ✨",
     "shop.title.reqs": "<b>⚡ Купить запросы</b>",
-    "shop.subtitle.reqs": "Покупай 💬 запросы за ⭐, чтобы продолжить общение.",
+    "shop.subtitle.reqs": "Покупай 💬 запросы за Telegram Stars ⭐, чтобы продолжить общение.",
     "shop.balance": "📊 Осталось запросов: 💬 <b>{remaining}</b>",
     "shop.tab.gifts": "🎁 Подарки",
     "shop.tab.requests": "⚡️ Запросы",
@@ -423,7 +424,7 @@ _RU: Dict[str, str] = {
     "shop.gift.success_duplicate": "✅ Платёж уже обработан.\n📊 Осталось: 💬 <b>{remaining}</b>",
 
     # Payments
-    "payments.you_have": "📊 У вас осталось 💬 <b>{remaining}</b> запросов для общения.\nВы можете купить ещё за ⭐.",
+    "payments.you_have": "📊 У вас осталось 💬 <b>{remaining}</b> запросов для общения.\nВы можете купить ещё за Telegram Stars ⭐.",
     "payments.buy_button": "💬 {req} = ⭐ {stars}",
     "payments.invoice_title": "🛒 Купить 💬 {req} запросов",
     "payments.invoice_desc": "Получите 💬 {req} запросов за ⭐ {stars}",
@@ -434,6 +435,7 @@ _RU: Dict[str, str] = {
     "payments.success_duplicate": "✅ Платёж уже обработан.\n📊 Осталось запросов: 💬 <b>{remaining}</b>",
     "payments.success_duplicate_short": "✅ Платёж уже обработан.",
     "payments.gift_delivered": "✅ Подарок доставлен.",
+    "payments.processing": "✅ Платёж получен. Сейчас обрабатываем его.",
     "payments.error": "⚠️ Ошибка оплаты. Попробуйте ещё раз.",
     "payments.invalid_details": "❌ Некорректные данные платежа. Напишите в поддержку.",
     "payments.cancel_button": "❌ Отмена",
