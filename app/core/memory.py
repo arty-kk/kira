@@ -12,6 +12,7 @@ import unicodedata
 import threading
 import time as time_module
 import weakref
+import uuid
 
 from typing import Any, Dict, List, Optional, Union
 from redis.asyncio import Redis, from_url
@@ -100,6 +101,31 @@ NON_IDEMPOTENT_COMMANDS = {
 def _is_transport_or_timeout_error(exc: Exception) -> bool:
     return isinstance(exc, (asyncio.TimeoutError, TimeoutError, OSError, RedisTimeoutError, RedisConnectionError))
 
+
+def _is_closed_transport_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(token in msg for token in ("transport is closed", "closed transport", "connection closed"))
+
+
+def _is_pipeline_retry_safe(pipe: Any) -> bool:
+    stack = getattr(pipe, "command_stack", None)
+    if stack is None:
+        return False
+    if not stack:
+        return True
+    for item in stack:
+        try:
+            args = item[0] if isinstance(item, (tuple, list)) and item else ()
+            cmd = args[0] if args else ""
+            if isinstance(cmd, (bytes, bytearray)):
+                cmd = cmd.decode("utf-8", "ignore")
+            cmd_name = str(cmd or "").lower()
+        except Exception:
+            return False
+        if cmd_name not in READONLY_OR_IDEMPOTENT_COMMANDS:
+            return False
+    return True
+
 class SafeRedis:
     def __init__(self, client: Redis, attempts: int = 3) -> None:
         self._client = client
@@ -180,8 +206,29 @@ class SafeRedis:
 
             async def execute(self):
                 start = time.perf_counter()
+                max_attempts = 2 if _is_pipeline_retry_safe(self._pipe) else 1
                 try:
-                    return await self._pipe.execute()
+                    for n in range(max_attempts):
+                        try:
+                            return await self._pipe.execute()
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            is_retriable = _is_transport_or_timeout_error(exc) or _is_closed_transport_error(exc)
+                            if not is_retriable or n == max_attempts - 1:
+                                logger.exception(
+                                    "Redis pipeline execute failed after %d attempt(s): %s",
+                                    n + 1,
+                                    exc,
+                                )
+                                raise
+                            logger.warning(
+                                "Redis pipeline execute failed (retry=1, try %d/%d): %s",
+                                n + 1,
+                                max_attempts,
+                                exc,
+                            )
+                            await asyncio.sleep(0.1)
                 finally:
                     dt_ms = (time.perf_counter() - start) * 1000
                     if dt_ms > WARN_MS:
@@ -786,6 +833,7 @@ async def push_message(
         "chat_id": chat_id,
         "user_id": user_id,
         "ts": time_module.time(),
+        "msg_id": uuid.uuid4().hex,
     }
     if speaker_id is not None:
         try:
@@ -793,16 +841,43 @@ async def push_message(
         except Exception:
             pass
 
+    key_stm = _k_stm(chat_id, user_id, namespace)
+    entry_json = json.dumps(entry, ensure_ascii=False)
+    dedupe_ttl = 15
+    dedupe_key = f"mem:stm:dedupe:{namespace}:{chat_id}:{user_id}:{entry['msg_id']}"
     redis = get_redis()
-    try:
-        key_stm = _k_stm(chat_id, user_id, namespace)
-        async with redis.pipeline(transaction=True) as pipe:
-            pipe.rpush(key_stm, json.dumps(entry, ensure_ascii=False))
+
+    async def _write_stm_once(redis_client: SafeRedis) -> bool:
+        should_write = await redis_client.set(dedupe_key, "1", nx=True, ex=dedupe_ttl)
+        if not should_write:
+            tail = await redis_client.lrange(key_stm, -20, -1)
+            for raw in tail or []:
+                payload = _b2s(raw, "")
+                try:
+                    parsed = json.loads(payload)
+                except Exception:
+                    continue
+                if isinstance(parsed, dict) and parsed.get("msg_id") == entry["msg_id"]:
+                    return True
+        async with redis_client.pipeline(transaction=True) as pipe:
+            pipe.rpush(key_stm, entry_json)
             pipe.expire(key_stm, MEMORY_TTL_STM_MTM)
             await pipe.execute()
-    except Exception:
-        logger.exception("push_message STM write error for chat %s", chat_id)
-        return
+        return True
+
+    try:
+        await _write_stm_once(redis)
+    except Exception as exc:
+        if not (_is_transport_or_timeout_error(exc) or _is_closed_transport_error(exc)):
+            logger.exception("push_message STM write error for chat %s", chat_id)
+            return
+        logger.warning("push_message STM write failed, retry=1 chat=%s err=%s", chat_id, exc)
+        try:
+            redis = get_redis()
+            await _write_stm_once(redis)
+        except Exception:
+            logger.exception("push_message STM write error for chat %s", chat_id)
+            return
     try:
         await _register_user_key(redis, user_id, key_stm, USER_KEYS_REGISTRY_TTL)
     except Exception:

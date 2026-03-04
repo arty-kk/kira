@@ -21,12 +21,14 @@ def get_bot() -> Bot:
 
     key = _loop_key()
     bot = _bots_by_loop.get(key)
+    if bot is None and key != 0:
+        bot = _bots_by_loop.pop(0, None)
     if bot is None:
         bot = Bot(
             token=settings.TELEGRAM_BOT_TOKEN,
             default=DefaultBotProperties(parse_mode="HTML"),
         )
-        _bots_by_loop[key] = bot
+    _bots_by_loop[key] = bot
     return bot
 
 

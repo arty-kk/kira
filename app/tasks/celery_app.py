@@ -4,16 +4,108 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+import threading
+import concurrent.futures
 
 from celery import Celery, current_task
 from celery.signals import setup_logging as celery_setup_logging, worker_ready, worker_shutdown
 
 from app.clients.telegram_client import close_all_bots, close_bot_for_current_loop
 from app.config import settings
+from app.core.memory import close_redis_pools
 from app.core.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+class _WorkerLoopRunner:
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._started = threading.Event()
+        self._state_lock = threading.Lock()
+
+    def ensure_started(self) -> asyncio.AbstractEventLoop:
+        with self._state_lock:
+            loop = self._loop
+            thread = self._thread
+            if loop is not None and thread is not None and thread.is_alive() and loop.is_running():
+                return loop
+
+            self._started.clear()
+            self._loop = None
+            self._thread = threading.Thread(
+                target=self._run_loop_thread,
+                name="celery-worker-loop",
+                daemon=True,
+            )
+            self._thread.start()
+
+        self._started.wait(timeout=5)
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            raise RuntimeError("Failed to start celery worker event loop runner")
+        return loop
+
+    def _run_loop_thread(self) -> None:
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        asyncio.set_event_loop(loop)
+        self._started.set()
+        try:
+            loop.run_forever()
+        finally:
+            try:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception:
+                logger.debug("Worker loop shutdown_asyncgens failed", exc_info=True)
+            loop.close()
+
+    def submit(self, coro):
+        loop = self.ensure_started()
+        return asyncio.run_coroutine_threadsafe(coro, loop)
+
+    def is_running(self) -> bool:
+        loop = self._loop
+        thread = self._thread
+        return loop is not None and thread is not None and thread.is_alive() and loop.is_running()
+
+    def stop(self) -> None:
+        with self._state_lock:
+            loop = self._loop
+            thread = self._thread
+            self._loop = None
+            self._thread = None
+
+        if loop is None or thread is None:
+            return
+
+        if loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=5)
+
+
+_worker_loop_runner: _WorkerLoopRunner | None = None
+_worker_loop_runner_lock = threading.Lock()
+
+
+def _get_existing_worker_loop_runner() -> _WorkerLoopRunner | None:
+    with _worker_loop_runner_lock:
+        return _worker_loop_runner
+
+
+def _get_worker_loop_runner() -> _WorkerLoopRunner:
+    global _worker_loop_runner
+
+    with _worker_loop_runner_lock:
+        runner = _worker_loop_runner
+        if runner is None:
+            runner = _WorkerLoopRunner()
+            _worker_loop_runner = runner
+
+    runner.ensure_started()
+    return runner
 
 
 @celery_setup_logging.connect
@@ -106,17 +198,17 @@ def _resolve_run_context(coro) -> tuple[str | None, str | None, str | None, str 
 def run_coro_sync(coro, timeout: float | None = None):
     effective_timeout = settings.CELERY_RUN_TIMEOUT_SEC if timeout is None else timeout
 
-    async def _runner():
-        try:
-            if effective_timeout is None or float(effective_timeout) <= 0:
-                return await coro
-            return await asyncio.wait_for(coro, timeout=float(effective_timeout))
-        finally:
-            await close_bot_for_current_loop()
+    wait_timeout = None
+    if effective_timeout is not None and float(effective_timeout) > 0:
+        wait_timeout = float(effective_timeout)
+
+    runner = _get_worker_loop_runner()
+    future = runner.submit(coro)
 
     try:
-        return asyncio.run(_runner())
-    except asyncio.TimeoutError:
+        return future.result(timeout=wait_timeout)
+    except concurrent.futures.TimeoutError:
+        future.cancel()
         coro_name, task_name, task_id, routing_key = _resolve_run_context(coro)
         logger.error(
             "Celery coroutine timed out",
@@ -129,7 +221,13 @@ def run_coro_sync(coro, timeout: float | None = None):
                 "timeout_sec": effective_timeout,
             },
         )
-        raise
+        raise asyncio.TimeoutError
+
+
+async def _shutdown_async_resources() -> None:
+    await close_bot_for_current_loop()
+    await close_all_bots()
+    await close_redis_pools()
 
 
 @worker_ready.connect
@@ -142,9 +240,22 @@ def _warm_up_worker(sender=None, **_kwargs) -> None:
 
 @worker_shutdown.connect
 def _close_telegram_bot_sessions(**_kwargs) -> None:
+    global _worker_loop_runner
+
+    runner = _get_existing_worker_loop_runner()
     try:
-        asyncio.run(close_all_bots())
+        if runner is not None and runner.is_running():
+            fut = runner.submit(_shutdown_async_resources())
+            fut.result(timeout=10)
+        else:
+            asyncio.run(_shutdown_async_resources())
     except RuntimeError:
         logger.debug("Celery worker shutdown: no loop available for bot close", exc_info=True)
     except Exception:
-        logger.exception("Celery worker shutdown: failed to close telegram bot sessions")
+        logger.exception("Celery worker shutdown: failed to close async resources")
+    finally:
+        if runner is not None:
+            runner.stop()
+        with _worker_loop_runner_lock:
+            if _worker_loop_runner is runner:
+                _worker_loop_runner = None
