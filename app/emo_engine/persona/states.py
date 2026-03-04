@@ -536,6 +536,7 @@ async def _detect_social_signals_llm(self, text: str, *, timeout: float | None =
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.BASE_MODEL,
+                model_role="base",
                 instructions=system_prompt,
                 input=user_prompt,
                 text={

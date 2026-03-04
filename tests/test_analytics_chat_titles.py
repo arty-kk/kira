@@ -59,5 +59,25 @@ class AnalyticsChatTitleTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Ops Chat", sent_messages[0])
 
 
+    def test_render_html_uses_current_bot_wording_and_trigger_rollup(self) -> None:
+        snap = {
+            "msg_total": 10,
+            "active_users": 5,
+            "assistant_total": 4,
+            "new_users_unique": 1,
+            "addressed_to_bot": 2,
+            "assistant_by_trigger": {
+                "mention": 1,
+                "check_on_topic": 2,
+                "channel_post": 1,
+            },
+        }
+        html = analytics._render_html(-100123, "2026-01-01", snap, chat_title="Main Group")
+        self.assertIn("Direct mentions to bot", html)
+        self.assertIn("mention:1", html)
+        self.assertIn("auto_reply:2", html)
+        self.assertIn("channel_post:1", html)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,7 @@ async def _ask_model(text: str, history: Optional[List[Dict[str, Any]]] = None, 
         _call_openai_with_retry(
             endpoint="responses.create",
             model=settings.BASE_MODEL,
+            model_role="base",
             instructions=COREF_SYSTEM,
             input=user_prompt,
             text={

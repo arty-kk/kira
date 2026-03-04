@@ -187,6 +187,7 @@ class TextAnalyzer:
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.BASE_MODEL,
+                    model_role="base",
                     instructions=system_prompt,
                     input=user_prompt,
                     text={

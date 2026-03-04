@@ -102,6 +102,7 @@ async def _ask_gender(name: str, *, message: Optional[str], timeout: float) -> s
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.BASE_MODEL,
+                model_role="base",
                 instructions=_build_system_prompt(),
                 input=_build_user_prompt(name, message),
                 text={

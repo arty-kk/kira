@@ -178,6 +178,7 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
                 def _normalize_params(ep: str, p: dict) -> dict:
                     model = str(p.get("model") or "")
+                    model_role = str(p.pop("model_role", "") or "").strip().lower()
 
                     def _is_structured_json_schema(pp: dict) -> bool:
                         try:
@@ -190,13 +191,6 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                         mot = p.get("max_output_tokens")
                         if isinstance(mot, int) and mot < 16:
                             p["max_output_tokens"] = 16
-                        if _is_structured_json_schema(p):
-                            try:
-                                cap = 96
-                                cur = int(p.get("max_output_tokens") or cap)
-                                p["max_output_tokens"] = max(16, min(cur, cap))
-                            except Exception:
-                                p["max_output_tokens"] = 96
 
                         if model.startswith(("gpt-5-nano", "gpt-5-mini", "gpt-5")):
                             for k in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
@@ -205,13 +199,22 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                             rnode = p.get("reasoning") or {}
                             if not isinstance(rnode, dict):
                                 rnode = {}
-                            rnode.setdefault("effort", getattr(settings, "RESPONSE_REASONING_EFFORT", "low"))
+                            if model_role == "reasoning":
+                                default_effort = "medium"
+                            elif model_role == "regular":
+                                default_effort = "low"
+                            elif model_role == "base":
+                                default_effort = "minimal"
+                            else:
+                                default_effort = getattr(settings, "RESPONSE_REASONING_EFFORT", "low")
+                            rnode.setdefault("effort", default_effort)
                             p["reasoning"] = rnode
 
                             tnode = p.get("text") or {}
                             if not isinstance(tnode, dict):
                                 tnode = {}
-                            tnode.setdefault("verbosity", getattr(settings, "RESPONSE_VERBOSITY", "medium"))
+                            if not _is_structured_json_schema(p):
+                                tnode.setdefault("verbosity", getattr(settings, "RESPONSE_VERBOSITY", "medium"))
                             p["text"] = tnode
 
                     if "timeout" not in p:

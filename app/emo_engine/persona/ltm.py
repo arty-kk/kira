@@ -1444,6 +1444,7 @@ class LongTermMemory:
                 _call_openai_with_retry(
                     endpoint="responses.create",
                     model=settings.REASONING_MODEL,
+                    model_role="regular",
                     instructions=system_prompt,
                     input=user_prompt,
                     text={

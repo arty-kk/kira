@@ -312,6 +312,7 @@ async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optio
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.PING_MODEL,
+                model_role="regular",
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
                 max_output_tokens=64,
                 temperature=0.0,
@@ -579,6 +580,7 @@ async def classify_signals_llm(personal_msgs: list[dict], summary: Optional[str]
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.PING_MODEL,
+                model_role="regular",
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
                 max_output_tokens=24,
                 temperature=0.0,
@@ -1475,6 +1477,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.PING_MODEL,
+                model_role="regular",
                 input=[_msg("system", time_sys), _msg("system", system_msg), _msg("user", prompt)],
                 max_output_tokens=max_tokens,
                 temperature=temp,

@@ -262,22 +262,28 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_classify_profile_nsfw_fast_flags_when_sex_abuse_true(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":true}'))
         with (
-            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":true}'))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
         self.assertTrue(flagged)
+        self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
+        self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
     async def test_classify_profile_nsfw_fast_returns_false_for_sex_abuse_false(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))
         with (
-            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))),
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_MODEL="gpt-5-nano", MODERATION_AI_REASONING_EFFORT="low")),
+            patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
         self.assertFalse(flagged)
+        self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
+        self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
 
 class _FakePipe:

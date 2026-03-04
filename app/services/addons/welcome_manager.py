@@ -181,6 +181,7 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.WELCOME_MODEL,
+                model_role="regular",
                 input=[
                     _msg("system", system_msg),
                     _msg("user", prompt)
@@ -314,6 +315,7 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
             _call_openai_with_retry(
                 endpoint="responses.create",
                 model=settings.WELCOME_MODEL,
+                model_role="regular",
                 input=[
                     _msg("system", system_msg),
                     _msg("user", prompt)
