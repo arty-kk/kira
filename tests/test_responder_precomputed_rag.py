@@ -124,15 +124,12 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="What about it?", rag_query_source="raw")))
 
-        needs_coref_mock = AsyncMock(return_value=True)
-
         with patch.object(core, "get_redis", return_value=redis_stub), \
              patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
              patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
-             patch.object(core, "needs_coref", needs_coref_mock), \
              patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
@@ -152,8 +149,6 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(out, "")
         compute_mock.assert_awaited_once()
-        needs_coref_mock.assert_awaited_once()
-        self.assertIn("history", needs_coref_mock.await_args.kwargs)
         self.assertEqual(compute_mock.await_args.kwargs.get("query_to_model"), "rewritten query")
         self.assertEqual(compute_mock.await_args.kwargs.get("rag_query_source"), "rewritten")
 
@@ -197,7 +192,6 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
              patch.object(core, "_strip_bot_mention_prefix", return_value=""), \
-             patch.object(core, "needs_coref", AsyncMock(return_value=True)), \
              patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
@@ -254,15 +248,12 @@ class ResponderRawRagRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         compute_mock = AsyncMock(return_value=(False, None, core.RagQueryContext(query="rewritten query", rag_query_source="rewritten")))
 
-        needs_coref_mock = AsyncMock(return_value=True)
-
         with patch.object(core, "get_redis", return_value=redis_stub), \
              patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
              patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
-             patch.object(core, "needs_coref", needs_coref_mock), \
              patch.object(core, "resolve_coref", AsyncMock(return_value="rewritten query")), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
@@ -333,7 +324,6 @@ class ResponderRequestEmbeddingContextTests(unittest.IsolatedAsyncioTestCase):
              patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
              patch.object(core, "load_context", AsyncMock(return_value=[])), \
              patch.object(core, "record_context", AsyncMock(return_value=None)), \
-             patch.object(core, "needs_coref", AsyncMock(return_value=False)), \
              patch.object(core, "_compute_on_topic_relevance", compute_mock), \
              patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
              patch.object(core, "get_ltm_text", AsyncMock(return_value="")), \

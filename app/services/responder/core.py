@@ -44,7 +44,7 @@ from app.core.db import session_scope
 from app.core.embedding_utils import get_rag_embedding_model, resolve_embedding_dim
 from app.core.models import User, ApiKeyKnowledge
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
-from .coref import needs_coref, resolve_coref
+from .coref import resolve_coref
 from .gender import detect_gender
 import app.bot.components.constants as consts
 from app.services.addons.analytics import (
@@ -1578,13 +1578,7 @@ async def respond_to_user(
         except Exception:
             coref_hist = []
 
-        try:
-            need_coref_flag = await needs_coref(query, history=coref_hist)
-        except Exception as e:
-            logger.warning("needs_coref failed: %s", e)
-            need_coref_flag = False
-
-        if not need_coref_flag or pre_emoji_only:
+        if pre_emoji_only:
             resolved = query
         else:
             try:

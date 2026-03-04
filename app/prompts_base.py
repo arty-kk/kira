@@ -53,7 +53,7 @@ SOCIAL_SIGNALS_SYSTEM_PROMPT = (
 SOCIAL_SIGNALS_USER_PROMPT_TEMPLATE = "INPUT:\n{text}\n\n"
 
 
-# ===== app/services/responder/coref/needs_coref.py =====
+# ===== app/services/responder/coref/needs_coref.py (legacy, archived pipeline) =====
 COREF_SYSTEM_PROMPT = (
     "Decide if the user message contains references that may require coreference/deixis resolution "
     "AGAINST prior chat history. Output JSON ONLY: {\"answer\":\"YES\"|\"NO\"} (uppercase).\n"
@@ -68,7 +68,7 @@ COREF_SYSTEM_PROMPT = (
 )
 
 
-# ===== app/services/responder/coref/resolve_coref.py =====
+# ===== app/services/responder/coref/resolve_coref.py (legacy extract, archived pipeline) =====
 COREF_EXTRACT_PROMPT = (
     "Extract coreference/deixis links between the latest user QUERY and prior chat SNIPPET.\n"
     "SNIPPET is JSON array of {\"i\":int,\"r\":\"u\"|\"a\",\"c\":string}. "
@@ -87,14 +87,42 @@ COREF_EXTRACT_PROMPT = (
 
 
 COREF_REWRITE_PROMPT = (
-    "Rewrite the latest user QUERY using prior chat SNIPPET only when necessary for contextual clarity.\n"
-    "SNIPPET is JSON array of {\"i\":int,\"r\":\"u\"|\"a\",\"c\":string}.\n"
-    "Rules:\n"
-    "- Preserve user intent exactly; no new facts/links/prices/contacts/actions not grounded in SNIPPET.\n"
-    "- For short confirmations (да/давай/ok/go ahead), resolve to the latest explicit assistant proposal/question if present.\n"
-    "- If ambiguous or unsafe, return QUERY unchanged.\n"
-    "Output JSON ONLY: {\"rewritten\": string}.\n\n"
+    "Ты — модуль переписывания пользовательского запроса перед векторным поиском (RAG).\n\n"
+    "Твоя задача — переписать текущее сообщение пользователя так, чтобы оно явно и полно выражало его намерение и было пригодно для точного retrieval знаний.\n\n"
+    "Используй:\n"
+    "- текущее сообщение пользователя\n"
+    "- контекст диалога (STM: предыдущие сообщения User и Assistant)\n\n"
+    "Критически важно про язык:\n"
+    "1. Система должна быть агностична к языку и корректно работать для любого языка запроса пользователя.\n"
+    "2. Сохраняй язык текущего сообщения пользователя.\n\n"
+    "Основные правила:\n\n"
+    "1. Если сообщение уже содержит явную тему, сущности и действие — сохрани смысл, при необходимости слегка уточни формулировку.\n\n"
+    "2. Если сообщение короткое, размытое или зависит от контекста, восстанови намерение пользователя из STM. Определи и явно сформулируй:\n"
+    "- объект или тему запроса\n"
+    "- действие, которое пользователь хочет выполнить\n"
+    "- ожидаемый результат.\n\n"
+    "3. Обрабатывай случаи, когда сообщение содержит:\n"
+    "- дейктику: «это», «то», «вот», «там», «так», «этот», «тот» и т.п.\n"
+    "- местоимения без явных сущностей: «он», «она», «они», «оно» и т.п.\n"
+    "- краткие ответы: «да», «давай», «ок», «ага» и т.п.\n"
+    "- ссылки на контекст: «как это сделать», «тот вариант», «продолжай», «сделай это» и т.п.\n"
+    "- команды редактирования: «исправь», «добавь», «удали», «перепиши» и т.п.\n"
+    "- косвенные просьбы о ссылках, источниках, правилах, инструкциях и т.п.\n\n"
+    "4. Entity grounding:\n"
+    "все сущности, объекты и темы в переписанном запросе должны происходить только из текущего сообщения пользователя или из контекста диалога (STM). Не добавляй новые факты или сущности.\n\n"
+    "Если сущность или объект нельзя однозначно определить из текущего сообщения пользователя и STM, не пытайся угадывать или придумывать его.\n\n"
+    "5. Переписанный запрос должен:\n"
+    "- быть написан от первого лица\n"
+    "- содержать явные сущности, тему и действие\n"
+    "- быть самодостаточным и понятным без истории диалога\n"
+    "- максимально точно отражать намерение пользователя\n"
+    "- содержать ключевые сущности, названия объектов или тем, которые могут совпасть с формулировками в базе знаний\n"
+    "- быть оптимальным для retrieval.\n\n"
+    "6. Если намерение невозможно однозначно восстановить из контекста, сформулируй запрос так, чтобы было понятно, какое уточнение требуется.\n\n"
+    "Вывод:\n"
+    "Верни только переписанный запрос пользователя. Без пояснений и дополнительного текста.\n\n"
 )
+
 
 
 # ===== app/tasks/summarize.py =====
