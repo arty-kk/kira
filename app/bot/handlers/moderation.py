@@ -546,6 +546,7 @@ async def handle_passive_moderation(
         )
         light_ai_flags: tuple[str, ...] = ()
         light_ai_category = ""
+        light_timeout = float(settings.MOD_LIGHT_TIMEOUT)
         try:
             light_result = await asyncio.wait_for(
                 _check_light_with_flags(
@@ -559,14 +560,19 @@ async def handle_passive_moderation(
                     image_b64=image_b64,
                     image_mime=image_mime,
                 ),
-                timeout=getattr(settings, "MOD_LIGHT_TIMEOUT", 2.0),
+                timeout=light_timeout,
             )
             if isinstance(light_result, tuple) and len(light_result) == 3:
                 light_status, light_ai_flags, light_ai_category = light_result
             else:
                 light_status = str(light_result or "clean")
         except asyncio.TimeoutError:
-            logger.warning("check_light timed out for chat=%s user=%s", chat_id, _uid)
+            logger.warning(
+                "check_light timed out for chat=%s user=%s timeout_s=%.2f source=settings.MOD_LIGHT_TIMEOUT",
+                chat_id,
+                _uid,
+                light_timeout,
+            )
             light_status = "light_timeout_risk"
         chat_display_name = await _resolve_chat_display_name(
             chat_id,
@@ -658,6 +664,7 @@ async def handle_passive_moderation(
 
         blocked = False
         if risk:
+            deep_timeout = float(settings.MOD_DEEP_TIMEOUT)
             try:
                 blocked = await asyncio.wait_for(
                     check_deep(
@@ -669,10 +676,15 @@ async def handle_passive_moderation(
                         image_b64=image_b64,
                         image_mime=image_mime,
                     ),
-                    timeout=getattr(settings, "MOD_DEEP_TIMEOUT", 5.0),
+                    timeout=deep_timeout,
                 )
             except asyncio.TimeoutError:
-                logger.warning("check_deep timed out for chat=%s user=%s", chat_id, _uid)
+                logger.warning(
+                    "check_deep timed out for chat=%s user=%s timeout_s=%.2f source=settings.MOD_DEEP_TIMEOUT",
+                    chat_id,
+                    _uid,
+                    deep_timeout,
+                )
                 blocked = False
 
         if blocked:
