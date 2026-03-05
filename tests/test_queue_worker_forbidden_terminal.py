@@ -681,6 +681,51 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("reply_to_message_id", send_calls[1])
 
 
+
+    async def test_send_reply_preserves_message_thread_id(self):
+        queue_worker.REDIS_QUEUE = _FakeQueueRedis()
+
+        send_calls = []
+
+        async def _send_message(**kwargs):
+            send_calls.append(kwargs)
+            return types.SimpleNamespace(message_id=9005)
+
+        queue_worker.BOT = types.SimpleNamespace(send_message=AsyncMock(side_effect=_send_message))
+
+        with patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()):
+            await queue_worker._send_reply(
+                chat_id=-100777,
+                text="hello",
+                reply_to=42,
+                msg_id=None,
+                user_id=123,
+                is_group=True,
+                message_thread_id=777001,
+            )
+
+        self.assertEqual(len(send_calls), 1)
+        self.assertEqual(send_calls[0].get("message_thread_id"), 777001)
+
+    async def test_send_chatty_reply_keeps_message_thread_id_for_all_chunks(self):
+        send_reply_mock = AsyncMock(return_value=None)
+
+        with patch.object(queue_worker, "_send_reply", send_reply_mock),              patch.object(queue_worker, "compute_typing_delay", return_value=0.0):
+            await queue_worker._send_chatty_reply(
+                chat_id=-100777,
+                text="Первая фраза. Вторая фраза.",
+                reply_to=42,
+                msg_id=300,
+                user_id=123,
+                is_group=True,
+                enable_typing=False,
+                message_thread_id=777002,
+            )
+
+        self.assertGreaterEqual(send_reply_mock.await_count, 1)
+        for call_item in send_reply_mock.await_args_list:
+            self.assertEqual(call_item.kwargs.get("message_thread_id"), 777002)
+
     async def test_blocked_moderation_status_skips_response_and_refunds(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue

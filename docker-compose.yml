@@ -62,10 +62,18 @@ services:
       migrate:
         condition: service_completed_successfully
     command: >
+      sh -lc '
       /opt/venv/bin/python scripts/bootstrap_system_kb_pgvector.py
       --kb-file app/services/responder/rag/knowledge_on.json
       --model "${EMBEDDING_MODEL:-text-embedding-3-large}"
+      --scope global
       --force
+      && /opt/venv/bin/python scripts/bootstrap_system_kb_pgvector.py
+      --kb-file app/services/responder/rag/auto_reply.json
+      --model "${EMBEDDING_MODEL:-text-embedding-3-large}"
+      --scope auto_reply
+      --force
+      '
       
   redis_kv:
     image: redis:7-alpine

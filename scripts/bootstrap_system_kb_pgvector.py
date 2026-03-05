@@ -116,7 +116,8 @@ async def _run(args: argparse.Namespace) -> None:
     )
     batch_size = max(1, int(args.batch_size))
 
-    logger.info("bootstrap start: kb_file=%s items=%d model=%s batch_size=%d", kb_path, len(kb_items), model, batch_size)
+    kb_scope = (str(args.scope or "global").strip().lower() or "global")
+    logger.info("bootstrap start: kb_file=%s items=%d model=%s batch_size=%d scope=%s", kb_path, len(kb_items), model, batch_size, kb_scope)
 
     if not kb_items:
         raise RuntimeError(f"no valid KB items loaded from {kb_path}")
@@ -147,13 +148,13 @@ async def _run(args: argparse.Namespace) -> None:
 
         cnt = await db.execute(
             select(RagTagVector.id).where(
-                RagTagVector.scope == "global",
+                RagTagVector.scope == kb_scope,
                 RagTagVector.embedding_model == model,
             ).limit(1)
         )
         exists = cnt.scalar_one_or_none() is not None
     if exists and not args.force:
-        logger.info("system kb already prepared for model=%s, skip (use --force to rebuild)", model)
+        logger.info("system kb already prepared for model=%s scope=%s, skip (use --force to rebuild)", model, kb_scope)
         return
 
     tag_vocab = sorted({t for it in kb_items for t in it["tags"]})
@@ -174,7 +175,7 @@ async def _run(args: argparse.Namespace) -> None:
     }
 
     async with session_scope() as db:
-        await db.execute(delete(RagTagVector).where(RagTagVector.scope == "global", RagTagVector.embedding_model == model))
+        await db.execute(delete(RagTagVector).where(RagTagVector.scope == kb_scope, RagTagVector.embedding_model == model))
 
         rows_added = 0
         flush_every = max(1, int(args.flush_every))
@@ -186,7 +187,7 @@ async def _run(args: argparse.Namespace) -> None:
                     continue
                 pending.append(
                     RagTagVector(
-                        scope="global",
+                        scope=kb_scope,
                         owner_id=None,
                         kb_id=None,
                         embedding_model=model,
@@ -210,13 +211,14 @@ async def _run(args: argparse.Namespace) -> None:
             rows_added += len(pending)
             logger.info("db flush complete: total_rows=%d", rows_added)
 
-    logger.info("system tag-index prepared in pgvector: rows=%d unique_tags=%d model=%s", rows_added, len(tag_vocab), model)
+    logger.info("system tag-index prepared in pgvector: rows=%d unique_tags=%d model=%s scope=%s", rows_added, len(tag_vocab), model, kb_scope)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build system KB vectors directly into PostgreSQL/pgvector")
     parser.add_argument("--kb-file", default="app/services/responder/rag/knowledge_on.json")
     parser.add_argument("--model", default=get_rag_embedding_model())
+    parser.add_argument("--scope", default="global")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--batch-size", type=int, default=1280)
     parser.add_argument("--flush-every", type=int, default=5000)

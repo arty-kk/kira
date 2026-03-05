@@ -604,6 +604,52 @@ class DiscussionCommentAsyncContextTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(is_comment)
 
+
+    async def test_async_resolver_marks_comment_by_trusted_source_thread_cache_without_linked_chat(self) -> None:
+        root_message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, linked_chat_id=None),
+            message_id=900,
+            message_thread_id=777,
+            sender_chat=types.SimpleNamespace(id=-100900, type=ChatType.CHANNEL),
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            reply_to_message=None,
+        )
+        reply_message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-100200, linked_chat_id=None),
+            message_id=901,
+            message_thread_id=777,
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            reply_to_message=types.SimpleNamespace(message_id=900, sender_chat=None, forward_from_chat=None),
+        )
+
+        store = {}
+
+        async def _get(key):
+            return store.get(key)
+
+        async def _set(key, value, ex=None):
+            if isinstance(value, int):
+                value = str(value).encode("utf-8")
+            store[key] = value
+            return True
+
+        redis_mock = types.SimpleNamespace(get=AsyncMock(side_effect=_get), set=AsyncMock(side_effect=_set))
+        cfg = types.SimpleNamespace(COMMENT_SOURCE_CHANNEL_IDS=[-100900], REPLY_CONTEXT_TTL_SEC=86400)
+
+        with (
+            patch.object(moderation_context, "redis_client", redis_mock),
+            patch.object(moderation_context, "settings", cfg),
+        ):
+            root_ctx = await moderation_context.resolve_message_moderation_context_async(root_message, from_linked=False)
+            reply_ctx = await moderation_context.resolve_message_moderation_context_async(reply_message, from_linked=False)
+
+        self.assertEqual(root_ctx, "comment")
+        self.assertEqual(reply_ctx, "comment")
+        redis_mock.set.assert_any_await("comment:thread_root:-100200:777", 900, ex=86400)
+
     async def test_async_resolver_keeps_channel_origin_fallback_without_linked_chat_id(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=-100200, linked_chat_id=None),

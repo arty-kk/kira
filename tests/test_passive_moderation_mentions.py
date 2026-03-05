@@ -769,5 +769,25 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("NEW MESSAGE:\nneutral message", combined_text)
 
 
+    async def test_moderate_with_openai_skips_short_text_under_min_len(self) -> None:
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_AI_MIN_TEXT_LEN=3)),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock()) as call_mock,
+        ):
+            flagged = await passive_moderation.moderate_with_openai("ok")
+
+        self.assertFalse(flagged)
+        call_mock.assert_not_awaited()
+
+    async def test_parse_ai_moderation_json_disables_insult_and_threat_flags(self) -> None:
+        raw = '{"regular_promo": false, "income_promo": false, "insult_abuse": true, "threat_abuse": true, "sex_abuse": false}'
+        with patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_DISABLE_INSULT_THREAT_AI=True)):
+            parsed = passive_moderation._parse_ai_moderation_json(raw)
+
+        self.assertFalse(parsed.get("insult_abuse"))
+        self.assertFalse(parsed.get("threat_abuse"))
+
+
+
 if __name__ == "__main__":
     unittest.main()

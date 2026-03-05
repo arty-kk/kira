@@ -192,6 +192,13 @@ def _is_effectively_empty(s: str) -> bool:
     return txt == ""
 
 
+def _has_min_content_signal(raw_text: str) -> bool:
+    txt = IS_MENTION_RE.sub(" ", (raw_text or ""))
+    txt = re.sub(r"\s+", " ", txt).strip()
+    min_len = max(1, int(getattr(settings, "GROUP_AUTOREPLY_MIN_TEXT_LEN", 3) or 3))
+    return len(txt) >= min_len
+
+
 async def _chat_has_active_generation(chat_id: int) -> bool:
     try:
         busy = await consts.redis_queue.get(f"chatbusy:{int(chat_id)}")
@@ -360,8 +367,6 @@ def _resolve_autoreply_trigger(
         return "mention"
     if mentioned:
         return "mention"
-    if mentions_other:
-        return None
     if autoreply_on_topic and has_content_signal:
         return "check_on_topic"
     return None
@@ -420,9 +425,7 @@ def _reply_gate_requires_mention(message: Message) -> bool:
 
 
 def _is_clean_message_for_on_topic(message: Message, *, mentioned: bool, mentions_other: bool) -> bool:
-    if message.reply_to_message is not None:
-        return False
-    if mentioned or mentions_other:
+    if mentioned:
         return False
     return True
 
@@ -569,18 +572,19 @@ async def _push_group_stm_and_recent(
     user_id_val: int,
     text_for_stm: str,
     text_for_recent: str,
+    message_thread_id: int | None = None,
 ) -> None:
     try:
         role = "channel" if is_channel else "user"
         if (text_for_stm or "").strip():
-            asyncio.create_task(push_group_stm(cid, role, text_for_stm, user_id=user_id_val))
+            asyncio.create_task(push_group_stm(cid, role, text_for_stm, user_id=user_id_val, message_thread_id=message_thread_id))
     except Exception:
         logger.debug("push_group_stm failed", exc_info=True)
 
     try:
-        if trigger in ("mention", "check_on_topic", "channel_post"):
+        if (text_for_recent or "").strip():
             line = f"[{int(time_module.time())}] [u:{user_id_val}] {text_for_recent}"
-            asyncio.create_task(append_group_recent(cid, [line]))
+            asyncio.create_task(append_group_recent(cid, [line], message_thread_id=message_thread_id))
     except Exception:
         logger.debug("append_group_recent failed", exc_info=True)
 
@@ -638,6 +642,7 @@ async def _log_ignored_repost_to_stm(
         user_id_val=user_id_val,
         text_for_stm=(model_text or "").strip(),
         text_for_recent=(log_text or "").strip(),
+        message_thread_id=getattr(message, "message_thread_id", None),
     )
 
 
@@ -934,46 +939,6 @@ async def on_group_message(message: Message) -> None:
         with contextlib.suppress(Exception):
             await update_comment_thread_root_cache(message)
 
-        if _reply_gate_requires_mention(message):
-            user_id_val = _user_id_val(message, is_channel)
-            is_comment_context = await _resolve_group_comment_context(message)
-            model_text, log_text = split_context_text(raw_text, ents, allow_web=False)
-            payload = {
-                "chat_id": cid,
-                "text": model_text,
-                "user_id": user_id_val,
-                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
-                "is_group": True,
-                "msg_id": message.message_id,
-                "is_channel_post": is_channel,
-                "is_comment_context": is_comment_context,
-                "trigger": None,
-                "enforce_on_topic": False,
-                "entities": ents,
-            }
-            _dispatch_passive_moderation(
-                message,
-                payload,
-                text=log_text,
-                ents=ents,
-                is_channel=is_channel,
-                user_id_val=user_id_val,
-                is_comment_context=is_comment_context,
-                trusted_repost=False,
-            )
-            logger.info(
-                "GROUP_REPLY_GATE_PASSIVE_ONLY: chat_id=%s msg_id=%s user_id=%s is_comment_context=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
-                cid,
-                message.message_id,
-                user_id_val,
-                is_comment_context,
-                getattr(getattr(message, "chat", None), "linked_chat_id", None),
-                getattr(message, "message_thread_id", None),
-                getattr(getattr(message, "reply_to_message", None), "message_id", None),
-                getattr(message, "is_topic_message", None),
-            )
-            return
-
         if trusted_repost:
             if not trusted_repost_logged:
                 await _log_ignored_repost_to_stm(
@@ -1008,7 +973,7 @@ async def on_group_message(message: Message) -> None:
             is_channel=is_channel,
             mentioned=mentioned,
             mentions_other=mentions_other,
-            has_content_signal=bool(raw_text) and clean_for_on_topic,
+            has_content_signal=_has_min_content_signal(raw_text) and clean_for_on_topic,
             is_battle_cmd_to_us=is_battle_cmd_to_us,
             autoreply_on_topic=AUTOREPLY_ON_TOPIC,
         )
@@ -1124,15 +1089,6 @@ async def on_group_message(message: Message) -> None:
                     bot_sid = int(getattr(consts, "BOT_ID", None) or 0) or None
                 await _store_quote_context(cid, reply_to_id, quoted, role="assistant", speaker_id=bot_sid)
 
-        await _store_context(
-            cid,
-            message.message_id,
-            log_text,
-            role="user",
-            speaker_id=user_id_val,
-            source=("channel" if is_channel else "user"),
-        )
-
         channel = _channel_obj(message)
         payload = {
             "chat_id": cid,
@@ -1143,6 +1099,7 @@ async def on_group_message(message: Message) -> None:
             "msg_id": message.message_id,
             "is_channel_post": is_channel,
             "is_comment_context": is_comment_context,
+            "message_thread_id": getattr(message, "message_thread_id", None),
             "channel_id": channel.id if channel else None,
             "linked_chat_id": int(getattr(message.chat, "linked_chat_id", 0) or 0),
             "channel_title": getattr(channel, "title", None) if channel else None,
@@ -1154,15 +1111,6 @@ async def on_group_message(message: Message) -> None:
         if message.from_user:
             with contextlib.suppress(Exception):
                 await redis_client.sadd(f"all_users:{cid}", message.from_user.id)
-
-        await _push_group_stm_and_recent(
-            cid,
-            trigger=trigger,
-            is_channel=is_channel,
-            user_id_val=user_id_val,
-            text_for_stm=(log_text or "").strip(),
-            text_for_recent=(log_text or "").strip(),
-        )
 
         has_link = any((e.get("type", "").lower() in ("url", "text_link")) for e in ents)
         _analytics_best_effort(
@@ -1236,33 +1184,6 @@ async def on_group_voice(message: Message) -> None:
         if message.from_user and message.from_user.is_bot and not is_channel:
             return
 
-        if _reply_gate_requires_mention(message):
-            user_id_val = _user_id_val(message, is_channel)
-            is_comment_context = await _resolve_group_comment_context(message)
-            payload = {
-                "chat_id": cid,
-                "text": None,
-                "user_id": user_id_val,
-                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
-                "is_group": True,
-                "msg_id": message.message_id,
-                "is_channel_post": is_channel,
-                "is_comment_context": is_comment_context,
-                "trigger": None,
-                "enforce_on_topic": False,
-                "entities": [],
-            }
-            _dispatch_passive_moderation(
-                message,
-                payload,
-                text="",
-                ents=[],
-                is_channel=is_channel,
-                user_id_val=user_id_val,
-                is_comment_context=is_comment_context,
-                trusted_repost=False,
-            )
-            return
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
@@ -1356,6 +1277,7 @@ async def on_group_voice(message: Message) -> None:
             "msg_id": message.message_id,
             "is_channel_post": is_channel,
             "is_comment_context": is_comment_context,
+            "message_thread_id": getattr(message, "message_thread_id", None),
             "channel_id": channel.id if channel else None,
             "linked_chat_id": int(getattr(message.chat, "linked_chat_id", 0) or 0),
             "channel_title": getattr(channel, "title", None) if channel else None,
@@ -1461,12 +1383,6 @@ async def _handle_group_image_message_common(
                 "content_type_for_analytics": content_type_for_analytics,
             }
         )
-
-    if _reply_gate_requires_mention(message):
-        user_id_val = _user_id_val(message, is_channel)
-        is_comment_context = await _resolve_group_comment_context(message)
-        _dispatch_image_moderation_only(user_id_val=user_id_val, is_comment_context=is_comment_context)
-        return
 
     trusted_repost = _is_trusted_scope_repost(message)
     if trusted_repost:
