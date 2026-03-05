@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import contextlib
 import asyncio
+import json
 import time
 import html
 import secrets
@@ -21,6 +22,7 @@ from app.bot.components.dispatcher import dp
 from app.bot.components.constants import redis_client
 import app.bot.components.constants as consts
 from app.config import settings
+from app.core.memory import append_group_recent, push_group_stm
 from app.services.addons.passive_moderation import (
     extract_urls,
     is_telegram_link,
@@ -35,6 +37,8 @@ from app.services.addons.passive_moderation import (
     is_emoji_flood_text,
     is_symbol_noise_text,
     count_message_emojis,
+    contains_order_uuid,
+    extract_order_uuid,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import (
@@ -415,6 +419,45 @@ async def handle_passive_moderation(
             raise ModerationSignalPersistenceError(
                 f"mod:msg persistence failed for chat_id={chat_id} msg_id={_mid} status={persisted_status}"
             ) from exc
+    async def _persist_clean_context_for_group() -> None:
+        if status != "clean" or _mid <= 0:
+            return
+        if message is not None and getattr(getattr(message, "chat", None), "type", None) == ChatType.PRIVATE:
+            return
+        txt = (text or "").strip()
+        if not txt:
+            return
+        src = "channel" if normalized_source == "channel" else "user"
+        try:
+            payload = json.dumps(
+                {
+                    "role": "user",
+                    "text": txt,
+                    "speaker_id": int(_uid),
+                    "source": src,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            await redis_client.set(
+                f"msg:{chat_id}:{_mid}",
+                payload,
+                ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+            )
+        except Exception:
+            logger.debug("passive moderation: failed to persist clean message context", exc_info=True)
+
+        try:
+            await push_group_stm(chat_id, src, txt, user_id=int(_uid), message_thread_id=effective_thread_id)
+        except Exception:
+            logger.debug("passive moderation: push_group_stm failed", exc_info=True)
+
+        try:
+            line = f"[{int(time.time())}] [u:{int(_uid)}] {txt}"
+            await append_group_recent(chat_id, [line], message_thread_id=effective_thread_id)
+        except Exception:
+            logger.debug("passive moderation: append_group_recent failed", exc_info=True)
+
 
     try:
         if message:
@@ -513,8 +556,23 @@ async def handle_passive_moderation(
     if not finalize_early and not (text and text.strip()) and not image_b64:
         finalize_early = True
 
+
+    order_uuid = extract_order_uuid(text or "")
+    if order_uuid:
+        status = "clean"
+        reason_text = ""
+        finalize_early = True
+        logger.info(
+            "PASSIVE_MODERATION_ORDER_UUID_BYPASS: chat_id=%s msg_id=%s user_id=%s uuid=%s",
+            chat_id,
+            _mid,
+            _uid,
+            order_uuid,
+        )
+
     if finalize_early:
         await _persist_status_to_redis(persisted_status=status, persisted_reason=reason_text)
+        await _persist_clean_context_for_group()
 
         logger.info(
             "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
@@ -792,6 +850,8 @@ async def handle_passive_moderation(
             raise ModerationSignalPersistenceError(
                 f"mod:msg persistence failed for chat_id={chat_id} msg_id={_mid} status={status}"
             ) from exc
+
+        await _persist_clean_context_for_group()
 
         if status == "clean" and not targets:
             uid_log = getattr(getattr(message, "from_user", None), "id", user_id)

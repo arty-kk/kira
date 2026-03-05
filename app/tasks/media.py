@@ -111,6 +111,12 @@ async def _store_context_and_recent(payload: dict[str, Any], *, log_caption: str
     user_id = _safe_int(payload.get("user_id"), cid)
     trigger = str(payload.get("trigger") or "")
     is_channel = bool(payload.get("is_channel_post"))
+    try:
+        message_thread_id = int(payload.get("message_thread_id")) if payload.get("message_thread_id") is not None else None
+        if message_thread_id is not None and message_thread_id <= 0:
+            message_thread_id = None
+    except Exception:
+        message_thread_id = None
 
     source = "channel" if is_channel else "user"
     context = {"role": "user", "text": "[Image]" + (f" {log_caption}" if log_caption else ""), "speaker_id": user_id, "source": source}
@@ -127,11 +133,11 @@ async def _store_context_and_recent(payload: dict[str, Any], *, log_caption: str
     role = "channel" if is_channel else "user"
 
     if text_for_stm:
-        asyncio.create_task(push_group_stm(cid, role, text_for_stm, user_id=user_id))
+        asyncio.create_task(push_group_stm(cid, role, text_for_stm, user_id=user_id, message_thread_id=message_thread_id))
 
     if trigger in ("mention", "check_on_topic", "channel_post"):
         line = f"[{int(time.time())}] [u:{user_id}] {text_for_recent}"
-        asyncio.create_task(append_group_recent(cid, [line]))
+        asyncio.create_task(append_group_recent(cid, [line], message_thread_id=message_thread_id))
 
 
 async def _preprocess(payload: dict[str, Any]) -> str:
@@ -171,6 +177,7 @@ async def _preprocess(payload: dict[str, Any]) -> str:
             "msg_id": message_id,
             "is_channel_post": bool(payload.get("is_channel_post")),
             "is_comment_context": bool(payload.get("is_comment_context")),
+            "message_thread_id": payload.get("message_thread_id"),
             "channel_id": payload.get("channel_id"),
             "linked_chat_id": payload.get("linked_chat_id"),
             "channel_title": payload.get("channel_title"),

@@ -27,6 +27,7 @@ async def is_relevant(
     embedding_model: Optional[str] = None,
     query_embedding_reuse_counter: Optional[List[int]] = None,
     apply_mmr: bool = True,
+    kb_scope: str = "global",
 ) -> Tuple[bool, Optional[List[Tuple[float, str, str]]]]:
 
     _ = persona_owner_id
@@ -78,6 +79,7 @@ async def is_relevant(
             embedding_model=(embedding_model or model),
             min_similarity=keyword_thr,
             apply_mmr=apply_mmr,
+            kb_scope=kb_scope,
         )
     except Exception as exc:
         query_embedding_len = len(query_embedding) if query_embedding is not None and hasattr(query_embedding, "__len__") else None

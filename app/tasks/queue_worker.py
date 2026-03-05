@@ -521,6 +521,7 @@ async def _send_chatty_reply(
     user_id: Optional[int] = None,
     is_group: bool = False,
     enable_typing: bool = True,
+    message_thread_id: Optional[int] = None,
 ) -> None:
 
     text = (text or "").strip()
@@ -568,6 +569,7 @@ async def _send_chatty_reply(
                 user_id=user_id,
                 is_group=is_group,
                 skip_dedupe=False,
+                message_thread_id=message_thread_id,
             )
             delivered_first = True
             first_reply_target = None
@@ -590,6 +592,7 @@ async def _send_chatty_reply(
                 user_id=user_id,
                 is_group=is_group,
                 skip_dedupe=True,
+                message_thread_id=message_thread_id,
             )
         except ReplyTerminalError:
             if delivered_first:
@@ -901,6 +904,7 @@ async def _send_reply(
     user_id: Optional[int] = None,
     is_group: bool = False,
     skip_dedupe: bool = False,
+    message_thread_id: Optional[int] = None,
 ) -> None:
    
     dedupe_set = False
@@ -932,6 +936,8 @@ async def _send_reply(
         )
         if reply_to:
             kwargs["reply_to_message_id"] = reply_to
+        if message_thread_id:
+            kwargs["message_thread_id"] = message_thread_id
 
         async def _send_with_retries(pm: Optional[str], kw: dict, raw_text_for_plain: str) -> TgMessage | None:
             attempts = 3
@@ -1258,6 +1264,14 @@ async def handle_job(raw, processing_key: str) -> None:
     else:
         send_reply_target = reply_target
 
+    message_thread_id_raw = job.get("message_thread_id")
+    try:
+        message_thread_id = int(message_thread_id_raw) if message_thread_id_raw is not None else None
+        if message_thread_id is not None and message_thread_id <= 0:
+            message_thread_id = None
+    except Exception:
+        message_thread_id = None
+
     if not (isinstance(chat_id, int) and isinstance(user_id, int) and (text is not None or image_b64 or voice_file_id)):
         logger.error(
             "Skipping job with missing fields: chat_id=%s user_id=%s text_len=%d has_image=%s",
@@ -1404,6 +1418,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             msg_id,
                             merged_ids,
                             user_id=user_id,
+                            message_thread_id=message_thread_id,
                         )
                         await _confirm_reservation()
                     with suppress(Exception):
@@ -1637,6 +1652,7 @@ async def handle_job(raw, processing_key: str) -> None:
                         strict_autoreply_gate=True,
                         query_embedding=query_embedding,
                         embedding_model=embedding_model,
+                        kb_scope="auto_reply",
                     )
                 except Exception:
                     logger.exception(
@@ -1680,6 +1696,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     embedding_model=embedding_model,
                     rag_precheck_source=("queue_worker_autoreply_trigger_precheck" if skip_autoreply_strict_gate else None),
                     skip_autoreply_strict_gate=skip_autoreply_strict_gate,
+                    message_thread_id=message_thread_id,
                 )
             )
 
@@ -1758,6 +1775,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             "system",
                             "[Delivery] The previous assistant reply was sent as a voice message.",
                             user_id=user_id,
+                            message_thread_id=message_thread_id,
                         )
                     except Exception:
                         logger.debug("Failed to push voice-delivery meta", exc_info=True)
@@ -1776,6 +1794,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             user_id=user_id,
                             is_group=is_group,
                             enable_typing=allow_typing_before_send,
+                            message_thread_id=message_thread_id,
                         )
                     else:
                         if len(reply_text) >= CHATTY_LONG_TEXT_THRESHOLD and allow_typing_before_send:
@@ -1791,6 +1810,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             merged_ids=merged_ids,
                             user_id=user_id,
                             is_group=is_group,
+                            message_thread_id=message_thread_id,
                         )
 
 
