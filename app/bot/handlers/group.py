@@ -432,12 +432,18 @@ def _reply_gate_requires_mention(message: Message) -> bool:
     return False
 
 
-def _is_clean_message_for_on_topic(message: Message, *, mentioned: bool, mentions_other: bool) -> bool:
+def _is_clean_message_for_on_topic(
+    message: Message,
+    *,
+    mentioned: bool,
+    mentions_other: bool,
+    is_comment_context: bool,
+) -> bool:
     if mentioned:
         return False
     if mentions_other:
         return False
-    if getattr(message, "reply_to_message", None):
+    if getattr(message, "reply_to_message", None) and not is_comment_context:
         return False
     return True
 
@@ -976,10 +982,12 @@ async def on_group_message(message: Message) -> None:
         mentioned = _is_mention(message)
         mentions_other = _mentions_other_user(message)
 
+        is_comment_context = await _resolve_group_comment_context(message)
         clean_for_on_topic = _is_clean_message_for_on_topic(
             message,
             mentioned=mentioned,
             mentions_other=mentions_other,
+            is_comment_context=is_comment_context,
         )
 
         trigger = _resolve_autoreply_trigger(
@@ -995,7 +1003,6 @@ async def on_group_message(message: Message) -> None:
             model_text = _order_uuid_assist_prompt(order_uuid, model_text or raw_text)
             trigger = "mention"
         should_moderate_passive = True
-        is_comment_context = await _resolve_group_comment_context(message)
         logger.info(
             "GROUP_TRIGGER_RESOLVED: chat_id=%s msg_id=%s user_id=%s trigger=%s mentions_other=%s is_channel=%s is_comment_context=%s",
             cid,
@@ -1093,6 +1100,29 @@ async def on_group_message(message: Message) -> None:
             return
 
         if not await _ensure_daily_limit(cid, message.message_id):
+            payload = {
+                "chat_id": cid,
+                "text": model_text,
+                "user_id": _user_id_val(message, is_channel),
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": ents,
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text=log_text,
+                ents=ents,
+                is_channel=is_channel,
+                user_id_val=payload["user_id"],
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
             return
 
         reply_to_id = (message.reply_to_message.message_id if message.reply_to_message else None)
@@ -1267,6 +1297,31 @@ async def on_group_voice(message: Message) -> None:
             return
 
         if not await _ensure_daily_limit(cid, message.message_id):
+            user_id_val = _user_id_val(message, is_channel)
+            is_comment_context = await _resolve_group_comment_context(message)
+            payload = {
+                "chat_id": cid,
+                "text": None,
+                "user_id": user_id_val,
+                "reply_to": (message.reply_to_message.message_id if message.reply_to_message else None),
+                "is_group": True,
+                "msg_id": message.message_id,
+                "is_channel_post": is_channel,
+                "is_comment_context": is_comment_context,
+                "trigger": trigger,
+                "enforce_on_topic": False,
+                "entities": [],
+            }
+            _dispatch_passive_moderation(
+                message,
+                payload,
+                text="",
+                ents=[],
+                is_channel=is_channel,
+                user_id_val=user_id_val,
+                is_comment_context=is_comment_context,
+                trusted_repost=False,
+            )
             return
 
         asyncio.create_task(inc_msg_count(cid))
@@ -1438,6 +1493,9 @@ async def _handle_group_image_message_common(
         return
 
     if not await _ensure_daily_limit(cid, message.message_id):
+        user_id_val = _user_id_val(message, is_channel)
+        is_comment_context = await _resolve_group_comment_context(message)
+        _dispatch_image_moderation_only(user_id_val=user_id_val, is_comment_context=is_comment_context)
         return
 
     reply_to_id = (message.reply_to_message.message_id if message.reply_to_message else None)

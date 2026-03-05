@@ -669,5 +669,31 @@ class DiscussionCommentAsyncContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx, "comment")
 
 
+class GroupOnTopicTriggerCleanlinessTests(unittest.TestCase):
+    def test_comment_reply_is_clean_for_on_topic(self) -> None:
+        message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
+
+        is_clean = group._is_clean_message_for_on_topic(
+            message,
+            mentioned=False,
+            mentions_other=False,
+            is_comment_context=True,
+        )
+
+        self.assertTrue(is_clean)
+
+    def test_non_comment_reply_is_not_clean_for_on_topic(self) -> None:
+        message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
+
+        is_clean = group._is_clean_message_for_on_topic(
+            message,
+            mentioned=False,
+            mentions_other=False,
+            is_comment_context=False,
+        )
+
+        self.assertFalse(is_clean)
+
+
 if __name__ == "__main__":
     unittest.main()

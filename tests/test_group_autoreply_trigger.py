@@ -260,6 +260,77 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         buffer_mock.assert_not_called()
         dispatch_mock.assert_not_called()
 
+    async def test_daily_limit_text_skips_buffer_but_keeps_passive_moderation(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=101,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            message_thread_id=None,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("hello", "hello")))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_resolve_autoreply_trigger", return_value="check_on_topic"))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=False)))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_message(message)
+
+        buffer_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
+
+    async def test_daily_limit_voice_skips_buffer_but_keeps_passive_moderation(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=102,
+            voice=types.SimpleNamespace(file_id="voice-file-id"),
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+            text=None,
+            caption=None,
+            message_thread_id=None,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_resolve_autoreply_trigger", return_value="mention"))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=False)))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_voice(message)
+
+        buffer_mock.assert_not_called()
+        dispatch_mock.assert_called_once()
+
     async def test_reply_gate_voice_still_dispatches_passive_moderation(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),

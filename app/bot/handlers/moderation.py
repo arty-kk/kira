@@ -259,6 +259,24 @@ def _trusted_scope_ids() -> tuple[set[int], set[int], set[int]]:
     return trusted_destinations, trusted_source_channel_ids, trusted_scope
 
 
+def _trusted_moderator_ids() -> set[int]:
+    ids: set[int] = set()
+    for raw in (getattr(settings, "MODERATOR_IDS", []) or []):
+        try:
+            ids.add(int(raw))
+        except Exception:
+            continue
+    return ids
+
+
+def _is_trusted_moderator_id(user_id: int | None) -> bool:
+    try:
+        uid = int(user_id or 0)
+    except Exception:
+        uid = 0
+    return uid > 0 and uid in _trusted_moderator_ids()
+
+
 async def _is_fully_trusted_actor_or_action(
     *,
     chat_id: int,
@@ -267,6 +285,10 @@ async def _is_fully_trusted_actor_or_action(
     user_id: int | None = None,
     from_linked: bool = False,
 ) -> bool:
+    uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0) or 0)
+    if _is_trusted_moderator_id(uid):
+        return True
+
     _, trusted_source_channel_ids, trusted_scope = _trusted_scope_ids()
     return await is_trusted_actor(
         message=message,
@@ -546,7 +568,7 @@ async def handle_passive_moderation(
                 if _mid:
                     await _flag(chat_id, _mid, action="delete", reason="profile_nsfw_blocked|context=group", user_id=_uid)
                     await _delete_message_safe(chat_id, _mid)
-                await _restrict_user_write_safe(chat_id, _uid)
+                await _cleanup_user_history_and_mute(chat_id, _uid)
                 logger.info(
                     "PASSIVE_MODERATION_PROFILE_NSFW_BLOCKED_KEY: chat_id=%s msg_id=%s user_id=%s",
                     chat_id,
@@ -1014,7 +1036,9 @@ async def _is_profile_nsfw(user_id: int) -> bool:
 
 
 async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
-    await _restrict_user_write_safe(chat_id, user_id)
+    banned_with_revoke = await _ban_user_safe(chat_id, user_id, revoke=True)
+    if not banned_with_revoke:
+        await _restrict_user_write_safe(chat_id, user_id)
 
 
 def _now() -> int:
@@ -1178,6 +1202,8 @@ async def moderation_on_pinned(message: types.Message) -> None:
 async def moderation_on_edited(message: types.Message) -> None:
     if not (message.from_user and not message.from_user.is_bot):
         return
+    if _is_trusted_moderator_id(getattr(message.from_user, "id", None)):
+        return
     if settings.MODERATION_ADMIN_EXEMPT and await _is_admin(message.chat.id, int(message.from_user.id)):
         return
     if settings.MODERATION_EDITED_DELETE:
@@ -1209,6 +1235,9 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     # Telegram auto-forward комментариев из linked-channel не считается
     # обычным forward для MODERATION_DELETE_BOT_CHANNEL_CHAT_FORWARDS.
     if bool(getattr(message, "is_automatic_forward", False)):
+        return False
+
+    if _is_trusted_moderator_id(getattr(getattr(message, "from_user", None), "id", None)):
         return False
 
     _, _, trusted_scope = _trusted_scope_ids()
@@ -1486,7 +1515,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
     raw = (message.text or message.caption or "") or ""
     ents = (message.entities or []) + (message.caption_entities or [])
 
-    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 5) or 0)
+    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 12) or 0)
     if max_emoji_per_message > 0 and count_message_emojis(raw, [
         {
             "type": str(e.type.value if hasattr(e.type, "value") else e.type),
@@ -1735,7 +1764,8 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
             await cb.answer("You must be an admin of that chat to perform this action.", show_alert=True)
             return
 
-        banned = await _ban_user_safe(chat_id, offender_id, revoke=getattr(settings, "MODERATION_BAN_REVOKE_MESSAGES", True))
+        # Inline admin action must always revoke offender messages.
+        banned = await _ban_user_safe(chat_id, offender_id, revoke=True)
         if banned:
             try:
                 if isinstance(trigger_msg_id, int) and trigger_msg_id > 0:

@@ -397,6 +397,7 @@ class Settings:
     MODERATION_DEEP_INCLUDE_HISTORY: bool = field(default_factory=lambda: _get_env("MODERATION_DEEP_INCLUDE_HISTORY", "false", conv=_parse_bool))
     MODERATION_PROFILE_NSFW_ENFORCE: bool = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_ENFORCE", "true", conv=_parse_bool))
     MODERATION_PROFILE_NSFW_CACHE_SECONDS: int = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_CACHE_SECONDS", "172800", conv=int))
+    MODERATION_PROFILE_NSFW_MIN_CONFIDENCE: int = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_MIN_CONFIDENCE", "40", conv=int))
     MODERATION_ALLOWED_LINK_KEYWORDS: List[str] = field(default_factory=lambda: [x.strip() for x in _get_env("MODERATION_ALLOWED_LINK_KEYWORDS", "kupikod,steam,steampowered,steamcommunity,epic,gog,ea,ubisoft,battle.net").split(",") if x.strip()])
     MODERATION_DELETE_TELEGRAM_LINKS: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_TELEGRAM_LINKS", "true", conv=_parse_bool))
     MODERATION_TELEGRAM_DOMAINS: List[str] = field(default_factory=lambda: [x.strip().lower() for x in _get_env("MODERATION_TELEGRAM_DOMAINS", "t.me,telegram.me,telegram.dog").split(",") if x.strip()])

@@ -38,11 +38,14 @@ class ModerationInlineBanTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "_is_admin", AsyncMock(return_value=True)),
-            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=True)),
-            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_BAN_REVOKE_MESSAGES=True, NEW_USER_TTL_SECONDS=120)),
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=True)) as ban_mock,
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_BAN_REVOKE_MESSAGES=False, NEW_USER_TTL_SECONDS=120)),
         ):
             await moderation.moderation_inline_ban(callback)
             await moderation.moderation_inline_ban(callback)
+
+        self.assertEqual(2, ban_mock.await_count)
+        ban_mock.assert_any_await(-100500, 777, revoke=True)
 
         keys = list(fake_redis.hashes.keys())
         self.assertEqual(2, len(keys))

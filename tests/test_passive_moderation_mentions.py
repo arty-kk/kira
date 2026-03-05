@@ -93,7 +93,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_check_light_flags_emoji_overlimit_for_custom_emoji_entities(self) -> None:
-        entities = [{"type": "custom_emoji", "offset": i, "length": 1} for i in range(12)]
+        entities = [{"type": "custom_emoji", "offset": i, "length": 1} for i in range(13)]
         with (
             patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_CUSTOM_EMOJI_SPAM_THRESHOLD=12)),
             patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
@@ -769,7 +769,15 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false,"sex_abuse":true}')
 
         with (
-            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_AI_MODERATION=True,
+                    BASE_MODEL="gpt-5-nano",
+                    MODERATION_DISABLE_INSULT_THREAT_AI=False,
+                ),
+            ),
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("sexual text")
@@ -851,6 +859,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(parsed.get("insult_abuse"))
         self.assertFalse(parsed.get("threat_abuse"))
+        self.assertFalse(parsed.get("sex_abuse"))
 
 
 

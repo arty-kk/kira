@@ -38,9 +38,9 @@ async def is_relevant(
         return False, None
 
     try:
-        topk = int(getattr(settings, "KNOWLEDGE_TOP_K", 3)) or 3
+        topk = int(getattr(settings, "KNOWLEDGE_TOP_K", 1)) or 1
     except Exception:
-        topk = 3
+        topk = 1
 
     try:
         owner_id_int = int(knowledge_owner_id) if knowledge_owner_id is not None else 0
