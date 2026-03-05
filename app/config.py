@@ -438,7 +438,7 @@ class Settings:
     MODERATION_LINKS_DELETE_ALL:       bool = field(default_factory=lambda: _get_env("MODERATION_LINKS_DELETE_ALL",       "true",  conv=_parse_bool))
     MODERATION_COMMANDS_DELETE_ALL:    bool = field(default_factory=lambda: _get_env("MODERATION_COMMANDS_DELETE_ALL",    "true",  conv=_parse_bool))
     MODERATION_COMMAND_WHITELIST: List[str] = field(default_factory=lambda: [x.strip().lstrip("/") for x in _get_env("MODERATION_COMMAND_WHITELIST", "/battle").split(",") if x.strip()])
-    MODERATION_FILES_DELETE_ALL:       bool = field(default_factory=lambda: _get_env("MODERATION_FILES_DELETE_ALL",       "true",  conv=_parse_bool))
+    MODERATION_FILES_DELETE_ALL:       bool = field(default_factory=lambda: _get_env("MODERATION_FILES_DELETE_ALL",       "false",  conv=_parse_bool))
     # per-type media
     MODERATION_VOICE_DELETE:           bool = field(default_factory=lambda: _get_env("MODERATION_VOICE_DELETE",           "true",  conv=_parse_bool))
     MODERATION_VIDEO_NOTE_DELETE:      bool = field(default_factory=lambda: _get_env("MODERATION_VIDEO_NOTE_DELETE",      "true",  conv=_parse_bool))
