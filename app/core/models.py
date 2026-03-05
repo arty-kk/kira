@@ -213,9 +213,9 @@ class RagTagVector(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
     __table_args__ = (
-        CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
+        CheckConstraint("scope IN ('global','auto_reply','owner')", name="ck_rag_tag_vectors_scope"),
         CheckConstraint(
-            "((scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
+            "((scope IN ('global','auto_reply') AND owner_id IS NULL AND kb_id IS NULL) OR "
             "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
             name="ck_rag_tag_vectors_scope_owner_kb_consistency",
         ),
