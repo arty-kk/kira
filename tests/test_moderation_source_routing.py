@@ -1165,11 +1165,13 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
 class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_cleanup_user_history_and_mute_only_restricts_user(self) -> None:
         with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=False)) as ban_mock,
             patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
         ):
             await moderation._cleanup_user_history_and_mute(-1001, 42)
 
-        cleanup_mock.assert_awaited_once_with(-1001, 42)
+        ban_mock.assert_awaited_once_with(-1001, 42, revoke=True)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
 
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
         with (

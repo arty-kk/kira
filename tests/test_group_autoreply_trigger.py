@@ -132,6 +132,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 clean_message,
                 mentioned=False,
                 mentions_other=False,
+                is_comment_context=False,
             )
         )
 
@@ -141,6 +142,16 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 reply_message,
                 mentioned=False,
                 mentions_other=False,
+                is_comment_context=False,
+            )
+        )
+
+        self.assertTrue(
+            group._is_clean_message_for_on_topic(
+                reply_message,
+                mentioned=False,
+                mentions_other=False,
+                is_comment_context=True,
             )
         )
 
@@ -149,6 +160,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 clean_message,
                 mentioned=True,
                 mentions_other=False,
+                is_comment_context=False,
             )
         )
         self.assertFalse(
@@ -156,12 +168,13 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 clean_message,
                 mentioned=False,
                 mentions_other=True,
+                is_comment_context=False,
             )
         )
 
 
 class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reply_message_without_bot_mention_dispatches_passive_only(self) -> None:
+    async def test_reply_message_without_bot_mention_in_comment_context_buffers_check_on_topic(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=88,
@@ -227,7 +240,8 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_not_called()
+        buffer_mock.assert_called_once()
+        self.assertEqual(buffer_mock.call_args.args[0]["trigger"], "check_on_topic")
         dispatch_mock.assert_called_once()
 
 
@@ -1005,6 +1019,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                     types.SimpleNamespace(reply_to_message=None),
                     mentioned=case["mentioned"],
                     mentions_other=case["mentions_other"],
+                    is_comment_context=False,
                 )
                 expected_text = group._resolve_autoreply_trigger(
                     is_channel=case["is_channel"],
@@ -1246,4 +1261,3 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
