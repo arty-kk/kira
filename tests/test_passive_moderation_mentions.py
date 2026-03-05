@@ -452,7 +452,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, text, entities, source="user")
 
-        self.assertEqual(status, "promo_profile_cta")
+        self.assertEqual(status, "clean")
 
     async def test_check_light_flags_channel_chat_cta_without_urls(self) -> None:
         text = "На моем канале все подробности, пиши мне"
@@ -469,7 +469,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, text, entities, source="user")
 
-        self.assertEqual(status, "promo_profile_cta")
+        self.assertEqual(status, "clean")
 
 
     async def test_check_light_flags_combat_promo_cta_without_urls(self) -> None:
@@ -487,7 +487,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, text, entities, source="user")
 
-        self.assertEqual(status, "promo_profile_cta")
+        self.assertEqual(status, "clean")
 
     async def test_check_light_keeps_clean_for_combat_discussion_without_cta(self) -> None:
         text = "Сегодня обсуждали историю про фронт и дроны в новостях"
@@ -539,7 +539,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, text, entities, source="user")
 
-        self.assertEqual(status, "promo")
+        self.assertEqual(status, "clean")
 
     async def test_check_light_flags_explicit_nsfw_without_ai(self) -> None:
         text = "скину porn видео"
@@ -556,9 +556,9 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         ):
             status = await passive_moderation.check_light(1, 2, text, entities, source="user")
 
-        self.assertEqual(status, "sexual_content")
+        self.assertEqual(status, "clean")
 
-    async def test_comment_context_promo_profile_cta_forces_deep_check(self) -> None:
+    async def test_comment_context_flagged_without_base_risk_skips_deep_check(self) -> None:
         fake_redis = _FakeRedisHandler()
         deep_mock = AsyncMock(return_value=False)
 
@@ -566,7 +566,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=0.5, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
             patch.object(moderation, "get_targets", return_value=[]),
-            patch.object(moderation, "check_light", AsyncMock(return_value="promo_profile_cta")),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
             patch.object(moderation, "check_deep", deep_mock),
             patch.object(moderation, "extract_urls", return_value=[]),
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
@@ -578,7 +578,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             await moderation.handle_passive_moderation(
                 chat_id=100,
                 message=None,
-                text="смотри в профиле",
+                text="mention @spamchannel",
                 entities=[],
                 source="user",
                 user_id=42,
@@ -586,9 +586,9 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 is_comment_context=True,
             )
 
-        deep_mock.assert_awaited_once()
+        deep_mock.assert_not_awaited()
 
-    async def test_group_context_promo_profile_cta_forces_deep_check(self) -> None:
+    async def test_group_context_flagged_without_base_risk_skips_deep_check(self) -> None:
         fake_redis = _FakeRedisHandler()
         deep_mock = AsyncMock(return_value=False)
 
@@ -596,7 +596,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=0.5, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
             patch.object(moderation, "get_targets", return_value=[]),
-            patch.object(moderation, "check_light", AsyncMock(return_value="promo_profile_cta")),
+            patch.object(moderation, "check_light", AsyncMock(return_value="toxic")),
             patch.object(moderation, "check_deep", deep_mock),
             patch.object(moderation, "extract_urls", return_value=[]),
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
@@ -608,7 +608,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             await moderation.handle_passive_moderation(
                 chat_id=100,
                 message=None,
-                text="смотри в профиле",
+                text="mention @spamchannel",
                 entities=[],
                 source="user",
                 user_id=42,
@@ -616,7 +616,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
                 is_comment_context=False,
             )
 
-        deep_mock.assert_awaited_once()
+        deep_mock.assert_not_awaited()
 
     async def test_comment_context_clean_without_base_risk_skips_deep_check(self) -> None:
         fake_redis = _FakeRedisHandler()
@@ -648,14 +648,14 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         deep_mock.assert_not_awaited()
 
-    async def test_handle_passive_moderation_maps_profile_cta_reason(self) -> None:
+    async def test_handle_passive_moderation_maps_link_violation_reason(self) -> None:
         fake_redis = _FakeRedisHandler()
 
         with (
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=0.5, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
             patch.object(moderation, "get_targets", return_value=[]),
-            patch.object(moderation, "check_light", AsyncMock(return_value="promo_profile_cta")),
+            patch.object(moderation, "check_light", AsyncMock(return_value="link_violation")),
             patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
             patch.object(moderation, "extract_urls", return_value=[]),
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
@@ -667,7 +667,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             status = await moderation.handle_passive_moderation(
                 chat_id=100,
                 message=None,
-                text="смотри в профиле",
+                text="mention @spamchannel",
                 entities=[],
                 source="user",
                 user_id=42,
@@ -677,7 +677,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "flagged")
         self.assertEqual(
             fake_redis.hset.await_args.kwargs["mapping"]["reason"],
-            "Promotional CTA to profile/bio/channel",
+            "Disallowed link (policy)",
         )
 
     async def test_handle_passive_moderation_timeout_is_risky_not_clean(self) -> None:
@@ -761,6 +761,33 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
             patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
         ):
             flagged = await passive_moderation.moderate_with_openai("income text")
+
+        self.assertTrue(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "income_promo")
+
+
+    async def test_moderate_with_openai_suppresses_income_promo_for_refund_complaint(self) -> None:
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":true,"insult_abuse":false,"threat_abuse":false}')
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
+        ):
+            flagged = await passive_moderation.moderate_with_openai(
+                "Мне кто-нибудь ответит из админов, деньги то мне вы должны, а вот купибонусы кто вернёт?"
+            )
+
+        self.assertFalse(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "")
+
+    async def test_moderate_with_openai_keeps_income_promo_for_actual_offer(self) -> None:
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":true,"insult_abuse":false,"threat_abuse":false}')
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("Есть удаленная работа и заработок, пишите в личку")
 
         self.assertTrue(flagged)
         self.assertEqual(passive_moderation.get_last_ai_moderation_category(), "income_promo")

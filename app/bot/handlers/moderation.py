@@ -708,11 +708,8 @@ async def handle_passive_moderation(
                 "flood": "Frequent messages (flood/spam)",
                 "spam_links": "Too many links in one message",
                 "spam_mentions": "Too many mentions in one message",
-                "promo": "Promotional content",
-                "promo_profile_cta": "Promotional CTA to profile/bio/channel",
                 "link_violation": "Disallowed link (policy)",
                 "toxic": "AI moderation policy violation",
-                "sexual_content": "Sexual/erotic content policy violation",
                 "emoji_flood": "Emoji flood / visual spam",
                 "symbol_noise": "Obfuscated symbol/noise flood",
                 "custom_emoji_spam": "Custom emoji flood",
@@ -776,9 +773,7 @@ async def handle_passive_moderation(
 
         risk = base_risk
         if moderation_context == "comment":
-            risk = bool((base_risk and light_status != "clean") or (light_status == "promo_profile_cta"))
-        elif moderation_context == "group" and light_status == "promo_profile_cta":
-            risk = True
+            risk = bool(base_risk and light_status != "clean")
 
         blocked = False
         if risk:

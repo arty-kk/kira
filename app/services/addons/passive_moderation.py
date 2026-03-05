@@ -140,78 +140,6 @@ def contains_telegram_obfuscated(text: str) -> bool:
     pat = re.compile(rf"(?<![a-z0-9])(?:{tg_domain}|{tg_proto})(?![a-z0-9])", re.IGNORECASE)
     return bool(pat.search(s))
 
-def _normalize_for_cta_detection(text: str) -> str:
-    s = unicodedata.normalize("NFKC", text or "")
-    s = _strip_zero_width(s).lower().replace("ё", "е")
-    s = re.sub(r"[^\w\s]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-
-_PROFILE_CTA_PATTERNS = [
-    re.compile(r"\b(?:смотри|глянь|загляни|чекаи|чекни|посмотри)\s+(?:у\s+меня\s+)?(?:в\s+)?(?:профил(?:е|ь)|био)\b", re.IGNORECASE),
-    re.compile(r"\b(?:ссылка\s+)?(?:у\s+меня\s+)?(?:в\s+)?(?:профил(?:е|ь)|био)\b", re.IGNORECASE),
-    re.compile(r"\bу\s+меня\s+(?:в\s+)?(?:профил(?:е|ь)|био|канале|чате)\b", re.IGNORECASE),
-    re.compile(r"\b(?:в|на)\s+моем\s+(?:канале|чате|профил(?:е|ь)|био)\b", re.IGNORECASE),
-    re.compile(r"\b(?:пиши|напиши)\s+мне\b", re.IGNORECASE),
-]
-
-_COMBAT_PROMO_CTA_PATTERNS = [
-    re.compile(r"\b(?:контент|истории|опыт|много\s+контента)\s+(?:с|про|из)?\s*(?:фронт|передк[ае]|сво|войн[аеы]|штурм)\b", re.IGNORECASE),
-]
-
-_COMBAT_PROMO_CTA_TRIGGER_RE = re.compile(
-    r"\b(?:смотри|глянь|зацени|подписываися|подписывайся|переходи|заходи|пиши|напиши)\b",
-    re.IGNORECASE,
-)
-
-_COMBAT_TOPIC_RE = re.compile(
-    r"\b(?:штурм|фронт|передк[ае]|сво|войн[аеы]|боев(?:ых|ые|ая)|дрон(?:ы|ов)?|боец|ветеран)\b",
-    re.IGNORECASE,
-)
-
-
-def contains_profile_cta_without_url(text: str) -> bool:
-    normalized = _normalize_for_cta_detection(text)
-    if not normalized:
-        return False
-    has_profile_cta = any(p.search(normalized) for p in _PROFILE_CTA_PATTERNS)
-    has_combat_cta = bool(_COMBAT_PROMO_CTA_TRIGGER_RE.search(normalized) and _COMBAT_TOPIC_RE.search(normalized))
-    has_combat_phrase = any(p.search(normalized) for p in _COMBAT_PROMO_CTA_PATTERNS)
-    return bool(has_profile_cta or has_combat_cta or has_combat_phrase)
-
-
-_JOB_PROMO_PATTERNS = [
-    re.compile(r"\b(?:работа|подработк[аеи]|ваканси[яи]|доход|заработок|зп|зарплат[аы]|пассивн(?:ый|ого)?\s+доход|легк(?:ие|ий)\s+деньги)\b", re.IGNORECASE),
-    re.compile(r"\b(?:job|vacancy|income|earn(?:ings)?|salary|remote\s+work|part[- ]?time)\b", re.IGNORECASE),
-]
-
-_COMMERCE_PATTERNS = [
-    re.compile(r"\b(?:продам|продаю|куплю|покупаю|обменяю|обмен|в\s+наличии|цена|торг\s+уместен)\b", re.IGNORECASE),
-    re.compile(r"\b(?:for\s+sale|selling|buying|wtb|wts|price|dm\s+for\s+price)\b", re.IGNORECASE),
-]
-
-_NSFW_TEXT_PATTERNS = [
-    re.compile(r"\b(?:порно|porn|секс|sex|эротик[аеи]|erotic|nude|нюдс?|голые?|18\+\s*(?:контент|video|pics?))\b", re.IGNORECASE),
-]
-
-
-def contains_job_or_commerce_promo(text: str, *, has_media: bool = False) -> bool:
-    normalized = _normalize_for_cta_detection(text)
-    if not normalized:
-        return False
-    has_job_promo = any(p.search(normalized) for p in _JOB_PROMO_PATTERNS)
-    has_commerce = any(p.search(normalized) for p in _COMMERCE_PATTERNS)
-    return bool(has_job_promo or (has_commerce and has_media) or (has_job_promo and has_commerce))
-
-
-def contains_nsfw_text_signal(text: str) -> bool:
-    normalized = _normalize_for_cta_detection(text)
-    if not normalized:
-        return False
-    return any(p.search(normalized) for p in _NSFW_TEXT_PATTERNS)
-
-
 _EMOJI_FLOOD_RE = re.compile(
     "["
     "\U0001F300-\U0001F5FF"
@@ -608,6 +536,31 @@ def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
     return True
 
 
+
+_INCOME_PROMO_OFFER_RE = re.compile(
+    r"\b(?:заработ(?:ок|ка|ать)|доход|подработк[аеи]|инвестиц(?:ия|ии|ий)|ваканси[яи]|работа|"
+    r"earn(?:ings|ing)?|income|invest(?:ment|ing)?|vacancy|job|remote\s+work|passive\s+income)\b",
+    re.IGNORECASE,
+)
+
+_INCOME_PROMO_SUPPORT_RE = re.compile(
+    r"\b(?:возврат|верн(?:ите|и|уть|ут|ется)|refund|chargeback|"
+    r"не\s*достав(?:или|лен|ка)|недостав(?:или|ка)?|заказ|поддержк[аеи]|админ(?:ов|ы)?|"
+    r"купибонус(?:ы)?|бонус(?:ы)?|код|не\s*работ(?:ает|ал)|бабл[оа]|деньг(?:и|ами|ах))\b",
+    re.IGNORECASE,
+)
+
+
+def _should_suppress_income_promo(*, text: str, parsed: dict[str, bool]) -> bool:
+    if not parsed.get("income_promo", False):
+        return False
+    raw = (text or "").strip()
+    if not raw:
+        return False
+    if not _INCOME_PROMO_SUPPORT_RE.search(raw):
+        return False
+    return not bool(_INCOME_PROMO_OFFER_RE.search(raw))
+
 def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
     disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
     try:
@@ -728,6 +681,7 @@ async def moderate_with_openai(
         "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n",
         "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества, ряды бойцов фронта, какие-то группировки, меньшинства, или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n",
         "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n",
+        "- НЕ ставь income_promo для жалоб в поддержку о возврате денег, недоставке, ожидании возврата или нерабочем коде/товаре без предложения заработать.\n",
     ]
     if not disable_insult_threat:
         moderation_prompt_parts.insert(
@@ -793,6 +747,9 @@ async def moderate_with_openai(
             return False
 
     parsed = _parse_ai_moderation_json(_get_output_text(resp) or "")
+    if _should_suppress_income_promo(text=trimmed, parsed=parsed):
+        parsed["income_promo"] = False
+
     triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "insult_abuse", "threat_abuse", "sex_abuse") if parsed.get(k, False)))
     primary_category = triggered_flags[0] if triggered_flags else ""
     flagged = bool(triggered_flags)
@@ -828,7 +785,7 @@ async def check_light(
     *,
     image_b64: Optional[str] = None,
     image_mime: Optional[str] = None,
-) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic", "emoji_flood", "symbol_noise", "custom_emoji_spam", "emoji_overlimit"]:
+) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "toxic", "emoji_flood", "symbol_noise", "custom_emoji_spam", "emoji_overlimit"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
@@ -885,16 +842,6 @@ async def check_light(
         if links_blocked and url_is_unwanted(u, policy=policy):
             return "link_violation"
 
-    if not urls and not contains_telegram_obfuscated(text or "") and contains_profile_cta_without_url(text or ""):
-        return "promo_profile_cta"
-
-    if not urls and contains_job_or_commerce_promo(text or "", has_media=bool(image_b64)):
-        return "promo"
-
-    if contains_nsfw_text_signal(text or ""):
-        return "sexual_content"
-
-    # NOTE: Separate AI promo-content detection is currently not implemented in the light pipeline.
     ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
     if ai_allowed and await moderate_with_openai(text or "", image_b64=image_b64, image_mime=image_mime):
         return "toxic"

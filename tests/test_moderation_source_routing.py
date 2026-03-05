@@ -797,7 +797,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, MODERATOR_ADMIN_CACHE_TTL_SECONDS=86400, MODERATION_NOTIFY_ADMINS_ON_AI_FLAGS=True)),
             patch.object(moderation, "get_targets", return_value=[999]),
-            patch.object(moderation, "check_light", AsyncMock(return_value="promo")),
+            patch.object(moderation, "check_light", AsyncMock(return_value="link_violation")),
             patch.object(moderation, "check_deep", AsyncMock(return_value=False)),
             patch.object(moderation, "extract_urls", return_value=[]),
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
@@ -809,7 +809,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             status = await moderation.handle_passive_moderation(
                 chat_id=-100200,
                 message=None,
-                text="promo text",
+                text="mention @spamchannel",
                 entities=[],
                 image_b64=None,
                 source="user",
@@ -821,8 +821,8 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "flagged")
         sent_text = send_alert_mock.await_args.kwargs["text"]
-        self.assertIn("Promotional content", sent_text)
-        self.assertIn("Reason code: <code>promo</code>", sent_text)
+        self.assertIn("Disallowed link (policy)", sent_text)
+        self.assertIn("Reason code: <code>link_violation</code>", sent_text)
 
 
     async def test_handle_passive_moderation_alert_includes_chat_name_and_generic_ai_reason(self) -> None:
