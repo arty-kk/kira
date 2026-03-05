@@ -92,6 +92,20 @@ _ZW_RE = re.compile(
 _BRACKETED_DOT_RE = re.compile(r"\[\s*\.\s*\]|\(\s*\.\s*\)|\{\s*\.\s*\}", re.IGNORECASE)
 _DOT_WORD_RE = re.compile(r"\b(dot|точка|дот)\b", re.IGNORECASE)
 _DOT_LIKE = "•·∙⋅∘｡。・●○◦"
+_ORDER_UUID_RE = re.compile(r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})\b")
+
+
+def extract_order_uuid(text: str) -> str | None:
+    m = _ORDER_UUID_RE.search(text or "")
+    if not m:
+        return None
+    return str(m.group(1)).lower()
+
+
+def contains_order_uuid(text: str) -> bool:
+    return extract_order_uuid(text) is not None
+
+
 _CYR_TO_LAT = str.maketrans({
     "а": "a", "е": "e", "о": "o", "р": "r", "с": "c", "х": "x", "у": "y", "к": "k",
     "т": "t", "м": "m", "н": "n", "в": "v", "л": "l", "г": "g", "д": "d",
@@ -677,6 +691,8 @@ async def moderate_with_openai(
 
     disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
     min_ai_text_len = max(0, int(getattr(settings, "MODERATION_AI_MIN_TEXT_LEN", 3) or 0))
+    if contains_order_uuid(text or ""):
+        return False
     if (not image_b64) and (len((text or "").strip()) < min_ai_text_len):
         return False
 
@@ -780,6 +796,9 @@ async def check_light(
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
         return "clean"
 
+    if contains_order_uuid(text or ""):
+        return "clean"
+
     # Channel/bot sources are checked with link-policy only in light mode.
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
@@ -862,6 +881,8 @@ async def check_deep(
 
     ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
     if not ai_allowed:
+        return False
+    if contains_order_uuid(text or ""):
         return False
 
     include_history = bool(getattr(settings, "MODERATION_DEEP_INCLUDE_HISTORY", False))

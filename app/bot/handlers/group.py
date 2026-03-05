@@ -42,7 +42,7 @@ from app.clients.telegram_client import get_bot
 from app.config import settings
 from app.core.memory import MEMORY_TTL, append_group_recent, inc_msg_count, push_group_stm, record_activity
 from app.services.addons.analytics import record_user_message
-from app.services.addons.passive_moderation import split_context_text
+from app.services.addons.passive_moderation import split_context_text, extract_order_uuid
 from app.tasks.battle import battle_launch_task
 from app.tasks.media import preprocess_group_image
 from app.tasks.moderation import passive_moderate, prepare_moderation_payload
@@ -197,6 +197,17 @@ def _has_min_content_signal(raw_text: str) -> bool:
     txt = re.sub(r"\s+", " ", txt).strip()
     min_len = max(1, int(getattr(settings, "GROUP_AUTOREPLY_MIN_TEXT_LEN", 3) or 3))
     return len(txt) >= min_len
+
+
+def _order_uuid_assist_prompt(order_uuid: str, user_text: str) -> str:
+    base = (
+        f"Пользователь написал сообщение с номером заказа {order_uuid} на kupikod.com. "
+        "Помоги ему разобраться в ситуации."
+    )
+    txt = (user_text or "").strip()
+    if not txt:
+        return base
+    return f"{base}\n\nСообщение пользователя:\n{txt}"
 
 
 async def _chat_has_active_generation(chat_id: int) -> bool:
@@ -977,6 +988,10 @@ async def on_group_message(message: Message) -> None:
             is_battle_cmd_to_us=is_battle_cmd_to_us,
             autoreply_on_topic=AUTOREPLY_ON_TOPIC,
         )
+        order_uuid = extract_order_uuid(raw_text)
+        if order_uuid and not is_channel:
+            model_text = _order_uuid_assist_prompt(order_uuid, model_text or raw_text)
+            trigger = "mention"
         should_moderate_passive = True
         is_comment_context = await _resolve_group_comment_context(message)
         logger.info(

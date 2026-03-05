@@ -789,5 +789,23 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
 
 
+    async def test_check_light_keeps_clean_for_order_uuid(self) -> None:
+        status = await passive_moderation.check_light(1, 2, "мой заказ 1e494f7c-4491-4803-8eea-66fcb53ae7a7", [], source="user")
+        self.assertEqual(status, "clean")
+
+    async def test_check_deep_skips_order_uuid(self) -> None:
+        with patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as moderate_mock:
+            blocked = await passive_moderation.check_deep(
+                chat_id=100,
+                user_id=42,
+                text="номер заказа 1e494f7c-4491-4803-8eea-66fcb53ae7a7",
+                source="user",
+            )
+
+        self.assertFalse(blocked)
+        moderate_mock.assert_not_awaited()
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,6 +37,8 @@ from app.services.addons.passive_moderation import (
     is_emoji_flood_text,
     is_symbol_noise_text,
     count_message_emojis,
+    contains_order_uuid,
+    extract_order_uuid,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
 from app.bot.handlers.moderation_context import (
@@ -553,6 +555,20 @@ async def handle_passive_moderation(
 
     if not finalize_early and not (text and text.strip()) and not image_b64:
         finalize_early = True
+
+
+    order_uuid = extract_order_uuid(text or "")
+    if order_uuid:
+        status = "clean"
+        reason_text = ""
+        finalize_early = True
+        logger.info(
+            "PASSIVE_MODERATION_ORDER_UUID_BYPASS: chat_id=%s msg_id=%s user_id=%s uuid=%s",
+            chat_id,
+            _mid,
+            _uid,
+            order_uuid,
+        )
 
     if finalize_early:
         await _persist_status_to_redis(persisted_status=status, persisted_reason=reason_text)

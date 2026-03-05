@@ -1088,6 +1088,48 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         delay_mock.assert_not_called()
 
 
+
+    async def test_order_uuid_forces_generation_trigger_and_augments_text(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=188,
+            text="помогите заказ 1e494f7c-4491-4803-8eea-66fcb53ae7a7",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=types.SimpleNamespace(message_id=177),
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "settings", types.SimpleNamespace(GROUP_AUTOREPLY_ON_TOPIC=False, GROUP_AUTOREPLY_MIN_TEXT_LEN=3)))
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("orig", "orig")))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_store_context", AsyncMock()))
+            stack.enter_context(patch.object(group, "_push_group_stm_and_recent", AsyncMock()))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_message(message)
+
+        payload = buffer_mock.call_args.args[0]
+        self.assertEqual(payload["trigger"], "mention")
+        self.assertIn("номером заказа 1e494f7c-4491-4803-8eea-66fcb53ae7a7", payload["text"])
+        dispatch_mock.assert_called_once()
+
+
     def test_has_min_content_signal_respects_group_min_len(self):
         with patch.object(group, "settings", types.SimpleNamespace(GROUP_AUTOREPLY_MIN_TEXT_LEN=3)):
             self.assertFalse(group._has_min_content_signal("ok"))
