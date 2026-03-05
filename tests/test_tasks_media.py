@@ -2,7 +2,7 @@ import asyncio
 import json
 import types
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from app.tasks import media
 
@@ -354,7 +354,16 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
 
     def test_preprocess_group_image_uses_run_coro_sync_wrapper(self) -> None:
         payload = {"chat_id": 10, "message_id": 20, "file_id": "abc"}
-        with patch.object(media, "run_coro_sync", return_value="ok") as run_coro_sync_mock:
+
+        def _run_sync_stub(coro, timeout=None):
+            if hasattr(coro, "close"):
+                coro.close()
+            return "ok"
+
+        run_coro_sync_mock = Mock(side_effect=_run_sync_stub)
+        task_globals = media.preprocess_group_image.run.__globals__
+
+        with patch.dict(task_globals, {"run_coro_sync": run_coro_sync_mock}):
             result = media.preprocess_group_image.run(payload)
 
         self.assertEqual(result, "ok")

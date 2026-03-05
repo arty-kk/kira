@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 from unittest.mock import patch
@@ -36,11 +37,7 @@ class GenderTaskTests(unittest.TestCase):
 
         def _run_sync_stub(coro, timeout=None):
             calls["count"] += 1
-            if hasattr(coro, "close"):
-                coro.close()
-            if calls["count"] == 1:
-                return "male"
-            return None
+            return asyncio.run(coro)
 
         task_globals = detect_gender_task._orig_run.__func__.__globals__
         with patch.dict(task_globals, {"run_coro_sync": _run_sync_stub, "detect_gender": _detect_stub, "cache_gender": _cache_stub}):
