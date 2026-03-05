@@ -352,6 +352,14 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         err = media.validate_bot_job(sample)
         self.assertEqual(err, "msg_id must be > 0")
 
+    def test_preprocess_group_image_uses_run_coro_sync_wrapper(self) -> None:
+        payload = {"chat_id": 10, "message_id": 20, "file_id": "abc"}
+        with patch.object(media, "run_coro_sync", return_value="ok") as run_coro_sync_mock:
+            result = media.preprocess_group_image.run(payload)
+
+        self.assertEqual(result, "ok")
+        run_coro_sync_mock.assert_called_once()
+
 
     async def test_store_context_and_recent_passes_message_thread_id_to_group_memory(self) -> None:
         payload = {

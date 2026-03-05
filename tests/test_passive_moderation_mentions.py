@@ -4,6 +4,9 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import GetChat
+
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "12345:abcde")
 os.environ.setdefault("TELEGRAM_BOT_USERNAME", "kiragame_aibot")
@@ -210,6 +213,32 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(status, "clean")
 
+    async def test_extract_external_mentions_marks_chat_not_found_as_resolved_negative(self) -> None:
+        redis = _FakeRedisMentions()
+        not_found_error = TelegramBadRequest(method=GetChat(chat_id="@broken"), message="Bad Request: chat not found")
+        bot = types.SimpleNamespace(get_chat=AsyncMock(side_effect=not_found_error))
+        text = "hello @Broken"
+        entities = [{"type": "mention", "offset": 6, "length": 7}]
+
+        with (
+            patch.object(passive_moderation, "get_redis", return_value=redis),
+            patch.object(passive_moderation, "get_bot", return_value=bot),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+        ):
+            external, unresolved = await passive_moderation.extract_external_mentions(1, text, entities)
+
+        self.assertEqual(external, [])
+        self.assertFalse(unresolved)
+
     async def test_extract_external_mentions_does_not_mark_unknown_error_as_external(self) -> None:
         redis = _FakeRedisMentions()
         bot = types.SimpleNamespace(get_chat=AsyncMock(side_effect=RuntimeError("telegram api timeout")))
@@ -234,6 +263,42 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(external, [])
         self.assertTrue(unresolved)
+
+    async def test_check_light_keeps_clean_on_chat_not_found_when_flag_enabled(self) -> None:
+        text = "hello @Broken"
+        entities = [{"type": "mention", "offset": 6, "length": 7}]
+        not_found_error = TelegramBadRequest(method=GetChat(chat_id="@broken"), message="Bad Request: chat not found")
+
+        with (
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(
+                    ENABLE_MODERATION=True,
+                    MODERATION_SPAM_MENTION_THRESHOLD=5,
+                    MODERATION_DELETE_UNRESOLVED_MENTIONS=True,
+                    TELEGRAM_BOT_USERNAME="kiragame_aibot",
+                    MOD_MENTION_RESOLVE_TIMEOUT=0.2,
+                    MOD_MENTION_RESOLVE_CONCURRENCY=2,
+                    MOD_MENTION_RESOLVE_TTL_POS=60,
+                    MOD_MENTION_RESOLVE_TTL_NEG=60,
+                ),
+            ),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeRedisMentions()),
+            patch.object(
+                passive_moderation,
+                "get_bot",
+                return_value=types.SimpleNamespace(get_chat=AsyncMock(side_effect=not_found_error)),
+            ),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=False),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, entities, source="user")
+
+        self.assertEqual(status, "clean")
 
     async def test_check_light_flags_link_violation_on_mention_resolve_error_when_flag_enabled(self) -> None:
         text = "hello @Broken"
