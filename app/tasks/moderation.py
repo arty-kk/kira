@@ -249,6 +249,10 @@ def passive_moderate(self, payload: dict) -> str:
                 message_id=message_id,
                 is_comment_context=payload.get("is_comment_context"),
                 chat_title=payload.get("chat_title"),
+                message_thread_id=payload.get("message_thread_id"),
+                reply_to_message_id=payload.get("reply_to_message_id"),
+                linked_chat_id=payload.get("linked_chat_id"),
+                is_topic_message=payload.get("is_topic_message"),
             ),
             timeout=MODERATION_TIMEOUT,
         )
@@ -262,21 +266,29 @@ def passive_moderate(self, payload: dict) -> str:
 
     try:
         logger.info(
-            "PASSIVE_MODERATION_JOB_START: chat_id=%s msg_id=%s user_id=%s source=%s is_comment_context=%s retries=%s",
+            "PASSIVE_MODERATION_JOB_START: chat_id=%s msg_id=%s user_id=%s source=%s is_comment_context=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s retries=%s",
             chat_id,
             message_id,
             user_id,
             payload.get("source", "user"),
             payload.get("is_comment_context"),
+            payload.get("linked_chat_id"),
+            payload.get("message_thread_id"),
+            payload.get("reply_to_message_id"),
+            payload.get("is_topic_message"),
             retries,
         )
         result = run_coro_sync(_do())
         logger.info(
-            "PASSIVE_MODERATION_JOB_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s",
+            "PASSIVE_MODERATION_JOB_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
             chat_id,
             message_id,
             user_id,
             result,
+            payload.get("linked_chat_id"),
+            payload.get("message_thread_id"),
+            payload.get("reply_to_message_id"),
+            payload.get("is_topic_message"),
         )
         return result
     except Exception:
