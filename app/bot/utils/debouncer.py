@@ -32,6 +32,14 @@ IDLE_GRACE = float(getattr(settings, "DEBOUNCE_IDLE_GRACE", 0.2))
 CHAT_BUSY_PREFIX = "chatbusy:"
 BOT_QUEUE_MAX_PAYLOAD_BYTES = int(getattr(settings, "BOT_QUEUE_MAX_PAYLOAD_BYTES", 64 * 1024))
 
+
+def _norm_thread_id(value) -> int:
+    try:
+        tid = int(value) if value is not None else 0
+    except Exception:
+        return 0
+    return tid if tid > 0 else 0
+
 def _get_lock(key: str) -> asyncio.Lock:
     return _locks.setdefault(key, asyncio.Lock())
 
@@ -247,6 +255,7 @@ async def _merge_and_send(msgs: list[dict]):
     cur_len = 0
     out_payloads: list[dict] = []
     cur_reply_to = None
+    cur_thread_id: int | None = None
 
     def _pick_first_nonzero(items: list[dict], key: str):
         for it in items:
@@ -271,7 +280,7 @@ async def _merge_and_send(msgs: list[dict]):
         return None
 
     def _flush():
-        nonlocal batch, cur_len, cur_reply_to
+        nonlocal batch, cur_len, cur_reply_to, cur_thread_id
         if not batch:
             return
         if any(m.get("image_b64") or m.get("voice_in") for m in batch):
@@ -281,6 +290,7 @@ async def _merge_and_send(msgs: list[dict]):
                 out_payloads.append(p)
         else:
             payload = batch[-1].copy()
+            payload["message_thread_id"] = _norm_thread_id(batch[0].get("message_thread_id"))
             payload["text"] = "\n".join((b.get("text") or "") for b in batch).strip()
             payload["merged_msg_ids"] = [b.get("msg_id") for b in batch if b.get("msg_id") is not None]
             trigger_priority = ("mention", "channel_post", "check_on_topic")
@@ -315,6 +325,7 @@ async def _merge_and_send(msgs: list[dict]):
         batch = []
         cur_len = 0
         cur_reply_to = None
+        cur_thread_id = None
 
     for m in msgs:
         t = (m.get("text") or "").strip()
@@ -334,6 +345,13 @@ async def _merge_and_send(msgs: list[dict]):
                 _flush()
                 cur_reply_to = m_r
 
+        m_tid = _norm_thread_id(m.get("message_thread_id"))
+        if cur_thread_id is None:
+            cur_thread_id = m_tid
+        elif cur_thread_id != m_tid:
+            _flush()
+            cur_thread_id = m_tid
+
         prospective = cur_len + len(t) + (1 if batch else 0)
         if batch and prospective > MAX_BATCH_CHARS:
             _flush()
@@ -348,7 +366,12 @@ def buffer_message_for_response(payload: dict):
     if payload.get("is_channel_post"):
         key = f"{payload['chat_id']}:channel:{payload.get('msg_id')}"
     else:
-        key = f"{payload['chat_id']}:{payload['user_id']}"
+        thread_id = _norm_thread_id(payload.get("message_thread_id"))
+        is_group = bool(payload.get("is_group"))
+        if is_group:
+            key = f"{payload['chat_id']}:{payload['user_id']}:{thread_id}"
+        else:
+            key = f"{payload['chat_id']}:{payload['user_id']}"
 
     async def _append_and_schedule():
         lock = _get_lock(key)

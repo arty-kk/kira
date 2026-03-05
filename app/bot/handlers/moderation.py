@@ -448,8 +448,30 @@ async def handle_passive_moderation(
             logger.debug("passive moderation: failed to persist clean message context", exc_info=True)
 
         try:
-            await push_group_stm(chat_id, src, txt, user_id=int(_uid), message_thread_id=effective_thread_id)
+            marker_key = None
+            marker_claimed = False
+            if _mid > 0:
+                marker_key = f"group_stm_user_pushed:{chat_id}:{_mid}"
+                marker_claimed = bool(
+                    await redis_client.set(
+                        marker_key,
+                        1,
+                        nx=True,
+                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+                    )
+                )
+            if (_mid <= 0) or marker_claimed:
+                await push_group_stm(chat_id, src, txt, user_id=int(_uid), message_thread_id=effective_thread_id)
+            if marker_key and marker_claimed is False:
+                logger.debug(
+                    "passive moderation: skip duplicate group_stm push chat=%s msg_id=%s",
+                    chat_id,
+                    _mid,
+                )
         except Exception:
+            if _mid > 0:
+                with contextlib.suppress(Exception):
+                    await redis_client.delete(f"group_stm_user_pushed:{chat_id}:{_mid}")
             logger.debug("passive moderation: push_group_stm failed", exc_info=True)
 
         try:

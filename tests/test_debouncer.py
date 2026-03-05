@@ -118,6 +118,51 @@ class DebouncerModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured[0]["trigger"], "mention")
         self.assertFalse(captured[0]["enforce_on_topic"])
 
+
+    async def test_merge_mode_splits_batches_by_message_thread_id(self) -> None:
+        captured = []
+
+        async def _capture(payload):
+            captured.append(payload)
+
+        debouncer.DEBOUNCE_MODE = "merge"
+        debouncer._enqueue = _capture
+
+        key = "1:1:0"
+        debouncer.message_buffers[key] = [
+            {"chat_id": 1, "user_id": 1, "text": "first", "msg_id": 1, "message_thread_id": 111},
+            {"chat_id": 1, "user_id": 1, "text": "second", "msg_id": 2, "message_thread_id": 222},
+        ]
+        debouncer.total_buffered = 2
+
+        await debouncer.schedule_response(key)
+
+        self.assertEqual(len(captured), 2)
+        self.assertEqual(captured[0]["message_thread_id"], 111)
+        self.assertEqual(captured[1]["message_thread_id"], 222)
+
+    async def test_merge_mode_keeps_same_message_thread_id(self) -> None:
+        captured = []
+
+        async def _capture(payload):
+            captured.append(payload)
+
+        debouncer.DEBOUNCE_MODE = "merge"
+        debouncer._enqueue = _capture
+
+        key = "1:1:777"
+        debouncer.message_buffers[key] = [
+            {"chat_id": 1, "user_id": 1, "text": "hi", "msg_id": 1, "message_thread_id": 777},
+            {"chat_id": 1, "user_id": 1, "text": "there", "msg_id": 2, "message_thread_id": 777},
+        ]
+        debouncer.total_buffered = 2
+
+        await debouncer.schedule_response(key)
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0]["text"], "hi\nthere")
+        self.assertEqual(captured[0]["message_thread_id"], 777)
+
     async def test_enqueue_rejects_invalid_payload_before_redis_and_refunds(self) -> None:
         lpush_mock = AsyncMock()
         refund_mock = AsyncMock()
@@ -224,6 +269,48 @@ class DebouncerDropRefundTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
 
         refund_mock.assert_awaited_once_with(30)
+
+
+    async def test_buffer_key_uses_thread_id_for_group_messages(self) -> None:
+        with patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)):
+            debouncer.buffer_message_for_response(
+                {
+                    "chat_id": 10,
+                    "user_id": 20,
+                    "text": "thread one",
+                    "is_group": True,
+                    "message_thread_id": 1001,
+                }
+            )
+            debouncer.buffer_message_for_response(
+                {
+                    "chat_id": 10,
+                    "user_id": 20,
+                    "text": "thread two",
+                    "is_group": True,
+                    "message_thread_id": 1002,
+                }
+            )
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+
+        self.assertIn("10:20:1001", debouncer.message_buffers)
+        self.assertIn("10:20:1002", debouncer.message_buffers)
+
+    async def test_buffer_key_keeps_pm_compat_without_thread_suffix(self) -> None:
+        with patch.object(debouncer, "schedule_response", AsyncMock(return_value=None)):
+            debouncer.buffer_message_for_response(
+                {
+                    "chat_id": 30,
+                    "user_id": 40,
+                    "text": "pm message",
+                    "is_group": False,
+                    "message_thread_id": 9999,
+                }
+            )
+            await asyncio.sleep(0)
+
+        self.assertIn("30:40", debouncer.message_buffers)
 
     async def test_drop_without_reservation_logs_event(self) -> None:
         refund_mock = AsyncMock()

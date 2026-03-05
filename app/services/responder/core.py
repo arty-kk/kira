@@ -1624,9 +1624,39 @@ async def respond_to_user(
                 )
                 if chat_id != user_id and not is_api:
                     try:
-                        asyncio.create_task(
-                            push_group_stm(chat_id, "user", effective_user_text, user_id=user_id)
-                        )
+                        marker_key: str | None = None
+                        marker_claimed = False
+                        if msg_id is not None:
+                            marker_key = f"group_stm_user_pushed:{chat_id}:{int(msg_id)}"
+                            try:
+                                marker_claimed = bool(
+                                    await redis.set(
+                                        marker_key,
+                                        1,
+                                        nx=True,
+                                        ex=int(getattr(settings, "REPLY_CONTEXT_TTL_SEC", 86400)),
+                                    )
+                                )
+                            except Exception:
+                                marker_claimed = False
+                        should_push_group_stm = (msg_id is None) or marker_claimed
+                        if should_push_group_stm:
+                            async def _push_user_group_stm_once() -> None:
+                                try:
+                                    await push_group_stm(
+                                        chat_id,
+                                        "user",
+                                        effective_user_text,
+                                        user_id=user_id,
+                                        message_thread_id=message_thread_id,
+                                    )
+                                except Exception:
+                                    if marker_key:
+                                        with suppress(Exception):
+                                            await redis.delete(marker_key)
+                                    raise
+
+                            asyncio.create_task(_push_user_group_stm_once())
                     except Exception:
                         logger.debug("push_group_stm (user) failed chat=%s", chat_id, exc_info=True)
     except Exception:
@@ -2310,7 +2340,8 @@ async def respond_to_user(
                             chat_id,
                             "assistant",
                             reply,
-                            user_id=int(getattr(consts, "BOT_ID", 0) or 0)
+                            user_id=int(getattr(consts, "BOT_ID", 0) or 0),
+                            message_thread_id=message_thread_id,
                         )
                     )
             except Exception:
