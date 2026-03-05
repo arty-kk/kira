@@ -136,7 +136,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
         )
 
         reply_message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
-        self.assertTrue(
+        self.assertFalse(
             group._is_clean_message_for_on_topic(
                 reply_message,
                 mentioned=False,
@@ -151,7 +151,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 mentions_other=False,
             )
         )
-        self.assertTrue(
+        self.assertFalse(
             group._is_clean_message_for_on_topic(
                 clean_message,
                 mentioned=False,
@@ -161,7 +161,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
 
 
 class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reply_message_can_trigger_autoreply_without_direct_mention(self) -> None:
+    async def test_reply_message_without_bot_mention_dispatches_passive_only(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=88,
@@ -227,8 +227,38 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_called_once()
+        buffer_mock.assert_not_called()
         dispatch_mock.assert_called_once()
+
+
+    async def test_text_moderation_guard_error_is_fail_closed(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=99,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(side_effect=RuntimeError("boom"))))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_message(message)
+
+        buffer_mock.assert_not_called()
+        dispatch_mock.assert_not_called()
 
     async def test_reply_gate_voice_still_dispatches_passive_moderation(self) -> None:
         message = types.SimpleNamespace(
@@ -381,7 +411,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_called_once()
+        buffer_mock.assert_not_called()
         dispatch_mock.assert_called_once()
 
     async def _trigger_from_text(
@@ -900,11 +930,16 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
         for case in cases:
             with self.subTest(case=case["name"]):
+                clean_for_on_topic = group._is_clean_message_for_on_topic(
+                    types.SimpleNamespace(reply_to_message=None),
+                    mentioned=case["mentioned"],
+                    mentions_other=case["mentions_other"],
+                )
                 expected_text = group._resolve_autoreply_trigger(
                     is_channel=case["is_channel"],
                     mentioned=case["mentioned"],
                     mentions_other=case["mentions_other"],
-                    has_content_signal=case["has_content_signal"],
+                    has_content_signal=case["has_content_signal"] and clean_for_on_topic,
                     is_battle_cmd_to_us=case["is_battle_cmd_to_us"],
                     autoreply_on_topic=case["autoreply_on_topic"],
                 )

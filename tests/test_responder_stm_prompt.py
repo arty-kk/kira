@@ -187,6 +187,148 @@ class ResponderStmPromptTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call_item.kwargs.get("message_thread_id"), 77)
 
 
+    async def test_respond_to_user_pushes_group_stm_with_thread_id(self):
+        from contextlib import ExitStack
+
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "hgetall": AsyncMock(return_value={}),
+                "get": AsyncMock(return_value=None),
+                "set": AsyncMock(return_value=True),
+                "delete": AsyncMock(return_value=1),
+            },
+        )()
+
+        history = [
+            {"role": "user", "content": "Привет"},
+            {"role": "assistant", "content": "И тебе привет!"},
+        ]
+
+        push_group_stm_mock = AsyncMock(return_value=None)
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(core, "session_scope", return_value=_FakeSessionScope()))
+            stack.enter_context(patch.object(core, "get_redis", return_value=redis_stub))
+            stack.enter_context(patch.object(core, "get_persona", AsyncMock(return_value=_Persona())))
+            stack.enter_context(patch.object(core, "get_cached_gender", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")))
+            stack.enter_context(patch.object(core, "load_context", AsyncMock(return_value=history.copy())))
+            stack.enter_context(
+                patch.object(
+                    core,
+                    "_compute_on_topic_relevance",
+                    AsyncMock(
+                        return_value=(
+                            False,
+                            None,
+                            core.RagQueryContext(query="Новый вопрос", rag_query_source="raw"),
+                        )
+                    ),
+                )
+            )
+            stack.enter_context(patch.object(core, "push_message", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "push_group_stm", push_group_stm_mock))
+            stack.enter_context(patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(core, "get_ltm_text", AsyncMock(return_value="ltm raw")))
+            stack.enter_context(patch.object(core, "get_all_mtm_texts", AsyncMock(return_value=["mtm raw"])))
+            stack.enter_context(patch.object(core, "summarize_mtm_topic", AsyncMock(return_value="topic")))
+            stack.enter_context(patch.object(core, "compose_mtm_snippet", AsyncMock(return_value="mtm snippet")))
+            stack.enter_context(patch.object(core, "select_snippets_via_nano", AsyncMock(return_value="ltm snippet")))
+            stack.enter_context(patch.object(core, "get_group_stm_tail", AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(core, "record_context", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "record_assistant_reply", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "record_latency", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "_call_openai_with_retry", AsyncMock(return_value=SimpleNamespace())))
+            stack.enter_context(patch.object(core, "_get_output_text", return_value="ok"))
+
+            out = await core.respond_to_user(
+                text="Новый вопрос",
+                chat_id=101,
+                user_id=202,
+                group_mode=True,
+                skip_persona_interaction=True,
+                message_thread_id=77,
+            )
+
+        self.assertEqual(out, "ok")
+        self.assertGreaterEqual(push_group_stm_mock.await_count, 1)
+        for call_item in push_group_stm_mock.await_args_list:
+            self.assertEqual(call_item.kwargs.get("message_thread_id"), 77)
+
+
+    async def test_respond_to_user_skips_duplicate_group_stm_user_push_when_moderation_mark_exists(self):
+        from contextlib import ExitStack
+
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "hgetall": AsyncMock(return_value={}),
+                "get": AsyncMock(return_value=None),
+                "set": AsyncMock(return_value=False),
+                "delete": AsyncMock(return_value=1),
+            },
+        )()
+
+        history = [
+            {"role": "user", "content": "Привет"},
+            {"role": "assistant", "content": "И тебе привет!"},
+        ]
+
+        push_group_stm_mock = AsyncMock(return_value=None)
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(core, "session_scope", return_value=_FakeSessionScope()))
+            stack.enter_context(patch.object(core, "get_redis", return_value=redis_stub))
+            stack.enter_context(patch.object(core, "get_persona", AsyncMock(return_value=_Persona())))
+            stack.enter_context(patch.object(core, "get_cached_gender", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")))
+            stack.enter_context(patch.object(core, "load_context", AsyncMock(return_value=history.copy())))
+            stack.enter_context(
+                patch.object(
+                    core,
+                    "_compute_on_topic_relevance",
+                    AsyncMock(
+                        return_value=(
+                            False,
+                            None,
+                            core.RagQueryContext(query="Новый вопрос", rag_query_source="raw"),
+                        )
+                    ),
+                )
+            )
+            stack.enter_context(patch.object(core, "push_message", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "push_group_stm", push_group_stm_mock))
+            stack.enter_context(patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(core, "get_ltm_text", AsyncMock(return_value="ltm raw")))
+            stack.enter_context(patch.object(core, "get_all_mtm_texts", AsyncMock(return_value=["mtm raw"])))
+            stack.enter_context(patch.object(core, "summarize_mtm_topic", AsyncMock(return_value="topic")))
+            stack.enter_context(patch.object(core, "compose_mtm_snippet", AsyncMock(return_value="mtm snippet")))
+            stack.enter_context(patch.object(core, "select_snippets_via_nano", AsyncMock(return_value="ltm snippet")))
+            stack.enter_context(patch.object(core, "get_group_stm_tail", AsyncMock(return_value=[])))
+            stack.enter_context(patch.object(core, "record_context", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "record_assistant_reply", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "record_latency", AsyncMock(return_value=None)))
+            stack.enter_context(patch.object(core, "_call_openai_with_retry", AsyncMock(return_value=SimpleNamespace())))
+            stack.enter_context(patch.object(core, "_get_output_text", return_value="ok"))
+
+            out = await core.respond_to_user(
+                text="Новый вопрос",
+                chat_id=101,
+                user_id=202,
+                group_mode=True,
+                skip_persona_interaction=True,
+                msg_id=555,
+                skip_assistant_push=True,
+                message_thread_id=77,
+            )
+
+        self.assertEqual(out, "ok")
+        push_group_stm_mock.assert_not_called()
+
+
 
 if __name__ == "__main__":
     unittest.main()

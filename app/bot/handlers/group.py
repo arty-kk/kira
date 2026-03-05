@@ -435,6 +435,10 @@ def _reply_gate_requires_mention(message: Message) -> bool:
 def _is_clean_message_for_on_topic(message: Message, *, mentioned: bool, mentions_other: bool) -> bool:
     if mentioned:
         return False
+    if mentions_other:
+        return False
+    if getattr(message, "reply_to_message", None):
+        return False
     return True
 
 
@@ -910,7 +914,8 @@ async def on_group_message(message: Message) -> None:
                 )
                 return
         except Exception:
-            logger.exception("guard filters failed (continuing)")
+            logger.exception("guard filters failed (text, fail-closed)")
+            return
 
         is_channel = _is_channel_post(message)
 
@@ -1180,7 +1185,8 @@ async def on_group_voice(message: Message) -> None:
             if await apply_moderation_filters(cid, message):
                 return
         except Exception:
-            logger.exception("guard filters failed (voice, pre-transcribe)")
+            logger.exception("guard filters failed (voice, fail-closed)")
+            return
 
         # presence updates (best-effort)
         await _update_presence(cid, message)
@@ -1348,7 +1354,8 @@ async def _handle_group_image_message_common(
         if await apply_moderation_filters(cid, message):
             return
     except Exception:
-        logger.exception("guard filters failed (image)")
+        logger.exception("guard filters failed (image, fail-closed)")
+        return
 
     is_channel = _is_channel_post(message)
     if message.from_user and message.from_user.is_bot and not is_channel:
