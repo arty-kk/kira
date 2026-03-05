@@ -136,6 +136,7 @@ celery = Celery(
         "app.tasks.refunds",
         "app.tasks.battle",
         "app.tasks.media",
+        "app.tasks.gender",
     ],
 )
 

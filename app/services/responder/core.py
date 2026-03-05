@@ -22,7 +22,7 @@ from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output
 from app.config import settings
 from app.core.memory import (
     load_context, push_message,
-    get_redis, get_cached_gender, cache_gender,
+    get_redis, get_cached_gender,
     get_ltm_text, get_all_mtm_texts,
     get_ltm_slices, get_group_stm_tail, push_group_stm,
 )
@@ -45,7 +45,6 @@ from app.core.embedding_utils import get_rag_embedding_model, resolve_embedding_
 from app.core.models import User, ApiKeyKnowledge
 from .prompt_builder import build_system_prompt, build_fallback_system_prompt
 from .coref import resolve_coref
-from .gender import detect_gender
 import app.bot.components.constants as consts
 from app.services.addons.analytics import (
     record_context, record_ping_response,
@@ -132,6 +131,19 @@ def invalidate_active_kb_cache(api_key_id: int | None = None) -> None:
 
 def _allow_gender_autodetect(*, group_mode: bool, is_channel_post: bool) -> bool:
     return not (group_mode or is_channel_post)
+
+
+def _enqueue_gender_detection(user_id: int, name: str, text: str) -> None:
+    normalized_name = (name or "").strip()
+    if not normalized_name:
+        return
+
+    from app.tasks.gender import detect_gender_task
+
+    try:
+        detect_gender_task.delay(user_id=user_id, name=normalized_name, text=text)
+    except Exception:
+        logger.debug("Failed to enqueue gender detection", exc_info=True)
 
 
 @dataclass
@@ -1210,9 +1222,7 @@ async def respond_to_user(
                 if isinstance(raw_name, (bytes, bytearray))
                 else str(raw_name)
             )
-            gender = await detect_gender(name, text) or "unknown"
-            if gender in ("male", "female"):
-                await cache_gender(memory_uid, gender)
+            _enqueue_gender_detection(memory_uid, name, text)
 
     if billing_tier in ("paid", "free", "none"):
         if billing_tier == "paid":
