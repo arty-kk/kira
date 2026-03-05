@@ -200,9 +200,9 @@ def upgrade():
         sa.Column("tag", sa.String(length=255), nullable=False),
         sa.Column("embedding", HalfVector(3072), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.CheckConstraint("scope IN ('global','owner')", name="ck_rag_tag_vectors_scope"),
+        sa.CheckConstraint("scope IN ('global','auto_reply','owner')", name="ck_rag_tag_vectors_scope"),
         sa.CheckConstraint(
-            "((scope = 'global' AND owner_id IS NULL AND kb_id IS NULL) OR "
+            "((scope IN ('global','auto_reply') AND owner_id IS NULL AND kb_id IS NULL) OR "
             "(scope = 'owner' AND owner_id IS NOT NULL AND kb_id IS NOT NULL))",
             name="ck_rag_tag_vectors_scope_owner_kb_consistency",
         ),
@@ -218,6 +218,11 @@ def upgrade():
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_global_item_tag "
         "ON rag_tag_vectors (embedding_model, embedding_dim, external_id, tag) "
         "WHERE scope = 'global';"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_auto_reply_item_tag "
+        "ON rag_tag_vectors (embedding_model, embedding_dim, external_id, tag) "
+        "WHERE scope = 'auto_reply';"
     )
     op.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_rag_tag_vectors_owner_item_tag "
@@ -298,6 +303,7 @@ def downgrade():
     op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_embedding_cosine_hnsw_large;")
     op.execute("DROP INDEX IF EXISTS ix_rag_tag_vectors_filter;")
     op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_owner_item_tag;")
+    op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_auto_reply_item_tag;")
     op.execute("DROP INDEX IF EXISTS uq_rag_tag_vectors_global_item_tag;")
     op.drop_index("ix_rag_tag_vectors_created_at", table_name="rag_tag_vectors")
     op.drop_index("ix_rag_tag_vectors_embedding_dim", table_name="rag_tag_vectors")
