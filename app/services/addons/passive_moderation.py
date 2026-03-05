@@ -15,6 +15,7 @@ from contextvars import ContextVar
 
 from redis.exceptions import RedisError
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramBadRequest
 
 from app.core.memory import load_context, get_redis
 from app.config import settings
@@ -496,7 +497,7 @@ async def extract_external_mentions(
                 if isinstance(cached_outcome, (bytes, bytearray)):
                     cached_outcome = cached_outcome.decode("utf-8", "ignore")
                 cached_outcome = str(cached_outcome).strip().lower()
-                if cached_outcome in {"ok_user", "channel", "bot", "unknown_error"}:
+                if cached_outcome in {"ok_user", "channel", "bot", "not_found", "unknown_error"}:
                     return cached_outcome
         except Exception:
             logger.debug("extract_external_mentions: mention cache read failed", exc_info=True)
@@ -518,6 +519,23 @@ async def extract_external_mentions(
                 outcome = "bot"
             else:
                 outcome = "ok_user"
+        except TelegramBadRequest as exc:
+            msg = str(getattr(exc, "message", exc) or "").strip().lower()
+            if "chat not found" in msg:
+                outcome = "not_found"
+                logger.debug(
+                    "extract_external_mentions: not_found on get_chat chat_id=%s uname=%s",
+                    chat_id,
+                    uname,
+                )
+            else:
+                outcome = "unknown_error"
+                logger.warning(
+                    "extract_external_mentions: unknown_error on get_chat chat_id=%s uname=%s",
+                    chat_id,
+                    uname,
+                    exc_info=True,
+                )
         except Exception:
             outcome = "unknown_error"
             logger.warning(
