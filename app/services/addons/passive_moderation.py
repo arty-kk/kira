@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 _LIGHT_SEMAPHORE = asyncio.Semaphore(10)
 MAX_URLS = getattr(settings, "MOD_MAX_URLS", 10)
-MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 2000)
+MAX_PROMPT_TEXT = getattr(settings, "MOD_PROMPT_TEXT_LIMIT", 6000)
 DEEP_HISTORY = getattr(settings, "MOD_DEEP_HISTORY", 20)
 _PIPELINE_TIMEOUT = float(getattr(settings, "REDIS_PIPELINE_TIMEOUT", 1.0))
 
@@ -46,11 +46,12 @@ def should_delete_ai_flagged_message(flags: tuple[str, ...]) -> bool:
         return False
     if not bool(getattr(settings, "MODERATION_DELETE_ON_AI_FLAG", True)):
         return False
+    disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
     delete_policy = {
         "regular_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_REGULAR_PROMO", True)),
         "income_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_INCOME_PROMO", True)),
-        "insult_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_INSULT_ABUSE", True)),
-        "threat_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_THREAT_ABUSE", True)),
+        "insult_abuse": (False if disable_insult_threat else bool(getattr(settings, "MODERATION_DELETE_FLAG_INSULT_ABUSE", True))),
+        "threat_abuse": (False if disable_insult_threat else bool(getattr(settings, "MODERATION_DELETE_FLAG_THREAT_ABUSE", True))),
         "sex_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_SEX_ABUSE", True)),
     }
     return any(delete_policy.get(flag, False) for flag in flags)
@@ -91,6 +92,20 @@ _ZW_RE = re.compile(
 _BRACKETED_DOT_RE = re.compile(r"\[\s*\.\s*\]|\(\s*\.\s*\)|\{\s*\.\s*\}", re.IGNORECASE)
 _DOT_WORD_RE = re.compile(r"\b(dot|точка|дот)\b", re.IGNORECASE)
 _DOT_LIKE = "•·∙⋅∘｡。・●○◦"
+_ORDER_UUID_RE = re.compile(r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})\b")
+
+
+def extract_order_uuid(text: str) -> str | None:
+    m = _ORDER_UUID_RE.search(text or "")
+    if not m:
+        return None
+    return str(m.group(1)).lower()
+
+
+def contains_order_uuid(text: str) -> bool:
+    return extract_order_uuid(text) is not None
+
+
 _CYR_TO_LAT = str.maketrans({
     "а": "a", "е": "e", "о": "o", "р": "r", "с": "c", "х": "x", "у": "y", "к": "k",
     "т": "t", "м": "m", "н": "n", "в": "v", "л": "l", "г": "g", "д": "d",
@@ -576,6 +591,7 @@ def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
 
 
 def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
+    disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
     try:
         payload = json.loads(raw or "{}")
     except Exception:
@@ -585,8 +601,8 @@ def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
     return {
         "regular_promo": bool(payload.get("regular_promo", False)),
         "income_promo": bool(payload.get("income_promo", False)),
-        "insult_abuse": bool(payload.get("insult_abuse", False)),
-        "threat_abuse": bool(payload.get("threat_abuse", False)),
+        "insult_abuse": (False if disable_insult_threat else bool(payload.get("insult_abuse", False))),
+        "threat_abuse": (False if disable_insult_threat else bool(payload.get("threat_abuse", False))),
         "sex_abuse": bool(payload.get("sex_abuse", False)),
     }
 
@@ -673,15 +689,30 @@ async def moderate_with_openai(
 
     msg_hash, msg_len = _log_message_ref(trimmed)
 
-    moderation_prompt = (
+    disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
+    min_ai_text_len = max(0, int(getattr(settings, "MODERATION_AI_MIN_TEXT_LEN", 3) or 0))
+    if contains_order_uuid(text or ""):
+        return False
+    if (not image_b64) and (len((text or "").strip()) < min_ai_text_len):
+        return False
+
+    moderation_prompt_parts = [
         "Ты — профессиональный модератор чатов и комментариев Telegram-сообществ компании kupikod.com. "
-        "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n"
-        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n"
-        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n"
-        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 80% → установи insult_abuse=false.\n"
-        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false.\n"
-        "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false."
-    )
+        "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n",
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n",
+        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n",
+        "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false.",
+    ]
+    if not disable_insult_threat:
+        moderation_prompt_parts.insert(
+            3,
+            "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 80% → установи insult_abuse=false.\n",
+        )
+        moderation_prompt_parts.insert(
+            4,
+            "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false.\n",
+        )
+    moderation_prompt = "".join(moderation_prompt_parts)
 
     user_content: list[dict[str, Any]] = []
     if trimmed:
@@ -709,11 +740,9 @@ async def moderate_with_openai(
                                 "properties": {
                                     "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=80%."},
                                     "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
-                                    "insult_abuse": {"type": "boolean", "description": "Оскорбление конкретных лиц с уверенностью >=80%."},
-                                    "threat_abuse": {"type": "boolean", "description": "Угроза конкретным лицам с уверенностью >=80%."},
                                     "sex_abuse": {"type": "boolean", "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=80%."},
                                 },
-                                "required": ["regular_promo", "income_promo", "insult_abuse", "threat_abuse", "sex_abuse"],
+                                "required": ["regular_promo", "income_promo", "sex_abuse"],
                                 "additionalProperties": False,
                             },
                         }
@@ -765,6 +794,9 @@ async def check_light(
 ) -> Literal["clean", "flood", "spam_links", "spam_mentions", "link_violation", "promo", "promo_profile_cta", "sexual_content", "toxic", "emoji_flood", "symbol_noise", "custom_emoji_spam", "emoji_overlimit"]:
 
     if not settings.ENABLE_MODERATION or ((not text or not text.strip()) and not image_b64):
+        return "clean"
+
+    if contains_order_uuid(text or ""):
         return "clean"
 
     # Channel/bot sources are checked with link-policy only in light mode.
@@ -849,6 +881,8 @@ async def check_deep(
 
     ai_allowed = (source == "user") if allow_ai_for_source is None else bool(allow_ai_for_source)
     if not ai_allowed:
+        return False
+    if contains_order_uuid(text or ""):
         return False
 
     include_history = bool(getattr(settings, "MODERATION_DEEP_INCLUDE_HISTORY", False))

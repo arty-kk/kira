@@ -418,11 +418,28 @@ def _k_ltm_slices(chat_id: int, user_id: int, namespace: str = "default") -> str
     prefix = _ns_prefix(namespace)
     return f"{prefix}mem:ltm_slices:{'p' if chat_id==user_id else f'g:{chat_id}:u'}:{user_id}"
 
-def _k_g_stm(chat_id: int) -> str:
-    return f"mem:stm:g:{chat_id}:all"
+def _norm_thread_id(message_thread_id: int | None) -> int | None:
+    try:
+        tid = int(message_thread_id) if message_thread_id is not None else None
+    except Exception:
+        return None
+    if tid is None or tid <= 0:
+        return None
+    return tid
 
-def _k_g_stm_tokens(chat_id: int) -> str:
-    return f"mem:stm_tokens:g:{chat_id}:all"
+
+def _k_g_stm(chat_id: int, *, message_thread_id: int | None = None) -> str:
+    tid = _norm_thread_id(message_thread_id)
+    if tid is None:
+        return f"mem:stm:g:{chat_id}:all"
+    return f"mem:stm:g:{chat_id}:t:{tid}"
+
+
+def _k_g_stm_tokens(chat_id: int, *, message_thread_id: int | None = None) -> str:
+    tid = _norm_thread_id(message_thread_id)
+    if tid is None:
+        return f"mem:stm_tokens:g:{chat_id}:all"
+    return f"mem:stm_tokens:g:{chat_id}:t:{tid}"
 
 _LUA_SET_IF_NEWER = """
 local key = KEYS[1]
@@ -1686,7 +1703,7 @@ async def cleanup_api_key_memory(api_key_id: int) -> int:
     return total_deleted
 
 
-async def push_group_stm(chat_id: int, role: str, content: str, *, user_id: int) -> None:
+async def push_group_stm(chat_id: int, role: str, content: str, *, user_id: int, message_thread_id: int | None = None) -> None:
 
     txt = (content or "").strip()
     if not txt:
@@ -1700,8 +1717,8 @@ async def push_group_stm(chat_id: int, role: str, content: str, *, user_id: int)
     }
     payload = json.dumps(entry, ensure_ascii=False)
     r = get_redis()
-    key_list = _k_g_stm(chat_id)
-    key_tok  = _k_g_stm_tokens(chat_id)
+    key_list = _k_g_stm(chat_id, message_thread_id=message_thread_id)
+    key_tok  = _k_g_stm_tokens(chat_id, message_thread_id=message_thread_id)
     try:
         budget = settings.GROUP_STM_TOKEN_BUDGET
     except Exception:
@@ -1717,10 +1734,10 @@ async def push_group_stm(chat_id: int, role: str, content: str, *, user_id: int)
     except Exception:
         logger.debug("push_group_stm failed chat=%s", chat_id, exc_info=True)
 
-async def get_group_stm_tail(chat_id: int, cap_tokens: int = 1200, max_lines: int = 60) -> list[str]:
+async def get_group_stm_tail(chat_id: int, cap_tokens: int = 1200, max_lines: int = 60, *, message_thread_id: int | None = None) -> list[str]:
 
     r = get_redis()
-    key = _k_g_stm(chat_id)
+    key = _k_g_stm(chat_id, message_thread_id=message_thread_id)
     n = int(await r.llen(key) or 0)
     if n <= 0:
         return []
@@ -1757,7 +1774,7 @@ async def get_group_stm_tail(chat_id: int, cap_tokens: int = 1200, max_lines: in
         end = start - 1
     return list(reversed(out_rev))
 
-async def append_group_recent(chat_id: int, items: list[str], budget_tokens: int | None = None) -> None:
+async def append_group_recent(chat_id: int, items: list[str], budget_tokens: int | None = None, *, message_thread_id: int | None = None) -> None:
 
     if not items:
         return
@@ -1766,8 +1783,13 @@ async def append_group_recent(chat_id: int, items: list[str], budget_tokens: int
         budget = int(budget_tokens) if budget_tokens is not None else int(getattr(settings, "GROUP_RECENT_TOKENS_BUDGET", 20000))
     except Exception:
         budget = 20000
-    key_list = f"mem:mtm_recent:g:{chat_id}"
-    key_tok  = f"mem:mtm_recent_tokens:g:{chat_id}"
+    tid = _norm_thread_id(message_thread_id)
+    if tid is None:
+        key_list = f"mem:mtm_recent:g:{chat_id}"
+        key_tok = f"mem:mtm_recent_tokens:g:{chat_id}"
+    else:
+        key_list = f"mem:mtm_recent:g:{chat_id}:t:{tid}"
+        key_tok = f"mem:mtm_recent_tokens:g:{chat_id}:t:{tid}"
     try:
         cpt = float(getattr(settings, "APPROX_CHARS_PER_TOKEN", 3.8))
     except Exception:

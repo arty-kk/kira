@@ -123,5 +123,70 @@ class ResponderStmPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(current_user["content"][0]["text"], "Новый вопрос")
 
 
+    async def test_respond_to_user_uses_thread_scoped_group_tail_when_thread_id_present(self):
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "hgetall": AsyncMock(return_value={}),
+                "get": AsyncMock(return_value=None),
+                "set": AsyncMock(return_value=True),
+                "delete": AsyncMock(return_value=1),
+            },
+        )()
+
+        history = [
+            {"role": "user", "content": "Привет"},
+            {"role": "assistant", "content": "И тебе привет!"},
+        ]
+
+        get_group_tail_mock = AsyncMock(return_value=[])
+
+        with patch.object(core, "session_scope", return_value=_FakeSessionScope()), \
+             patch.object(core, "get_redis", return_value=redis_stub), \
+             patch.object(core, "get_persona", AsyncMock(return_value=_Persona())), \
+             patch.object(core, "get_cached_gender", AsyncMock(return_value=None)), \
+             patch.object(core, "build_system_prompt", AsyncMock(return_value="sys")), \
+             patch.object(core, "load_context", AsyncMock(return_value=history.copy())), \
+             patch.object(
+                 core,
+                 "_compute_on_topic_relevance",
+                 AsyncMock(
+                     return_value=(
+                         False,
+                         None,
+                         core.RagQueryContext(query="Новый вопрос", rag_query_source="raw"),
+                     )
+                 ),
+             ), \
+             patch.object(core, "get_ltm_slices", AsyncMock(return_value=[])), \
+             patch.object(core, "get_ltm_text", AsyncMock(return_value="ltm raw")), \
+             patch.object(core, "get_all_mtm_texts", AsyncMock(return_value=["mtm raw"])), \
+             patch.object(core, "summarize_mtm_topic", AsyncMock(return_value="topic")), \
+             patch.object(core, "compose_mtm_snippet", AsyncMock(return_value="mtm snippet")), \
+             patch.object(core, "select_snippets_via_nano", AsyncMock(return_value="ltm snippet")), \
+             patch.object(core, "get_group_stm_tail", get_group_tail_mock), \
+             patch.object(core, "record_context", AsyncMock(return_value=None)), \
+             patch.object(core, "record_assistant_reply", AsyncMock(return_value=None)), \
+             patch.object(core, "record_latency", AsyncMock(return_value=None)), \
+             patch.object(core, "_call_openai_with_retry", AsyncMock(return_value=SimpleNamespace())), \
+             patch.object(core, "_get_output_text", return_value="ok"):
+            out = await core.respond_to_user(
+                text="Новый вопрос",
+                chat_id=101,
+                user_id=202,
+                skip_user_push=True,
+                skip_assistant_push=True,
+                skip_persona_interaction=True,
+                message_thread_id=77,
+            )
+
+        self.assertEqual(out, "ok")
+        self.assertGreaterEqual(get_group_tail_mock.await_count, 1)
+        for call_item in get_group_tail_mock.await_args_list:
+            self.assertEqual(call_item.kwargs.get("message_thread_id"), 77)
+
+
+
 if __name__ == "__main__":
     unittest.main()

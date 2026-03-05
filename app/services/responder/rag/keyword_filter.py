@@ -138,6 +138,7 @@ async def find_tag_hits(
     embedding_model: Optional[str] = None,
     min_similarity: Optional[float] = None,
     apply_mmr: bool = True,
+    kb_scope: str = "global",
 ) -> List[Tuple[float, str, str]]:
     t = _norm_ws(text)
     if not t:
@@ -237,13 +238,14 @@ async def find_tag_hits(
             func.vector_dims(RagTagVector.embedding) == expected_dim,
         ]
 
+        base_scope = (kb_scope or "global").strip().lower() or "global"
         if owner_id:
             owner_cond = (RagTagVector.scope == "owner") & (RagTagVector.owner_id == int(owner_id))
             if kb_id_int is not None:
                 owner_cond = owner_cond & (RagTagVector.kb_id == kb_id_int)
-            conditions.append((RagTagVector.scope == "global") | owner_cond)
+            conditions.append((RagTagVector.scope == base_scope) | owner_cond)
         else:
-            conditions.append(RagTagVector.scope == "global")
+            conditions.append(RagTagVector.scope == base_scope)
 
         sql_started = time.perf_counter()
 

@@ -70,7 +70,7 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
                 "mention",
             ),
             (
-                "mentions_other_blocks",
+                "mentions_other_allows_on_topic",
                 dict(
                     is_channel=False,
                     mentioned=False,
@@ -79,7 +79,7 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
                     is_battle_cmd_to_us=False,
                     autoreply_on_topic=True,
                 ),
-                None,
+                "check_on_topic",
             ),
             (
                 "content_signal_required",
@@ -125,7 +125,7 @@ class ResolveAutoreplyTriggerTests(unittest.TestCase):
 
 
 class CleanOnTopicMessageTests(unittest.TestCase):
-    def test_requires_message_without_reply_or_mentions(self) -> None:
+    def test_requires_message_without_direct_mention(self) -> None:
         clean_message = types.SimpleNamespace(reply_to_message=None)
         self.assertTrue(
             group._is_clean_message_for_on_topic(
@@ -136,7 +136,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
         )
 
         reply_message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
-        self.assertFalse(
+        self.assertTrue(
             group._is_clean_message_for_on_topic(
                 reply_message,
                 mentioned=False,
@@ -151,7 +151,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 mentions_other=False,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             group._is_clean_message_for_on_topic(
                 clean_message,
                 mentioned=False,
@@ -161,7 +161,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
 
 
 class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
-    async def test_reply_gate_message_still_dispatches_passive_moderation(self) -> None:
+    async def test_reply_message_can_trigger_autoreply_without_direct_mention(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=88,
@@ -215,6 +215,9 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_store_context", AsyncMock()))
+            stack.enter_context(patch.object(group, "_push_group_stm_and_recent", AsyncMock()))
             buffer_mock = stack.enter_context(
                 patch.object(group, "buffer_message_for_response")
             )
@@ -224,7 +227,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_not_called()
+        buffer_mock.assert_called_once()
         dispatch_mock.assert_called_once()
 
     async def test_reply_gate_voice_still_dispatches_passive_moderation(self) -> None:
@@ -266,6 +269,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
             chat=types.SimpleNamespace(id=123),
             message_id=90,
             media_group_id=None,
+            text=None,
             caption="caption",
             entities=[],
             caption_entities=[],
@@ -365,6 +369,9 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
             stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_store_context", AsyncMock()))
+            stack.enter_context(patch.object(group, "_push_group_stm_and_recent", AsyncMock()))
             buffer_mock = stack.enter_context(
                 patch.object(group, "buffer_message_for_response")
             )
@@ -374,7 +381,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_not_called()
+        buffer_mock.assert_called_once()
         dispatch_mock.assert_called_once()
 
     async def _trigger_from_text(
@@ -1081,5 +1088,56 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         delay_mock.assert_not_called()
 
 
+
+    async def test_order_uuid_forces_generation_trigger_and_augments_text(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123),
+            message_id=188,
+            text="помогите заказ 1e494f7c-4491-4803-8eea-66fcb53ae7a7",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_to_message=types.SimpleNamespace(message_id=177),
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(group, "settings", types.SimpleNamespace(GROUP_AUTOREPLY_ON_TOPIC=False, GROUP_AUTOREPLY_MIN_TEXT_LEN=3)))
+            stack.enter_context(patch.object(group, "_is_message_allowed_for_group_handlers", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_first_delivery", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_update_presence", AsyncMock()))
+            stack.enter_context(patch.object(group, "record_activity", AsyncMock()))
+            stack.enter_context(patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)))
+            stack.enter_context(patch.object(group, "_is_channel_post", return_value=False))
+            stack.enter_context(patch.object(group, "_extract_entities", return_value=[]))
+            stack.enter_context(patch.object(group, "split_context_text", return_value=("orig", "orig")))
+            stack.enter_context(patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_user_id_val", return_value=42))
+            stack.enter_context(patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=True)))
+            stack.enter_context(patch.object(group, "_store_context", AsyncMock()))
+            stack.enter_context(patch.object(group, "_push_group_stm_and_recent", AsyncMock()))
+            buffer_mock = stack.enter_context(patch.object(group, "buffer_message_for_response"))
+            dispatch_mock = stack.enter_context(patch.object(group, "_dispatch_passive_moderation"))
+
+            await group.on_group_message(message)
+
+        payload = buffer_mock.call_args.args[0]
+        self.assertEqual(payload["trigger"], "mention")
+        self.assertIn("У меня проблемы с заказом на kupikod.com.", payload["text"])
+        self.assertIn("Сообщение пользователя:\norig", payload["text"])
+        dispatch_mock.assert_called_once()
+
+
+    def test_has_min_content_signal_respects_group_min_len(self):
+        with patch.object(group, "settings", types.SimpleNamespace(GROUP_AUTOREPLY_MIN_TEXT_LEN=3)):
+            self.assertFalse(group._has_min_content_signal("ok"))
+            self.assertTrue(group._has_min_content_signal("hey"))
+            self.assertFalse(group._has_min_content_signal("@bot ok"))
+
+
 if __name__ == "__main__":
     unittest.main()
+

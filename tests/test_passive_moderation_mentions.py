@@ -769,5 +769,43 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("NEW MESSAGE:\nneutral message", combined_text)
 
 
+    async def test_moderate_with_openai_skips_short_text_under_min_len(self) -> None:
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, MODERATION_AI_MIN_TEXT_LEN=3)),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock()) as call_mock,
+        ):
+            flagged = await passive_moderation.moderate_with_openai("ok")
+
+        self.assertFalse(flagged)
+        call_mock.assert_not_awaited()
+
+    async def test_parse_ai_moderation_json_disables_insult_and_threat_flags(self) -> None:
+        raw = '{"regular_promo": false, "income_promo": false, "insult_abuse": true, "threat_abuse": true, "sex_abuse": false}'
+        with patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_DISABLE_INSULT_THREAT_AI=True)):
+            parsed = passive_moderation._parse_ai_moderation_json(raw)
+
+        self.assertFalse(parsed.get("insult_abuse"))
+        self.assertFalse(parsed.get("threat_abuse"))
+
+
+
+    async def test_check_light_keeps_clean_for_order_uuid(self) -> None:
+        status = await passive_moderation.check_light(1, 2, "мой заказ 1e494f7c-4491-4803-8eea-66fcb53ae7a7", [], source="user")
+        self.assertEqual(status, "clean")
+
+    async def test_check_deep_skips_order_uuid(self) -> None:
+        with patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=True)) as moderate_mock:
+            blocked = await passive_moderation.check_deep(
+                chat_id=100,
+                user_id=42,
+                text="номер заказа 1e494f7c-4491-4803-8eea-66fcb53ae7a7",
+                source="user",
+            )
+
+        self.assertFalse(blocked)
+        moderate_mock.assert_not_awaited()
+
+
+
 if __name__ == "__main__":
     unittest.main()

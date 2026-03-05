@@ -11,6 +11,7 @@ from app.bot.components.constants import redis_client
 from app.config import settings
 
 _ROOT_OF_PREFIX = "comment:root_of"
+_THREAD_ROOT_PREFIX = "comment:thread_root"
 
 
 def _ctx_ttl_seconds() -> int:
@@ -22,6 +23,36 @@ def _ctx_ttl_seconds() -> int:
 
 def _root_of_key(chat_id: int, msg_id: int) -> str:
     return f"{_ROOT_OF_PREFIX}:{int(chat_id)}:{int(msg_id)}"
+
+
+def _thread_root_key(chat_id: int, thread_id: int) -> str:
+    return f"{_THREAD_ROOT_PREFIX}:{int(chat_id)}:{int(thread_id)}"
+
+
+def _message_thread_id(message: types.Message) -> int | None:
+    try:
+        thread_id = getattr(message, "message_thread_id", None)
+        if thread_id:
+            return int(thread_id)
+    except Exception:
+        return None
+    return None
+
+
+def _trusted_source_channel_ids() -> set[int]:
+    try:
+        return {int(x) for x in (getattr(settings, "COMMENT_SOURCE_CHANNEL_IDS", []) or [])}
+    except Exception:
+        return set()
+
+
+def _source_channel_id(msg: types.Message) -> int | None:
+    for field in ("sender_chat", "forward_from_chat"):
+        src = getattr(msg, field, None)
+        if src and getattr(src, "type", None) == ChatType.CHANNEL:
+            with contextlib.suppress(Exception):
+                return int(src.id)
+    return None
 
 
 def _linked_channel_id(message: types.Message) -> int | None:
@@ -88,10 +119,6 @@ def _is_channel_origin_message(msg: types.Message) -> bool:
 
 
 async def update_comment_thread_root_cache(message: types.Message) -> int | None:
-    linked_id = _linked_channel_id(message)
-    if not linked_id:
-        return None
-
     try:
         chat_id = int(getattr(getattr(message, "chat", None), "id", 0) or 0)
         msg_id = int(getattr(message, "message_id", 0) or 0)
@@ -101,11 +128,38 @@ async def update_comment_thread_root_cache(message: types.Message) -> int | None
         return None
 
     ttl = _ctx_ttl_seconds()
+    thread_id = _message_thread_id(message)
 
-    if _is_linked_channel_post(message, linked_id):
+    linked_id = _linked_channel_id(message)
+    source_channel_id = _source_channel_id(message)
+    trusted_source_ids = _trusted_source_channel_ids()
+    trusted_source_hit = bool(source_channel_id and source_channel_id in trusted_source_ids)
+
+    is_channel_root = False
+    if linked_id and _is_linked_channel_post(message, linked_id):
+        is_channel_root = True
+    elif trusted_source_hit and _is_channel_origin_message(message):
+        is_channel_root = True
+
+    if is_channel_root:
         with contextlib.suppress(Exception):
             await redis_client.set(_root_of_key(chat_id, msg_id), int(msg_id), ex=ttl)
+        if thread_id and thread_id > 0:
+            with contextlib.suppress(Exception):
+                await redis_client.set(_thread_root_key(chat_id, thread_id), int(msg_id), ex=ttl)
         return int(msg_id)
+
+    if thread_id and thread_id > 0:
+        with contextlib.suppress(Exception):
+            cached_thread_root = await redis_client.get(_thread_root_key(chat_id, thread_id))
+            if cached_thread_root:
+                if isinstance(cached_thread_root, (bytes, bytearray)):
+                    cached_thread_root = cached_thread_root.decode("utf-8", "ignore")
+                root_from_thread = int(str(cached_thread_root).strip())
+                if root_from_thread > 0:
+                    with contextlib.suppress(Exception):
+                        await redis_client.set(_root_of_key(chat_id, msg_id), int(root_from_thread), ex=ttl)
+                    return int(root_from_thread)
 
     parent = getattr(message, "reply_to_message", None)
     if not parent:
@@ -118,9 +172,21 @@ async def update_comment_thread_root_cache(message: types.Message) -> int | None
     if not parent_id:
         return None
 
-    if _is_linked_channel_post(parent, linked_id):
+    if linked_id and _is_linked_channel_post(parent, linked_id):
         with contextlib.suppress(Exception):
             await redis_client.set(_root_of_key(chat_id, msg_id), int(parent_id), ex=ttl)
+        if thread_id and thread_id > 0:
+            with contextlib.suppress(Exception):
+                await redis_client.set(_thread_root_key(chat_id, thread_id), int(parent_id), ex=ttl)
+        return int(parent_id)
+
+    parent_source_channel_id = _source_channel_id(parent)
+    if parent_source_channel_id and parent_source_channel_id in trusted_source_ids and _is_channel_origin_message(parent):
+        with contextlib.suppress(Exception):
+            await redis_client.set(_root_of_key(chat_id, msg_id), int(parent_id), ex=ttl)
+        if thread_id and thread_id > 0:
+            with contextlib.suppress(Exception):
+                await redis_client.set(_thread_root_key(chat_id, thread_id), int(parent_id), ex=ttl)
         return int(parent_id)
 
     root_id = None
@@ -134,6 +200,9 @@ async def update_comment_thread_root_cache(message: types.Message) -> int | None
     if root_id and root_id > 0:
         with contextlib.suppress(Exception):
             await redis_client.set(_root_of_key(chat_id, msg_id), int(root_id), ex=ttl)
+        if thread_id and thread_id > 0:
+            with contextlib.suppress(Exception):
+                await redis_client.set(_thread_root_key(chat_id, thread_id), int(root_id), ex=ttl)
         return int(root_id)
 
     return None
