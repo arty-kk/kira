@@ -28072,5 +28072,11 @@
     "category": "Игровая валюта",
     "fact": "Battle.net Balance — баланс кошелька Battle.net",
     "triggers": ["battlenet balance", "battle.net balance", "баланс battlenet", "кошелек battlenet", "пополнить battle.net", "донат battlenet"]
+  },
+  {
+    "id": "kupizavr",
+    "category": "Купизавтр",
+    "fact": "Перейдите в бот @steamKUPIKOD_bot -> Нажмите 'Пополнить' -> Перейдите в 'Профиль' -> Нажмите 'Играть с Купизавром'",
+    "triggers": ["kupizavr", "купизавр", "как найти купизавра", "где купизавр"]
   }
 ]
