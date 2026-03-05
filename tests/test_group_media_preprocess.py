@@ -715,6 +715,48 @@ class TrustedRepostIgnoreTests(unittest.IsolatedAsyncioTestCase):
         push_stm.assert_awaited_once()
         preprocess_mock.assert_not_called()
 
+    async def test_on_group_image_daily_limit_dispatches_moderation_only(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=123, title="chat"),
+            message_id=995,
+            from_user=types.SimpleNamespace(id=42, is_bot=False),
+            caption="image",
+            entities=[],
+            caption_entities=[],
+            reply_to_message=None,
+            sender_chat=None,
+            forward_from_chat=None,
+            is_automatic_forward=False,
+        )
+
+        with (
+            patch.object(group, "settings", types.SimpleNamespace(ALLOWED_GROUP_IDS=[123], COMMENT_TARGET_CHAT_IDS=[], COMMENT_SOURCE_CHANNEL_IDS=[], GROUP_AUTOREPLY_ON_TOPIC=True)),
+            patch.object(group, "apply_moderation_filters", AsyncMock(return_value=False)),
+            patch.object(group, "_reply_gate_requires_mention", return_value=False),
+            patch.object(group, "_is_channel_post", return_value=False),
+            patch.object(group, "_extract_entities", return_value=[]),
+            patch.object(group, "split_context_text", return_value=("image", "image")),
+            patch.object(group, "_is_mention", return_value=False),
+            patch.object(group, "_mentions_other_user", return_value=False),
+            patch.object(group, "is_single_media", return_value=True),
+            patch.object(group, "_ensure_daily_limit", AsyncMock(return_value=False)),
+            patch.object(group, "_user_id_val", return_value=42),
+            patch.object(group, "_resolve_group_comment_context", AsyncMock(return_value=True)),
+            patch.object(group.preprocess_group_image, "delay") as preprocess_mock,
+        ):
+            await group._handle_group_image_message_common(
+                message,
+                file_id="file-id",
+                document_id=None,
+                mime_type="image/jpeg",
+                suffix=".jpg",
+                content_type_for_analytics="photo",
+            )
+
+        preprocess_mock.assert_called_once()
+        payload = preprocess_mock.call_args.args[0]
+        self.assertIsNone(payload.get("trigger"))
+
 
 class GroupFallbackModerationTests(unittest.IsolatedAsyncioTestCase):
     def _make_message(self, *, content_type, document=None):

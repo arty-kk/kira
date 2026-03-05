@@ -208,7 +208,7 @@ async def find_tag_hits(
     top_k = (
         int(limit)
         if isinstance(limit, int) and limit > 0
-        else int(getattr(settings, "KNOWLEDGE_TOP_K", 3) or 3)
+        else int(getattr(settings, "KNOWLEDGE_TOP_K", 1) or 1)
     )
     lam = max(0.0, min(1.0, float(getattr(settings, "MMR_LAMBDA", 0.5) or 0.5)))
     try:

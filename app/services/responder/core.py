@@ -1885,7 +1885,7 @@ async def respond_to_user(
 
     hits: List[Any] = []
     if reply is None:
-        top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 3))
+        top_k = int(getattr(settings, "KNOWLEDGE_TOP_K", 1))
         if trigger == "check_on_topic":
             try:
                 top_k = int(getattr(settings, "AUTOREPLY_KNOWLEDGE_TOP_K", 1) or 1)

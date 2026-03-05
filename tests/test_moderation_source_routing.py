@@ -286,6 +286,46 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
 
+    async def test_classify_profile_nsfw_fast_uses_stricter_default_threshold_and_erotic_pose_rule(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))
+        with (
+            patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
+            patch.object(
+                passive_moderation,
+                "settings",
+                types.SimpleNamespace(BASE_MODEL="gpt-5-nano", MODERATION_PROFILE_NSFW_MIN_CONFIDENCE=65),
+            ),
+        ):
+            flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
+
+        self.assertFalse(flagged)
+        system_prompt = call_mock.await_args.kwargs["input"][0]["content"][0]["text"]
+        self.assertIn("уверенности >= 65%", system_prompt)
+        self.assertIn("купальник/бельё с явным сексуальным акцентом на интимных местах", system_prompt)
+
+
+class ProfileNsfwCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cleanup_profile_nsfw_bans_with_revoke(self) -> None:
+        with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=True)) as ban_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+        ):
+            await moderation._cleanup_user_history_and_mute(-1001, 42)
+
+        ban_mock.assert_awaited_once_with(-1001, 42, revoke=True)
+        restrict_mock.assert_not_awaited()
+
+    async def test_cleanup_profile_nsfw_falls_back_to_restrict_when_ban_fails(self) -> None:
+        with (
+            patch.object(moderation, "_ban_user_safe", AsyncMock(return_value=False)) as ban_mock,
+            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+        ):
+            await moderation._cleanup_user_history_and_mute(-1001, 42)
+
+        ban_mock.assert_awaited_once_with(-1001, 42, revoke=True)
+        restrict_mock.assert_awaited_once_with(-1001, 42)
+
+
 class _FakePipe:
     def __init__(self, set_calls):
         self._set_calls = set_calls
@@ -453,7 +493,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
-            patch.object(moderation, "_restrict_user_write_safe", AsyncMock(return_value=True)) as restrict_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
             patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=False)) as nsfw_mock,
@@ -473,7 +513,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         nsfw_mock.assert_not_awaited()
         check_light_mock.assert_not_awaited()
         delete_mock.assert_awaited_once_with(-1001, 77)
-        restrict_mock.assert_awaited_once_with(-1001, 42)
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
         self.assertIn("profile_nsfw_blocked", flag_mock.await_args.kwargs["reason"])
         fake_redis.hset.assert_awaited_once()
         self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-1001:77")
@@ -1129,7 +1169,7 @@ class ModerationAlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
         ):
             await moderation._cleanup_user_history_and_mute(-1001, 42)
 
-        restrict_mock.assert_awaited_once_with(-1001, 42)
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
 
     async def test_send_alert_with_actions_ignores_forbidden_targets_without_error_log(self) -> None:
         with (

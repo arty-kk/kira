@@ -194,7 +194,7 @@ class ModerationMentionsMembershipTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         delete_mock.assert_awaited_once()
-        self.assertIn("emoji_overlimit", flag_mock.await_args.kwargs["reason"])
+        self.assertIn("custom_emoji_spam", flag_mock.await_args.kwargs["reason"])
 
 
 if __name__ == "__main__":

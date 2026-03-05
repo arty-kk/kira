@@ -621,7 +621,7 @@ def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
         "income_promo": bool(payload.get("income_promo", False)),
         "insult_abuse": (False if disable_insult_threat else bool(payload.get("insult_abuse", False))),
         "threat_abuse": (False if disable_insult_threat else bool(payload.get("threat_abuse", False))),
-        "sex_abuse": bool(payload.get("sex_abuse", False)),
+        "sex_abuse": (False if disable_insult_threat else bool(payload.get("sex_abuse", False))),
     }
 
 
@@ -630,28 +630,31 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     if not payload:
         return False
 
+    min_confidence_pct = int(
+        max(1, min(95, int(getattr(settings, "MODERATION_PROFILE_NSFW_MIN_CONFIDENCE", 40) or 40)))
+    )
     system_prompt = (
-        "Ты — NSFW-модератор, определяющий наличие сексуализированного контента по фото. "
+        "Ты — NSFW-модератор, определяющий наличие сексуализированного контента по фото профиля. "
         "Верни только sex_abuse=true или sex_abuse=false. "
-        "Ставь true только при уверенности ≥80%, иначе — false.\n\n"
+        f"Ставь true при уверенности >= {min_confidence_pct}%, иначе — false. "
+        "Политика строгая: при сигнале явной/демонстративной обнажёнки выбирай true.\n\n"
         "Поставь sex_abuse=true, если выполнено хотя бы одно из условий:\n"
         "- отчётливо видны гениталии, анус или женские соски/ареолы, либо их явная демонстрация через прозрачную или подчёркивающую ткань;\n"
+        "- обнажены или демонстративно акцентированы интимные зоны (грудь, ягодицы, гениталии), включая эротизированные ракурсы;\n"
+        "- присутствует купальник/бельё с явным сексуальным акцентом на интимных местах (грудь, ягодицы, гениталии);\n"
         "- изображено сексуальное действие, его имитация или сексуальные аксессуары в явном эротическом контексте;\n"
-        "- изображение выглядит как профильный эротический/эскорт-аватар: крупный план или ракурс с намеренным акцентом на груди, ягодицах или зоне бикини, демонстративная поза, визуальная подача, характерная для сексуального продвижения (включая купальник или нижнее бельё).\n\n"
-        "Всегда ставь sex_abuse=false, если:\n"
-        "- обычное пляжное или спортивное фото без явного сексуального акцента;\n"
-        "- мужчина с обнажённым торсом без эротизированной подачи;\n"
-        "- нейтральный портрет или селфи без акцента на интимных зонах;\n"
-        "- художественная, медицинская или документальная нагота без сексуальной цели."
+        "- изображение выглядит как профильный эротический/эскорт-аватар: демонстративная поза и визуальная подача, характерная для сексуального продвижения.\n\n"
+        "Поставь sex_abuse=false только когда нет обнажения или сексуализированного акцента на интимных зонах."
     )
+
 
     try:
         resp = await asyncio.wait_for(
-                _call_openai_with_retry(
-                    endpoint="responses.create",
-                    model=settings.BASE_MODEL,
-                    model_role="base",
-                    input=[
+            _call_openai_with_retry(
+                endpoint="responses.create",
+                model=settings.BASE_MODEL,
+                model_role="base",
+                input=[
                     {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
                     {
                         "role": "user",
@@ -665,7 +668,10 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "sex_abuse": {"type": "boolean", "description": "Есть ли сексуализированный контент при уверенности >=80%."},
+                                "sex_abuse": {
+                                    "type": "boolean",
+                                    "description": "Есть ли сексуализированный контент при заданном пороге уверенности.",
+                                },
                             },
                             "required": ["sex_abuse"],
                             "additionalProperties": False,
@@ -680,10 +686,13 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         logger.exception("classify_profile_nsfw_fast: responses API error")
         return False
 
-    parsed = _parse_ai_moderation_json(_get_output_text(resp) or "")
-    return bool(parsed.get("sex_abuse", False))
-
-
+    try:
+        payload = json.loads(_get_output_text(resp) or "{}")
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("sex_abuse", False))
 
 
 async def moderate_with_openai(
@@ -717,9 +726,8 @@ async def moderate_with_openai(
     moderation_prompt_parts = [
         "Ты — профессиональный модератор чатов и комментариев Telegram-сообществ компании kupikod.com. "
         "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n",
-        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n",
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества, ряды бойцов фронта, какие-то группировки, меньшинства, или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n",
         "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n",
-        "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false.",
     ]
     if not disable_insult_threat:
         moderation_prompt_parts.insert(
@@ -730,6 +738,9 @@ async def moderate_with_openai(
             4,
             "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false.\n",
         )
+        moderation_prompt_parts.append(
+            "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false.",
+        )
     moderation_prompt = "".join(moderation_prompt_parts)
 
     user_content: list[dict[str, Any]] = []
@@ -737,6 +748,18 @@ async def moderate_with_openai(
         user_content.append({"type": "input_text", "text": trimmed})
     if image_b64:
         user_content.append({"type": "input_image", "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"})
+
+    moderation_schema_properties: dict[str, dict[str, str]] = {
+        "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=80%."},
+        "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
+    }
+    moderation_schema_required = ["regular_promo", "income_promo"]
+    if not disable_insult_threat:
+        moderation_schema_properties["sex_abuse"] = {
+            "type": "boolean",
+            "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=80%.",
+        }
+        moderation_schema_required.append("sex_abuse")
 
     async with _LIGHT_SEMAPHORE:
         try:
@@ -755,12 +778,8 @@ async def moderate_with_openai(
                             "name": "chat_moderation",
                             "schema": {
                                 "type": "object",
-                                "properties": {
-                                    "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=80%."},
-                                    "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
-                                    "sex_abuse": {"type": "boolean", "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=80%."},
-                                },
-                                "required": ["regular_promo", "income_promo", "sex_abuse"],
+                                "properties": moderation_schema_properties,
+                                "required": moderation_schema_required,
                                 "additionalProperties": False,
                             },
                         }
@@ -821,7 +840,7 @@ async def check_light(
     if source == "user" and await is_flooding(chat_id, user_id):
         return "flood"
 
-    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 5) or 0)
+    max_emoji_per_message = int(getattr(settings, "MODERATION_MAX_EMOJI_PER_MESSAGE", 12) or 0)
     if source == "user" and max_emoji_per_message > 0 and count_message_emojis(text or "", entities) > max_emoji_per_message:
         return "emoji_overlimit"
 

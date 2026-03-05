@@ -47,6 +47,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
             MODERATION_LINKS_DELETE_ALL=False,
             MODERATION_DELETE_TELEGRAM_LINKS=False,
             MODERATION_ALLOWED_LINK_KEYWORDS=[],
+            MODERATOR_IDS=[],
         )
         data.update(overrides)
         return types.SimpleNamespace(**data)
@@ -97,6 +98,47 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(handled)
         delete_mock.assert_not_awaited()
         flag_mock.assert_not_awaited()
+
+    async def test_trusted_moderator_id_is_exempt_from_filters(self) -> None:
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=-1001, type=ChatType.SUPERGROUP, linked_chat_id=None),
+            message_id=11,
+            from_user=types.SimpleNamespace(id=777, is_bot=False),
+            sender_chat=None,
+            forward_from=None,
+            forward_from_chat=None,
+            forward_sender_name=None,
+            is_automatic_forward=False,
+            external_reply=None,
+            text="hello",
+            caption=None,
+            entities=[],
+            caption_entities=[],
+            reply_markup=None,
+            sticker=None,
+            game=None,
+            dice=None,
+            via_bot=None,
+            story=None,
+            voice=None,
+            video_note=None,
+            audio=None,
+            photo=None,
+            video=None,
+            animation=None,
+            document=None,
+        )
+
+        with (
+            patch.object(moderation, "settings", self._base_settings(MODERATOR_IDS=[777])),
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=False)) as is_admin_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+        ):
+            handled = await moderation.apply_moderation_filters(message.chat.id, message)
+
+        self.assertFalse(handled)
+        is_admin_mock.assert_not_awaited()
+        delete_mock.assert_not_awaited()
 
     async def test_linked_discussion_message_with_origin_signal_uses_comment_policy(self) -> None:
         message = types.SimpleNamespace(
