@@ -73,9 +73,25 @@ def _extract_log_context(data: dict) -> dict:
 
     branch = data.get(update_type) if update_type else None
     if isinstance(branch, dict):
+        if isinstance(branch.get("message_id"), int) and not isinstance(branch.get("message_id"), bool):
+            context["message_id"] = branch["message_id"]
+
+        if isinstance(branch.get("message_thread_id"), int) and not isinstance(branch.get("message_thread_id"), bool):
+            context["message_thread_id"] = branch["message_thread_id"]
+
+        if isinstance(branch.get("is_topic_message"), bool):
+            context["is_topic_message"] = branch["is_topic_message"]
+
+        reply_to = branch.get("reply_to_message")
+        if isinstance(reply_to, dict) and isinstance(reply_to.get("message_id"), int) and not isinstance(reply_to.get("message_id"), bool):
+            context["reply_to_message_id"] = reply_to["message_id"]
+
         chat = branch.get("chat")
-        if isinstance(chat, dict) and isinstance(chat.get("id"), int) and not isinstance(chat.get("id"), bool):
-            context["chat_id"] = chat["id"]
+        if isinstance(chat, dict):
+            if isinstance(chat.get("id"), int) and not isinstance(chat.get("id"), bool):
+                context["chat_id"] = chat["id"]
+            if isinstance(chat.get("linked_chat_id"), int) and not isinstance(chat.get("linked_chat_id"), bool):
+                context["linked_chat_id"] = chat["linked_chat_id"]
 
         user = branch.get("from")
         if isinstance(user, dict) and isinstance(user.get("id"), int) and not isinstance(user.get("id"), bool):
@@ -84,9 +100,25 @@ def _extract_log_context(data: dict) -> dict:
         if update_type == "callback_query":
             message = branch.get("message")
             if isinstance(message, dict):
+                if isinstance(message.get("message_id"), int) and not isinstance(message.get("message_id"), bool):
+                    context.setdefault("message_id", message["message_id"])
+
+                if isinstance(message.get("message_thread_id"), int) and not isinstance(message.get("message_thread_id"), bool):
+                    context.setdefault("message_thread_id", message["message_thread_id"])
+
+                if isinstance(message.get("is_topic_message"), bool):
+                    context.setdefault("is_topic_message", message["is_topic_message"])
+
+                callback_reply_to = message.get("reply_to_message")
+                if isinstance(callback_reply_to, dict) and isinstance(callback_reply_to.get("message_id"), int) and not isinstance(callback_reply_to.get("message_id"), bool):
+                    context.setdefault("reply_to_message_id", callback_reply_to["message_id"])
+
                 callback_chat = message.get("chat")
-                if isinstance(callback_chat, dict) and isinstance(callback_chat.get("id"), int) and not isinstance(callback_chat.get("id"), bool):
-                    context.setdefault("chat_id", callback_chat["id"])
+                if isinstance(callback_chat, dict):
+                    if isinstance(callback_chat.get("id"), int) and not isinstance(callback_chat.get("id"), bool):
+                        context.setdefault("chat_id", callback_chat["id"])
+                    if isinstance(callback_chat.get("linked_chat_id"), int) and not isinstance(callback_chat.get("linked_chat_id"), bool):
+                        context.setdefault("linked_chat_id", callback_chat["linked_chat_id"])
 
             callback_from = branch.get("from")
             if isinstance(callback_from, dict) and isinstance(callback_from.get("id"), int) and not isinstance(callback_from.get("id"), bool):

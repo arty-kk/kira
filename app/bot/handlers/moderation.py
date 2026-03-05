@@ -369,6 +369,10 @@ async def handle_passive_moderation(
     message_id: int | None = None,
     is_comment_context: bool | None = None,
     chat_title: str | None = None,
+    message_thread_id: int | None = None,
+    reply_to_message_id: int | None = None,
+    linked_chat_id: int | None = None,
+    is_topic_message: bool | None = None,
 ) -> str:
     status = "clean"
     reason_text = ""
@@ -376,6 +380,10 @@ async def handle_passive_moderation(
     from_linked = False
     _uid = int(getattr(getattr(message, "from_user", None), "id", user_id or 0))
     _mid = int(getattr(message, "message_id", message_id or 0))
+    effective_thread_id = getattr(message, "message_thread_id", message_thread_id)
+    effective_reply_to_message_id = getattr(getattr(message, "reply_to_message", None), "message_id", reply_to_message_id)
+    effective_linked_chat_id = getattr(getattr(message, "chat", None), "linked_chat_id", linked_chat_id)
+    effective_is_topic_message = getattr(message, "is_topic_message", is_topic_message)
 
     async def _persist_status_to_redis(*, persisted_status: str, persisted_reason: str) -> None:
         try:
@@ -441,13 +449,17 @@ async def handle_passive_moderation(
 
     is_trusted_source = bool(normalized_source == "user" or is_destination_trusted or from_linked)
     logger.info(
-        "PASSIVE_MODERATION_START: chat_id=%s msg_id=%s user_id=%s source=%s is_trusted_destination=%s is_comment_context=%s",
+        "PASSIVE_MODERATION_START: chat_id=%s msg_id=%s user_id=%s source=%s is_trusted_destination=%s is_comment_context=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
         chat_id,
         message_id or getattr(message, "message_id", None),
         user_id or getattr(getattr(message, "from_user", None), "id", None),
         normalized_source,
         is_destination_trusted,
         is_comment_context,
+        effective_linked_chat_id,
+        effective_thread_id,
+        effective_reply_to_message_id,
+        effective_is_topic_message,
     )
     is_fully_trusted = await _is_fully_trusted_actor_or_action(
         chat_id=chat_id,
@@ -505,12 +517,16 @@ async def handle_passive_moderation(
         await _persist_status_to_redis(persisted_status=status, persisted_reason=reason_text)
 
         logger.info(
-            "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s",
+            "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
             chat_id,
             _mid,
             _uid,
             status,
             reason_text,
+            effective_linked_chat_id,
+            effective_thread_id,
+            effective_reply_to_message_id,
+            effective_is_topic_message,
         )
         return status
 
@@ -822,12 +838,16 @@ async def handle_passive_moderation(
         return "error"
 
     logger.info(
-        "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s",
+        "PASSIVE_MODERATION_RESULT: chat_id=%s msg_id=%s user_id=%s status=%s reason=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
         chat_id,
         _mid,
         _uid,
         status,
         reason_text,
+        effective_linked_chat_id,
+        effective_thread_id,
+        effective_reply_to_message_id,
+        effective_is_topic_message,
     )
     return status
 

@@ -202,6 +202,10 @@ async def _preprocess(payload: dict[str, Any]) -> str:
                 "is_comment_context": payload.get("is_comment_context"),
                 "trusted_repost": bool(payload.get("trusted_repost")),
                 "chat_title": payload.get("chat_title"),
+                "message_thread_id": payload.get("message_thread_id"),
+                "reply_to_message_id": payload.get("reply_to"),
+                "linked_chat_id": payload.get("linked_chat_id"),
+                "is_topic_message": payload.get("is_topic_message"),
             },
             context="media.preprocess_group_image",
         )

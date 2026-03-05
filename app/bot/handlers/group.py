@@ -653,6 +653,11 @@ def _dispatch_passive_moderation(
     trusted_repost: bool = False,
 ) -> None:
 
+    message_thread_id = getattr(message, "message_thread_id", None)
+    is_topic_message = getattr(message, "is_topic_message", None)
+    reply_to_message_id = getattr(getattr(message, "reply_to_message", None), "message_id", None)
+    linked_chat_id = getattr(getattr(message, "chat", None), "linked_chat_id", None)
+
     moderation_payload = prepare_moderation_payload(
         {
             "chat_id": message.chat.id,
@@ -666,17 +671,25 @@ def _dispatch_passive_moderation(
             "is_comment_context": is_comment_context,
             "trusted_repost": bool(trusted_repost),
             "chat_title": getattr(message.chat, "title", None),
+            "message_thread_id": message_thread_id,
+            "reply_to_message_id": reply_to_message_id,
+            "linked_chat_id": linked_chat_id,
+            "is_topic_message": is_topic_message,
         },
         context="group.dispatch",
     )
     logger.info(
-        "GROUP_PASSIVE_MODERATION_DISPATCH: chat_id=%s msg_id=%s user_id=%s trigger=%s is_comment_context=%s source=%s",
+        "GROUP_PASSIVE_MODERATION_DISPATCH: chat_id=%s msg_id=%s user_id=%s trigger=%s is_comment_context=%s source=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
         message.chat.id,
         message.message_id,
         user_id_val,
         payload.get("trigger"),
         is_comment_context,
         ("channel" if is_channel else "user"),
+        linked_chat_id,
+        message_thread_id,
+        reply_to_message_id,
+        is_topic_message,
     )
     passive_moderate.delay(moderation_payload)
 
@@ -949,11 +962,15 @@ async def on_group_message(message: Message) -> None:
                 trusted_repost=False,
             )
             logger.info(
-                "GROUP_REPLY_GATE_PASSIVE_ONLY: chat_id=%s msg_id=%s user_id=%s is_comment_context=%s",
+                "GROUP_REPLY_GATE_PASSIVE_ONLY: chat_id=%s msg_id=%s user_id=%s is_comment_context=%s linked_chat_id=%s thread_id=%s reply_to_msg_id=%s is_topic_message=%s",
                 cid,
                 message.message_id,
                 user_id_val,
                 is_comment_context,
+                getattr(getattr(message, "chat", None), "linked_chat_id", None),
+                getattr(message, "message_thread_id", None),
+                getattr(getattr(message, "reply_to_message", None), "message_id", None),
+                getattr(message, "is_topic_message", None),
             )
             return
 
@@ -1515,6 +1532,8 @@ async def _handle_group_image_message_common(
         "linked_chat_id": int(getattr(message.chat, "linked_chat_id", 0) or 0),
         "channel_title": getattr(channel, "title", None) if channel else None,
         "chat_title": getattr(message.chat, "title", None),
+        "message_thread_id": getattr(message, "message_thread_id", None),
+        "is_topic_message": getattr(message, "is_topic_message", None),
         "entities": ents,
         "caption": model_caption,
         "caption_log": log_caption,

@@ -622,6 +622,7 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(incoming_call.kwargs["extra"].keys()), {
             "update_id",
             "update_type",
+            "message_id",
             "chat_id",
             "user_id",
             "text_preview",
@@ -630,6 +631,7 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         log_update = incoming_call.kwargs["extra"]
         self.assertEqual(log_update["update_id"], payload["update_id"])
         self.assertEqual(log_update["update_type"], "message")
+        self.assertEqual(log_update["message_id"], payload["message"]["message_id"])
         self.assertEqual(log_update["chat_id"], payload["message"]["chat"]["id"])
         self.assertEqual(log_update["user_id"], payload["message"]["from"]["id"])
         self.assertIn("text_preview", log_update)
@@ -644,6 +646,57 @@ class WebhookStartBotTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("document", log_update)
         self.assertNotIn("entities", log_update)
         self.assertNotIn("nested", log_update)
+
+        stop_event.set()
+        await task
+
+    async def test_webhook_callback_query_uses_nested_message_location_context(self):
+        stop_event = asyncio.Event()
+
+        task = asyncio.create_task(webhook.start_bot(stop_event=stop_event))
+        await asyncio.sleep(0)
+
+        app = _FakeApplication.last_instance
+        handler = app.router.post_handlers[webhook.settings.WEBHOOK_PATH]
+
+        payload = {
+            "update_id": 902,
+            "callback_query": {
+                "id": "cbq-id",
+                "from": {"id": 777, "is_bot": False},
+                "data": "open-thread",
+                "message": {
+                    "message_id": 11,
+                    "message_thread_id": 991,
+                    "is_topic_message": True,
+                    "reply_to_message": {"message_id": 3},
+                    "chat": {"id": -1001, "type": "supergroup", "linked_chat_id": -1002},
+                },
+            },
+        }
+
+        with mock.patch.object(webhook.logger, "info") as mock_info:
+            response = await handler(_FakeWeb.Request(payload))
+
+        self.assertEqual(response.status, 200)
+
+        incoming_call = next(
+            call
+            for call in mock_info.call_args_list
+            if call.args and call.args[0] == "Incoming update"
+        )
+
+        log_update = incoming_call.kwargs["extra"]
+        self.assertEqual(log_update["update_id"], payload["update_id"])
+        self.assertEqual(log_update["update_type"], "callback_query")
+        self.assertEqual(log_update["message_id"], payload["callback_query"]["message"]["message_id"])
+        self.assertEqual(log_update["message_thread_id"], payload["callback_query"]["message"]["message_thread_id"])
+        self.assertEqual(log_update["reply_to_message_id"], payload["callback_query"]["message"]["reply_to_message"]["message_id"])
+        self.assertEqual(log_update["linked_chat_id"], payload["callback_query"]["message"]["chat"]["linked_chat_id"])
+        self.assertTrue(log_update["is_topic_message"])
+        self.assertEqual(log_update["chat_id"], payload["callback_query"]["message"]["chat"]["id"])
+        self.assertEqual(log_update["user_id"], payload["callback_query"]["from"]["id"])
+        self.assertEqual(log_update["text_preview"], payload["callback_query"]["data"])
 
         stop_event.set()
         await task
