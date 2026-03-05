@@ -200,10 +200,7 @@ def _has_min_content_signal(raw_text: str) -> bool:
 
 
 def _order_uuid_assist_prompt(order_uuid: str, user_text: str) -> str:
-    base = (
-        f"Пользователь написал сообщение с номером заказа {order_uuid} на kupikod.com. "
-        "Помоги ему разобраться в ситуации."
-    )
+    base = "У меня проблемы с заказом на kupikod.com."
     txt = (user_text or "").strip()
     if not txt:
         return base

@@ -1126,7 +1126,8 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
         payload = buffer_mock.call_args.args[0]
         self.assertEqual(payload["trigger"], "mention")
-        self.assertIn("номером заказа 1e494f7c-4491-4803-8eea-66fcb53ae7a7", payload["text"])
+        self.assertIn("У меня проблемы с заказом на kupikod.com.", payload["text"])
+        self.assertIn("Сообщение пользователя:\norig", payload["text"])
         dispatch_mock.assert_called_once()
 
 
