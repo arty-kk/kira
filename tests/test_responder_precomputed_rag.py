@@ -82,6 +82,7 @@ class ResponderPrecomputedRagTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hits, [(0.41, "id-2", "gen")])
         self.assertEqual(is_relevant_mock.await_count, 1)
         self.assertFalse(is_relevant_mock.await_args.kwargs.get("strict_autoreply_gate"))
+        self.assertEqual(is_relevant_mock.await_args.kwargs.get("kb_scope"), "global")
     async def test_autoreply_runs_strict_trigger_then_generation_relevance(self):
         is_relevant_mock = AsyncMock(side_effect=[(True, [(0.81, "id-1", "strict")]), (True, [(0.41, "id-2", "gen")])])
         with patch.object(core, "is_relevant", is_relevant_mock),              patch.object(core, "_get_query_embedding", AsyncMock(return_value=[0.2, 0.1])):
@@ -104,6 +105,8 @@ class ResponderPrecomputedRagTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(is_relevant_mock.await_count, 2)
         self.assertTrue(is_relevant_mock.await_args_list[0].kwargs.get("strict_autoreply_gate"))
         self.assertFalse(is_relevant_mock.await_args_list[1].kwargs.get("strict_autoreply_gate"))
+        self.assertEqual(is_relevant_mock.await_args_list[0].kwargs.get("kb_scope"), "auto_reply")
+        self.assertEqual(is_relevant_mock.await_args_list[1].kwargs.get("kb_scope"), "global")
         self.assertEqual(
             is_relevant_mock.await_args_list[1].kwargs.get("threshold"),
             float(getattr(core.settings, "RELEVANCE_THRESHOLD", 0.28) or 0.28),

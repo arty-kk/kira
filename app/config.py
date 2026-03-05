@@ -335,6 +335,7 @@ class Settings:
     _COMMENT_SOURCE_CHANNEL_IDS_INVALID_TOKENS: List[str] = field(default_factory=list, init=False, repr=False)
     GROUP_DAILY_LIMIT: int = field(default_factory=lambda: _get_env("GROUP_DAILY_LIMIT", "300", conv=int))
     GROUP_AUTOREPLY_ON_TOPIC: bool = field(default_factory=lambda: _get_env("GROUP_AUTOREPLY_ON_TOPIC", "false", conv=_parse_bool))
+    GROUP_AUTOREPLY_MIN_TEXT_LEN: int = field(default_factory=lambda: _get_env("GROUP_AUTOREPLY_MIN_TEXT_LEN", "3", conv=int))
     LIMIT_EXHAUSTED_PHRASES: List[str] = field(
         default_factory=lambda: [
             "I'm a bit tired", "I have some work", "Be right back later",
@@ -390,6 +391,8 @@ class Settings:
     MODERATION_DELETE_FLAG_INCOME_PROMO: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_INCOME_PROMO", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_INSULT_ABUSE: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_INSULT_ABUSE", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_THREAT_ABUSE: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_THREAT_ABUSE", "true", conv=_parse_bool))
+    MODERATION_DISABLE_INSULT_THREAT_AI: bool = field(default_factory=lambda: _get_env("MODERATION_DISABLE_INSULT_THREAT_AI", "true", conv=_parse_bool))
+    MODERATION_AI_MIN_TEXT_LEN: int = field(default_factory=lambda: _get_env("MODERATION_AI_MIN_TEXT_LEN", "3", conv=int))
     MODERATION_DELETE_FLAG_SEX_ABUSE: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_SEX_ABUSE", "true", conv=_parse_bool))
     MODERATION_DEEP_INCLUDE_HISTORY: bool = field(default_factory=lambda: _get_env("MODERATION_DEEP_INCLUDE_HISTORY", "false", conv=_parse_bool))
     MODERATION_PROFILE_NSFW_ENFORCE: bool = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_ENFORCE", "true", conv=_parse_bool))
@@ -408,6 +411,7 @@ class Settings:
     MOD_ALERT_THROTTLE_SECONDS: int = field(default_factory=lambda: _get_env("MOD_ALERT_THROTTLE_SECONDS", "60", conv=int))
     MOD_LIGHT_TIMEOUT: float = field(default_factory=lambda: _get_env("MOD_LIGHT_TIMEOUT", "10.0", conv=float))
     MOD_DEEP_TIMEOUT: float = field(default_factory=lambda: _get_env("MOD_DEEP_TIMEOUT", "10.0", conv=float))
+    MOD_PROMPT_TEXT_LIMIT: int = field(default_factory=lambda: _get_env("MOD_PROMPT_TEXT_LIMIT", "6000", conv=int))
     MODERATION_STATUS_WAIT_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_WAIT_SEC", "10.5", conv=float))
     MODERATION_STATUS_POLL_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_POLL_SEC", "0.1", conv=float))
     MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS: int = field(default_factory=lambda: _get_env("MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", "3", conv=int))
@@ -711,6 +715,7 @@ class Settings:
 
     # ─── Responder: On/Off-topic knowledge files ────────────────────────────────
     KNOWLEDGE_ON_FILE: str = field(default_factory=lambda: _get_env("KNOWLEDGE_ON_FILE", "knowledge_on.json", conv=str))
+    AUTO_REPLY_KNOWLEDGE_ON_FILE: str = field(default_factory=lambda: _get_env("AUTO_REPLY_KNOWLEDGE_ON_FILE", "auto_reply.json", conv=str))
     #Hybrid Fallback Parameters
     HYBRID_FALLBACK_THRESHOLD: float = field(default_factory=lambda: _get_env("HYBRID_FALLBACK_THRESHOLD", "0.35", conv=float))
     RELEVANCE_THRESHOLD: float = field(default_factory=lambda: _get_env("RELEVANCE_THRESHOLD", "0.28", conv=float))

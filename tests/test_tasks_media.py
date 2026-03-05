@@ -1,3 +1,4 @@
+import asyncio
 import json
 import types
 import unittest
@@ -350,6 +351,31 @@ class MediaTaskTests(unittest.IsolatedAsyncioTestCase):
         }
         err = media.validate_bot_job(sample)
         self.assertEqual(err, "msg_id must be > 0")
+
+
+    async def test_store_context_and_recent_passes_message_thread_id_to_group_memory(self) -> None:
+        payload = {
+            "chat_id": 10,
+            "message_id": 21,
+            "user_id": 30,
+            "trigger": "mention",
+            "is_channel_post": False,
+            "message_thread_id": 777,
+        }
+        with (
+            patch.object(media, "consts") as consts_mock,
+            patch.object(media, "push_group_stm", AsyncMock()) as push_group_stm_mock,
+            patch.object(media, "append_group_recent", AsyncMock()) as append_group_recent_mock,
+            patch.object(media, "inc_msg_count", AsyncMock()),
+            patch.object(media.asyncio, "create_task", side_effect=lambda c: asyncio.get_running_loop().create_task(c)),
+        ):
+            consts_mock.redis_client = _FakeRedis()
+            await media._store_context_and_recent(payload, log_caption="caption")
+            await asyncio.sleep(0)
+
+        self.assertEqual(push_group_stm_mock.await_args.kwargs.get("message_thread_id"), 777)
+        self.assertEqual(append_group_recent_mock.await_args.kwargs.get("message_thread_id"), 777)
+
 
 
 if __name__ == "__main__":

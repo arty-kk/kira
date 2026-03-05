@@ -285,6 +285,8 @@ async def _compute_on_topic_relevance(
         try:
             disable_mmr_for_autoreply = bool(getattr(settings, "RAG_DISABLE_MMR_FOR_AUTOREPLY", True))
             apply_mmr = not (trigger == "check_on_topic" and disable_mmr_for_autoreply)
+            strict_kb_scope = "auto_reply" if trigger == "check_on_topic" else "global"
+            generation_kb_scope = "global"
 
             if trigger == "check_on_topic":
                 generation_threshold = float(
@@ -305,6 +307,7 @@ async def _compute_on_topic_relevance(
                         embedding_model=rag_query_context.embedding_model,
                         query_embedding_reuse_counter=reuse_counter,
                         apply_mmr=apply_mmr,
+                        kb_scope=generation_kb_scope,
                     )
                     if generation_hits:
                         on_topic_hits = generation_hits
@@ -326,6 +329,7 @@ async def _compute_on_topic_relevance(
                         embedding_model=rag_query_context.embedding_model,
                         query_embedding_reuse_counter=reuse_counter,
                         apply_mmr=apply_mmr,
+                        kb_scope=strict_kb_scope,
                     )
                     if on_topic_flag:
                         _flag, generation_hits = await is_relevant(
@@ -341,6 +345,7 @@ async def _compute_on_topic_relevance(
                             embedding_model=rag_query_context.embedding_model,
                             query_embedding_reuse_counter=reuse_counter,
                             apply_mmr=apply_mmr,
+                            kb_scope=generation_kb_scope,
                         )
                         if generation_hits:
                             on_topic_hits = generation_hits
@@ -358,6 +363,7 @@ async def _compute_on_topic_relevance(
                     embedding_model=rag_query_context.embedding_model,
                     query_embedding_reuse_counter=reuse_counter,
                     apply_mmr=apply_mmr,
+                    kb_scope=generation_kb_scope,
                 )
             rag_query_context.query_embedding_reuse_count = int(reuse_counter[0])
         except Exception:
@@ -1104,6 +1110,7 @@ async def respond_to_user(
     embedding_model: str | None = None,
     rag_precheck_source: str | None = None,
     skip_autoreply_strict_gate: bool = False,
+    message_thread_id: int | None = None,
 ) -> str:
 
     redis = get_redis()
@@ -1669,6 +1676,7 @@ async def respond_to_user(
                         chat_id,
                         cap_tokens=int(getattr(settings, "COREF_GROUP_CONTEXT_TOKENS", 600) or 600),
                         max_lines=int(getattr(settings, "COREF_GROUP_CONTEXT_MAX_LINES", 12) or 12),
+                        message_thread_id=message_thread_id,
                     )
                     _coref_src.extend(
                         _group_coref_source_from_tail(
@@ -1891,7 +1899,8 @@ async def respond_to_user(
             mtm_lines = []
             group_snippets = ""
             tail_lines: List[str] = []
-            topic_key = f"mtm_topic_cache:{chat_id}"
+            _topic_tid = int(message_thread_id) if (message_thread_id is not None and int(message_thread_id) > 0) else 0
+            topic_key = f"mtm_topic_cache:{chat_id}:{_topic_tid}"
             topic_for_mtm = None
             if redis is not None:
                 try:
@@ -1923,6 +1932,7 @@ async def respond_to_user(
                             chat_id,
                             cap_tokens=settings.GROUP_STM_TAIL_TOKENS,
                             max_lines=settings.GROUP_STM_TAIL_MAX_LINES,
+                            message_thread_id=message_thread_id,
                         )
                         if not tail:
                             return ("", [])
