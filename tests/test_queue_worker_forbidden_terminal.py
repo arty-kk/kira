@@ -757,8 +757,11 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertGreaterEqual(send_reply_mock.await_count, 1)
+        self.assertEqual(send_reply_mock.await_args_list[0].kwargs.get("reply_to"), 42)
         for call_item in send_reply_mock.await_args_list:
             self.assertEqual(call_item.kwargs.get("message_thread_id"), 777002)
+        if send_reply_mock.await_count >= 2:
+            self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("reply_to"), 777002)
 
     async def test_send_chatty_reply_infers_thread_id_from_first_chunk_when_missing(self):
         sent_first = types.SimpleNamespace(message_id=5001, message_thread_id=888003)
@@ -782,8 +785,10 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertGreaterEqual(send_reply_mock.await_count, 2)
+        self.assertEqual(send_reply_mock.await_args_list[0].kwargs.get("reply_to"), 42)
         self.assertIsNone(send_reply_mock.await_args_list[0].kwargs.get("message_thread_id"))
         self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("message_thread_id"), 888003)
+        self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("reply_to"), 888003)
 
     async def test_send_chatty_reply_stops_when_first_chunk_is_deduped(self):
         send_reply_mock = AsyncMock(side_effect=[None, types.SimpleNamespace(message_id=5002)])

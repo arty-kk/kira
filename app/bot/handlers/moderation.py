@@ -311,6 +311,15 @@ def _ban_markup(target_chat_id: int, offender_id: int, msg_id: int | None = None
         ]
     )
 
+
+def _unban_markup(target_chat_id: int, offender_id: int) -> types.InlineKeyboardMarkup:
+    payload = f"mod:unban:{int(target_chat_id)}:{int(offender_id)}"
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="✅ Unban user", callback_data=payload)]
+        ]
+    )
+
 async def _send_alert_with_actions(targets: list[int], *, text: str, chat_id: int, offender_id: int, msg_id: int | None) -> None:
     if not targets:
         logger.warning("No moderator targets configured; skipping alert with actions")
@@ -357,6 +366,46 @@ async def _send_alert_with_actions(targets: list[int], *, text: str, chat_id: in
                 int(mid),
                 exc_info=(type(result), result, result.__traceback__),
             )
+
+
+async def _notify_auto_ban_with_actions(
+    targets: list[int],
+    *,
+    chat_id: int,
+    offender_id: int,
+    reason_text: str,
+) -> None:
+    if not targets:
+        return
+
+    normalized_reason = (reason_text or "").strip()
+    if "|" in normalized_reason:
+        normalized_reason = normalized_reason.split("|", 1)[0].strip()
+    if normalized_reason.startswith("context="):
+        normalized_reason = ""
+    safe_reason = html.escape(normalized_reason or "automatic moderation")
+    text = (
+        "🚫 <b>User banned by bot</b>\n"
+        f"Chat ID: <code>{int(chat_id)}</code>\n"
+        f"User: <a href=\"tg://user?id={int(offender_id)}\">Open profile</a> (<code>{int(offender_id)}</code>)\n"
+        f"Reason: <b>{safe_reason}</b>."
+    )
+
+    local_bot = get_bot()
+    await asyncio.gather(
+        *[
+            send_message_safe_with_reason(
+                local_bot,
+                int(mid),
+                text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=_unban_markup(chat_id, offender_id),
+            )
+            for mid in targets
+        ],
+        return_exceptions=True,
+    )
 
 def _serialize_entities(ents: List[types.MessageEntity]) -> List[dict]:
     out = []
@@ -568,7 +617,16 @@ async def handle_passive_moderation(
                 if _mid:
                     await _flag(chat_id, _mid, action="delete", reason="profile_nsfw_blocked|context=group", user_id=_uid)
                     await _delete_message_safe(chat_id, _mid)
-                await _cleanup_user_history_and_mute(chat_id, _uid)
+                banned = await _cleanup_user_history_and_mute(chat_id, _uid)
+                if banned:
+                    asyncio.create_task(
+                        _notify_auto_ban_with_actions(
+                            get_targets(),
+                            chat_id=chat_id,
+                            offender_id=_uid,
+                            reason_text="profile_nsfw_blocked",
+                        )
+                    )
                 logger.info(
                     "PASSIVE_MODERATION_PROFILE_NSFW_BLOCKED_KEY: chat_id=%s msg_id=%s user_id=%s",
                     chat_id,
@@ -584,7 +642,16 @@ async def handle_passive_moderation(
                     await _flag(chat_id, _mid, action="restrict", reason="profile_nsfw|context=group", user_id=_uid)
                     await _delete_message_safe(chat_id, _mid)
                 await redis_client.set(blocked_key, 1)
-                await _cleanup_user_history_and_mute(chat_id, _uid)
+                banned = await _cleanup_user_history_and_mute(chat_id, _uid)
+                if banned:
+                    asyncio.create_task(
+                        _notify_auto_ban_with_actions(
+                            get_targets(),
+                            chat_id=chat_id,
+                            offender_id=_uid,
+                            reason_text="profile_nsfw",
+                        )
+                    )
                 logger.info(
                     "PASSIVE_MODERATION_PROFILE_NSFW_DETECTED: chat_id=%s msg_id=%s user_id=%s",
                     chat_id,
@@ -1030,10 +1097,11 @@ async def _is_profile_nsfw(user_id: int) -> bool:
     return flagged
 
 
-async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> None:
+async def _cleanup_user_history_and_mute(chat_id: int, user_id: int) -> bool:
     banned_with_revoke = await _ban_user_safe(chat_id, user_id, revoke=True)
     if not banned_with_revoke:
         await _restrict_user_write_safe(chat_id, user_id)
+    return banned_with_revoke
 
 
 def _now() -> int:
@@ -1687,6 +1755,15 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                     ok = await _delete_message_safe(chat_id, message.message_id)
                     if not ok:
                         logger.warning("Moderation: failed to delete first_link_after_join chat=%s msg=%s", chat_id, message.message_id)
+                else:
+                    asyncio.create_task(
+                        _notify_auto_ban_with_actions(
+                            get_targets(),
+                            chat_id=chat_id,
+                            offender_id=int(u.id),
+                            reason_text=_ctx_reason("first_link_after_join"),
+                        )
+                    )
                 return True
 
         if getattr(settings, "MODERATION_DELETE_TELEGRAM_LINKS", True) and (
@@ -1791,6 +1868,61 @@ async def moderation_inline_ban(cb: types.CallbackQuery) -> None:
 
     except Exception:
         logger.exception("moderation_inline_ban: error")
+        try:
+            await cb.answer("Unexpected error while processing the action.", show_alert=True)
+        except Exception:
+            pass
+
+
+@dp.callback_query(F.data.startswith("mod:unban:"))
+async def moderation_inline_unban(cb: types.CallbackQuery) -> None:
+    try:
+        parts = (cb.data or "").split(":")
+        if len(parts) < 4:
+            await cb.answer("Malformed action.", show_alert=True)
+            return
+        _, action, chat_id_str, offender_id_str, *_ = parts
+        if action != "unban":
+            await cb.answer("Unsupported action.", show_alert=True)
+            return
+
+        chat_id = int(chat_id_str)
+        offender_id = int(offender_id_str)
+        admin_id = cb.from_user.id if cb.from_user else 0
+
+        if not await _is_admin(chat_id, int(admin_id)):
+            await cb.answer("You must be an admin of that chat to perform this action.", show_alert=True)
+            return
+
+        unbanned = await _unban_user_safe(chat_id, offender_id)
+        if not unbanned:
+            await cb.answer("Failed to unban the user. I may lack the necessary rights.", show_alert=True)
+            return
+
+        try:
+            if cb.message:
+                base = (
+                    getattr(cb.message, "html_text", None)
+                    or cb.message.text
+                    or cb.message.caption
+                    or "Moderation alert"
+                )
+                new_text = (
+                    base
+                    + f"\n\n<b>Action:</b> User <code>{offender_id}</code> has been <b>unbanned</b> "
+                    + f"by <a href=\"tg://user?id={admin_id}\">admin</a>."
+                )
+                await cb.message.edit_text(new_text, parse_mode="HTML", disable_web_page_preview=True, reply_markup=None)
+        except Exception:
+            try:
+                if cb.message:
+                    await cb.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+        await cb.answer("User unbanned.", show_alert=False)
+    except Exception:
+        logger.exception("moderation_inline_unban: error")
         try:
             await cb.answer("Unexpected error while processing the action.", show_alert=True)
         except Exception:
