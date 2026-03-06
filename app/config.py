@@ -428,7 +428,7 @@ class Settings:
     MODERATION_DELETE_SERVICE_LEAVES:  bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_SERVICE_LEAVES",  "true",  conv=_parse_bool))
     MODERATION_DELETE_SERVICE_PINNED:  bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_SERVICE_PINNED",  "true",  conv=_parse_bool))
     # spam / newcomers
-    MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN: bool = field(default_factory=lambda: _get_env("MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN", "true", conv=_parse_bool))
+    MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN: bool = field(default_factory=lambda: _get_env("MODERATION_SPAM_BAN_FIRST_LINK_AFTER_JOIN", "false", conv=_parse_bool))
     MODERATION_NEW_DELETE_LINKS_24H:   bool = field(default_factory=lambda: _get_env("MODERATION_NEW_DELETE_LINKS_24H",   "true",  conv=_parse_bool))
     MODERATION_NEW_DELETE_FORWARDS_24H:bool = field(default_factory=lambda: _get_env("MODERATION_NEW_DELETE_FORWARDS_24H","true",  conv=_parse_bool))
     MODERATION_BAN_REVOKE_MESSAGES:    bool = field(default_factory=lambda: _get_env("MODERATION_BAN_REVOKE_MESSAGES",    "true",  conv=_parse_bool))
