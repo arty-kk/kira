@@ -1,7 +1,9 @@
 name: CI
 
 on:
-  push:
+  # Для PR в GitHub Actions используется событие `pull_request` (не `pull`).
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
       - master
