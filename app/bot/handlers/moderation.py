@@ -374,6 +374,8 @@ async def _notify_auto_ban_with_actions(
     chat_id: int,
     offender_id: int,
     reason_text: str,
+    msg_id: int | None = None,
+    chat_title: str | None = None,
 ) -> None:
     if not targets:
         return
@@ -384,12 +386,17 @@ async def _notify_auto_ban_with_actions(
     if normalized_reason.startswith("context="):
         normalized_reason = ""
     safe_reason = html.escape(normalized_reason or "automatic moderation")
+    safe_chat_name = html.escape(chat_title.strip()) if chat_title and chat_title.strip() else ""
+    chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
     text = (
-        "🚫 <b>User banned by bot</b>\n"
-        f"Chat ID: <code>{int(chat_id)}</code>\n"
+        f"🚫 <b>User banned by bot ({chat_scope}chat ID: <code>{int(chat_id)}</code>)</b>\n"
         f"User: <a href=\"tg://user?id={int(offender_id)}\">Open profile</a> (<code>{int(offender_id)}</code>)\n"
-        f"Reason: <b>{safe_reason}</b>."
+        + (f"Message ID: <code>{int(msg_id)}</code>\n" if msg_id else "")
+        + f"Reason: <b>{safe_reason}</b>."
     )
+    if msg_id and str(chat_id).startswith("-100"):
+        public_chat_id = str(chat_id)[4:]
+        text += f"\n<a href=\"https://t.me/c/{public_chat_id}/{int(msg_id)}\">Link to message</a>"
 
     local_bot = get_bot()
     await asyncio.gather(
@@ -625,6 +632,8 @@ async def handle_passive_moderation(
                             chat_id=chat_id,
                             offender_id=_uid,
                             reason_text="profile_nsfw_blocked",
+                            msg_id=_mid,
+                            chat_title=chat_title or getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 logger.info(
@@ -650,6 +659,8 @@ async def handle_passive_moderation(
                             chat_id=chat_id,
                             offender_id=_uid,
                             reason_text="profile_nsfw",
+                            msg_id=_mid,
+                            chat_title=chat_title or getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 logger.info(
@@ -1762,6 +1773,8 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                             chat_id=chat_id,
                             offender_id=int(u.id),
                             reason_text=_ctx_reason("first_link_after_join"),
+                            msg_id=message.message_id,
+                            chat_title=getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 return True
