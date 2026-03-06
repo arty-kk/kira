@@ -389,6 +389,7 @@ class Settings:
     MODERATION_DELETE_ON_AI_FLAG: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_ON_AI_FLAG", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_REGULAR_PROMO: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_REGULAR_PROMO", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_INCOME_PROMO: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_INCOME_PROMO", "true", conv=_parse_bool))
+    MODERATION_DELETE_FLAG_PROMO_WAR: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_PROMO_WAR", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_INSULT_ABUSE: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_INSULT_ABUSE", "true", conv=_parse_bool))
     MODERATION_DELETE_FLAG_THREAT_ABUSE: bool = field(default_factory=lambda: _get_env("MODERATION_DELETE_FLAG_THREAT_ABUSE", "true", conv=_parse_bool))
     MODERATION_DISABLE_INSULT_THREAT_AI: bool = field(default_factory=lambda: _get_env("MODERATION_DISABLE_INSULT_THREAT_AI", "true", conv=_parse_bool))
