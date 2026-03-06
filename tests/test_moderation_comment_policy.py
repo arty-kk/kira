@@ -227,11 +227,13 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "contains_telegram_obfuscated", return_value=False),
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation.redis_client, "set", AsyncMock()) as marker_set_mock,
         ):
             handled = await moderation.apply_moderation_filters(message.chat.id, message)
 
         self.assertTrue(handled)
         delete_mock.assert_awaited_once()
+        marker_set_mock.assert_awaited_once_with("mod:prefilter_blocked:-1001:11", 1, ex=86400)
         reason = flag_mock.await_args.kwargs["reason"]
         self.assertIn("external_reply", reason)
         self.assertIn("context=group", reason)

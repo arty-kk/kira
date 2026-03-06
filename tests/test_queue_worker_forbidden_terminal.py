@@ -852,6 +852,44 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         mark_done.assert_awaited()
         refund_reservation.assert_awaited_once_with(333)
 
+    async def test_prefilter_blocked_marker_skips_response_before_ai_moderation(self):
+        fake_queue = _FakeQueueRedis()
+        queue_worker.REDIS_QUEUE = fake_queue
+        queue_worker.CHATTY_MODE = False
+        queue_worker.TYPING_ENABLED = True
+        queue_worker.TYPING_SKIP_GROUPS = False
+        queue_worker.BOT = types.SimpleNamespace(send_chat_action=AsyncMock(), send_message=AsyncMock())
+
+        redis_stub = types.SimpleNamespace(get=AsyncMock(return_value="1"), hget=AsyncMock(return_value="clean"), set=AsyncMock())
+        queue_worker.get_redis = lambda: redis_stub
+
+        mark_done = AsyncMock(return_value=1)
+        refund_reservation = AsyncMock(return_value=None)
+        respond_mock = AsyncMock(return_value="reply")
+        typing_mock = AsyncMock(return_value=None)
+
+        job = {
+            "chat_id": -100915,
+            "user_id": 915,
+            "text": "hello",
+            "msg_id": 205,
+            "reply_to": 205,
+            "is_group": True,
+            "is_channel_post": False,
+            "trigger": "mention",
+            "reservation_id": 335,
+        }
+
+        with patch.object(queue_worker, "_mark_done_if_inflight", mark_done),              patch.object(queue_worker, "_delete_if_inflight", AsyncMock(return_value=1)),              patch.object(queue_worker, "_delete_if_chatbusy_owner", AsyncMock(return_value=1)),              patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()),              patch.object(queue_worker, "_heartbeat_key", AsyncMock()),              patch.object(queue_worker, "_heartbeat_inflight", AsyncMock()),              patch.object(queue_worker, "respond_to_user", respond_mock),              patch.object(queue_worker, "_typing_during_generation", typing_mock),              patch.object(queue_worker, "_send_reply", AsyncMock(return_value=types.SimpleNamespace(message_id=1004))),              patch.object(queue_worker, "refund_reservation_by_id", refund_reservation),              patch.object(queue_worker, "confirm_reservation_by_id", AsyncMock(return_value=None)),              patch.object(queue_worker, "_get_backlog", AsyncMock(return_value=0)):
+            await queue_worker.handle_job(json.dumps(job), "q:in:processing")
+
+        redis_stub.get.assert_awaited_once_with("mod:prefilter_blocked:-100915:205")
+        redis_stub.hget.assert_not_awaited()
+        respond_mock.assert_not_awaited()
+        typing_mock.assert_not_called()
+        queue_worker.BOT.send_chat_action.assert_not_awaited()
+        refund_reservation.assert_awaited_once_with(335)
+
     async def test_flagged_moderation_status_skips_response_without_typing(self):
         fake_queue = _FakeQueueRedis()
         queue_worker.REDIS_QUEUE = fake_queue
