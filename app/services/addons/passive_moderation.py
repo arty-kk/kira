@@ -562,6 +562,20 @@ def _should_suppress_income_promo(*, text: str, parsed: dict[str, bool]) -> bool
         return False
     return not bool(_INCOME_PROMO_OFFER_RE.search(raw))
 
+def _coerce_ai_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw in {"true", "1", "yes", "y", "on"}:
+            return True
+        if raw in {"false", "0", "no", "n", "off", "", "null", "none"}:
+            return False
+        return False
+    return False
+
 def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
     disable_insult_threat = bool(getattr(settings, "MODERATION_DISABLE_INSULT_THREAT_AI", True))
     try:
@@ -571,12 +585,12 @@ def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
     if not isinstance(payload, dict):
         return {}
     return {
-        "regular_promo": bool(payload.get("regular_promo", False)),
-        "income_promo": bool(payload.get("income_promo", False)),
-        "promo_war": bool(payload.get("promo_war", False)),
-        "insult_abuse": (False if disable_insult_threat else bool(payload.get("insult_abuse", False))),
-        "threat_abuse": (False if disable_insult_threat else bool(payload.get("threat_abuse", False))),
-        "sex_abuse": (False if disable_insult_threat else bool(payload.get("sex_abuse", False))),
+        "regular_promo": _coerce_ai_bool(payload.get("regular_promo", False)),
+        "income_promo": _coerce_ai_bool(payload.get("income_promo", False)),
+        "promo_war": _coerce_ai_bool(payload.get("promo_war", False)),
+        "insult_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("insult_abuse", False))),
+        "threat_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("threat_abuse", False))),
+        "sex_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("sex_abuse", False))),
     }
 
 
