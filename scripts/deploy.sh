@@ -229,8 +229,6 @@ echo "Current branch and status:"
 git branch -v
 git status
 
-docker compose down
-
 docker compose build --no-cache --pull
 
 echo "Running migrate gate (schema must be ready before rollout)..."
