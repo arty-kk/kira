@@ -439,11 +439,8 @@ def _is_clean_message_for_on_topic(
     mentions_other: bool,
     is_comment_context: bool,
 ) -> bool:
+    _ = (message, mentions_other, is_comment_context)
     if mentioned:
-        return False
-    if mentions_other:
-        return False
-    if getattr(message, "reply_to_message", None) and not is_comment_context:
         return False
     return True
 
@@ -924,6 +921,7 @@ async def on_group_message(message: Message) -> None:
             return
 
         is_channel = _is_channel_post(message)
+        direct_addressed = _is_mention(message)
 
         # channel post path
         trusted_repost = _is_trusted_scope_repost(message)
@@ -934,14 +932,15 @@ async def on_group_message(message: Message) -> None:
             with contextlib.suppress(Exception):
                 await update_comment_thread_root_cache(message)
             if trusted_repost:
-                await _log_ignored_repost_to_stm(
-                    message,
-                    content_type="text",
-                    text=raw_text,
-                    ents=ents,
-                    is_channel=is_channel,
-                )
-                trusted_repost_logged = True
+                if not direct_addressed:
+                    await _log_ignored_repost_to_stm(
+                        message,
+                        content_type="text",
+                        text=raw_text,
+                        ents=ents,
+                        is_channel=is_channel,
+                    )
+                    trusted_repost_logged = True
             else:
                 # must be from linked channel; also log
                 ok = await _maybe_log_channel_post(cid, message, raw_text, ents)
@@ -958,7 +957,7 @@ async def on_group_message(message: Message) -> None:
         with contextlib.suppress(Exception):
             await update_comment_thread_root_cache(message)
 
-        if trusted_repost:
+        if trusted_repost and not direct_addressed:
             if not trusted_repost_logged:
                 await _log_ignored_repost_to_stm(
                     message,
@@ -1237,7 +1236,7 @@ async def on_group_voice(message: Message) -> None:
         AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 
         trusted_repost = _is_trusted_scope_repost(message)
-        if trusted_repost:
+        if trusted_repost and not mentioned:
             await _log_ignored_repost_to_stm(
                 message,
                 content_type="voice",
@@ -1458,8 +1457,10 @@ async def _handle_group_image_message_common(
             }
         )
 
+    mentioned = _is_mention(message)
+
     trusted_repost = _is_trusted_scope_repost(message)
-    if trusted_repost:
+    if trusted_repost and not mentioned:
         await _log_ignored_repost_to_stm(
             message,
             content_type=content_type_for_analytics,
@@ -1469,7 +1470,6 @@ async def _handle_group_image_message_common(
         )
         return
 
-    mentioned = _is_mention(message)
     mentions_other = _mentions_other_user(message)
     AUTOREPLY_ON_TOPIC = bool(getattr(settings, "GROUP_AUTOREPLY_ON_TOPIC", True))
 

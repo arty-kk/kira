@@ -14,10 +14,13 @@ from app.clients.openai_client import _call_openai_with_retry, _get_output_text
 from app.config import settings
 from app.prompts_base import (
     CONTEXT_EXPAND_QUERY_PROMPT_TEMPLATE,
-    CONTEXT_RERANK_PROMPT_TEMPLATE,
-    CONTEXT_TOPIC_SUMMARY_PROMPT_TEMPLATE,
-    context_select_snippets_default_prompt,
-    context_select_snippets_mtm_prompt,
+    CONTEXT_RERANK_INSTRUCTIONS_STATIC_TEMPLATE,
+    CONTEXT_SELECT_SNIPPETS_DEFAULT_INSTRUCTIONS_STATIC,
+    CONTEXT_SELECT_SNIPPETS_MTM_INSTRUCTIONS_STATIC,
+    CONTEXT_TOPIC_SUMMARY_INSTRUCTIONS_STATIC,
+    context_rerank_user_payload,
+    context_select_snippets_user_payload,
+    context_topic_summary_user_payload,
 )
 from app.core.memory import approx_tokens
 
@@ -217,7 +220,8 @@ async def rerank_with_llm(query: str, items: List[str], topk: int = 20, batch: i
             f"[{i}] <<<\n{_soft_trim(t, per_item_limit)}\n>>>"
             for i, t in chunk
         )
-        prompt = CONTEXT_RERANK_PROMPT_TEMPLATE.format(k=k, query=q, lines=lines)
+        instructions = CONTEXT_RERANK_INSTRUCTIONS_STATIC_TEMPLATE.format(k=k)
+        user_payload = context_rerank_user_payload(q, lines)
 
         try:
             _timeout = settings.BASE_MODEL_TIMEOUT
@@ -225,9 +229,11 @@ async def rerank_with_llm(query: str, items: List[str], topk: int = 20, batch: i
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.services.responder.context_select",
                     model=settings.BASE_MODEL,
                     model_role="base",
-                    input=prompt,
+                    instructions=instructions,
+                    input=user_payload,
                     max_output_tokens=256,
                     temperature=0,
                 ),
@@ -344,9 +350,11 @@ async def _expand_queries_for_ltm(query: str) -> List[str]:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.responder.context_select",
                 model=settings.BASE_MODEL,
                 model_role="base",
-                input=prompt,
+                instructions=instructions,
+                input=user_payload,
                 max_output_tokens=160,
                 temperature=0,
             ),
@@ -395,9 +403,10 @@ async def select_snippets_via_nano(
         short = candidates[:C_MAX]
 
     if src == "MTM":
-        prompt = context_select_snippets_mtm_prompt(query, short, max_tokens)
+        instructions = CONTEXT_SELECT_SNIPPETS_MTM_INSTRUCTIONS_STATIC
     else:
-        prompt = context_select_snippets_default_prompt(source, query, short, max_tokens)
+        instructions = CONTEXT_SELECT_SNIPPETS_DEFAULT_INSTRUCTIONS_STATIC
+    user_payload = context_select_snippets_user_payload(source, query, short, max_tokens, mtm=(src == "MTM"))
     try:
         _t0 = time_module.perf_counter()
         timeout_sel = _NANO_TIMEOUT_MTM if src == "MTM" else _NANO_TIMEOUT_LTM
@@ -407,9 +416,11 @@ async def select_snippets_via_nano(
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.responder.context_select",
                 model=chosen_model,
                 model_role=chosen_model_role,
-                input=prompt,
+                instructions=instructions,
+                input=user_payload,
                 max_output_tokens=max_tokens,
                 temperature=0,
             ),
@@ -579,13 +590,16 @@ async def summarize_mtm_topic(history_msgs: List[Dict], last_pairs: int = 2) -> 
         if not lines:
             return ""
 
-        prompt = CONTEXT_TOPIC_SUMMARY_PROMPT_TEMPLATE.format(lines="\n".join(lines))
+        instructions = CONTEXT_TOPIC_SUMMARY_INSTRUCTIONS_STATIC
+        user_payload = context_topic_summary_user_payload("\n".join(lines))
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.responder.context_select",
                 model=settings.BASE_MODEL,
                 model_role="base",
-                input=prompt,
+                instructions=instructions,
+                input=user_payload,
                 max_output_tokens=100,
                 temperature=0,
             ),

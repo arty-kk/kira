@@ -605,6 +605,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.passive_moderation",
                 model=settings.BASE_MODEL,
                 model_role="base",
                 input=[
@@ -720,6 +721,7 @@ async def moderate_with_openai(
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.services.addons.passive_moderation",
                     model=settings.BASE_MODEL,
                     model_role="base",
                     input=[

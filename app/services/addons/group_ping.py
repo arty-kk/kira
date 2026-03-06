@@ -24,7 +24,11 @@ from app.config import settings
 from app.core.memory import get_redis, load_context, push_message
 from app.emo_engine import get_persona
 from app.services.responder.prompt_builder import build_system_prompt
-from app.prompts_base import GROUP_PING_PROMPT_NO_CTX_TEMPLATE, GROUP_PING_PROMPT_WITH_CTX_TEMPLATE
+from app.prompts_base import (
+    GROUP_PING_INSTRUCTIONS_STATIC,
+    GROUP_PING_PROMPT_NO_CTX_TEMPLATE,
+    GROUP_PING_PROMPT_WITH_CTX_TEMPLATE,
+)
 from app.services.addons.analytics import record_ping_sent
 
 logger = logging.getLogger(__name__)
@@ -894,19 +898,21 @@ async def _exec_group_ping(redis, chat_id: int) -> None:
         return
 
     if mem_ctx:
-        prompt = GROUP_PING_PROMPT_WITH_CTX_TEMPLATE.format(mem_ctx=mem_ctx, arm_hint=arm_hint)
+        runtime_user_block = GROUP_PING_PROMPT_WITH_CTX_TEMPLATE.format(mem_ctx=mem_ctx, arm_hint=arm_hint)
     else:
-        prompt = GROUP_PING_PROMPT_NO_CTX_TEMPLATE.format(arm_hint=arm_hint)
+        runtime_user_block = GROUP_PING_PROMPT_NO_CTX_TEMPLATE.format(arm_hint=arm_hint)
 
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.group_ping",
                 model=settings.PING_MODEL,
                 model_role="regular",
                 input=[
+                    _msg("system", GROUP_PING_INSTRUCTIONS_STATIC),
                     _msg("system", system_msg),
-                    _msg("user", prompt),
+                    _msg("user", runtime_user_block),
                 ],
                 max_output_tokens=max_tokens,
                 temperature=dynamic_temperature,

@@ -692,7 +692,7 @@ class GroupOnTopicTriggerCleanlinessTests(unittest.TestCase):
             is_comment_context=False,
         )
 
-        self.assertFalse(is_clean)
+        self.assertTrue(is_clean)
 
 
 if __name__ == "__main__":

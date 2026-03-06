@@ -145,6 +145,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                         r = await asyncio.wait_for(
                             _call_openai_with_retry(
                                 endpoint="responses.create",
+                                prompt_profile="app.tasks.summarize",
                                 model=settings.REASONING_MODEL,
                                 model_role="regular",
                                 input=_compress_prompt(buf),
@@ -161,6 +162,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                     r = await asyncio.wait_for(
                         _call_openai_with_retry(
                             endpoint="responses.create",
+                            prompt_profile="app.tasks.summarize",
                             model=settings.REASONING_MODEL,
                             model_role="regular",
                             input=_compress_prompt(buf),
@@ -174,6 +176,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                 r2 = await asyncio.wait_for(
                     _call_openai_with_retry(
                         endpoint="responses.create",
+                        prompt_profile="app.tasks.summarize",
                         model=settings.REASONING_MODEL,
                         model_role="regular",
                         input=_merge_prompt("", merged_partials, LTM_MAX),
@@ -189,6 +192,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
                 r = await asyncio.wait_for(
                     _call_openai_with_retry(
                         endpoint="responses.create",
+                        prompt_profile="app.tasks.summarize",
                         model=settings.REASONING_MODEL,
                         model_role="regular",
                         input=_compress_prompt(picked),
@@ -235,6 +239,7 @@ async def _rollup(chat_id: int, user_id: int, namespace: str = "default") -> Non
             merge_resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.tasks.summarize",
                     model=settings.REASONING_MODEL,
                     model_role="regular",
                     input=_merge_prompt(old_ltm, new_slice, LTM_MAX),
@@ -348,6 +353,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
                 resp = await asyncio.wait_for(
                     _call_openai_with_retry(
                         endpoint="responses.create",
+                        prompt_profile="app.tasks.summarize",
                         model=settings.REASONING_MODEL,
                         model_role="regular",
                         instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
@@ -368,6 +374,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.tasks.summarize",
                     model=settings.REASONING_MODEL,
                     model_role="regular",
                     instructions=SUMMARIZE_COMPRESS_INSTRUCTIONS,
@@ -386,6 +393,7 @@ async def _summarize_memory_worker(chat_id: int, texts: list, old_ids: list) -> 
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.tasks.summarize",
                     model=settings.REASONING_MODEL,
                     model_role="regular",
                     instructions=SUMMARIZE_CONSOLIDATE_INSTRUCTIONS,

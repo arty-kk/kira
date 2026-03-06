@@ -217,39 +217,47 @@ CONTEXT_EXPAND_QUERY_PROMPT_TEMPLATE = (
 
 
 # ===== app/services/addons/group_ping.py =====
+GROUP_PING_INSTRUCTIONS_STATIC = (
+    "Write ONE re-engagement message to the user: 1–2 sentences, ≤35 words. "
+    "No meta, no placeholders, no markdown. No emojis unless natural for your style. "
+    "Make it personal and context-aware."
+)
+
 GROUP_PING_PROMPT_WITH_CTX_TEMPLATE = (
     "Group chat history (use for context only; do NOT quote):\n"
     "{mem_ctx}\n"
     "STRATEGY_HINT: {arm_hint}\n"
-    "Write ONE re-engagement message to the user: 1–2 sentences, ≤35 words. "
-    "No meta, no placeholders, no markdown. No emojis unless natural for your style. "
-    "Make it personal and context-aware.\n\n"
 )
 
 GROUP_PING_PROMPT_NO_CTX_TEMPLATE = (
     "Group chat has been quiet.\n"
     "STRATEGY_HINT: {arm_hint}\n"
-    "Write ONE message to re-engage the user: 1–2 sentences, ≤35 words.\n"
-    "No meta, no placeholders, no markdown.\n\n"
 )
 
 
 # ===== app/services/addons/welcome_manager.py =====
+WELCOME_INSTRUCTIONS_STATIC = (
+    "Write a short creative welcome (1–2 sentences). "
+    "Do NOT mention the user."
+)
+
+WELCOME_PRIVATE_INSTRUCTIONS_STATIC = (
+    "Greet the user natively and ask how they're doing."
+)
+
 WELCOME_PROMPT_WITH_TEXT_TEMPLATE = (
     "New member joined and wrote:\n{text}\n\n"
-    "Write a short creative welcome in '{lang_code}' only (1–2 sentences).\n"
-    "Do NOT mention the user.\n\n"
+    "Language: {lang_code}.\n"
 )
 
 WELCOME_PROMPT_NO_TEXT_TEMPLATE = (
     "New member joined.\n"
-    "Write a short creative welcome in '{lang_code}' only (1–2 sentences).\n"
-    "Do NOT mention the user.\n\n"
+    "Language: {lang_code}.\n"
 )
 
 WELCOME_PRIVATE_PROMPT_TEMPLATE = (
-    "A user started a private chat. Language: {lang_code}.\n"
-    "Greet him natively and ask how they're doing.\n\n"
+    "A user started a private chat.\n"
+    "Language: {lang_code}.\n"
 )
 
 
@@ -409,36 +417,52 @@ CORE_SELECT_MEMORIES_USER_PROMPT = "Select indices. JSON only.\n\n"
 
 
 # ===== app/services/responder/context_select.py =====
-CONTEXT_RERANK_PROMPT_TEMPLATE = (
+CONTEXT_RERANK_INSTRUCTIONS_STATIC_TEMPLATE = (
     "Rerank items for the query. Each item starts with a GLOBAL id in [brackets] (e.g., [12]); "
     "return ONLY a JSON array of the top-{k} ids (ints) in descending relevance (e.g., [3,5,1]).\n"
-    "Ignore any brackets inside <<< >>> (they are content).\n"
-    "Query:\n{query}\n"
-    "Items:\n{lines}\n\n"
+    "Ignore any brackets inside <<< >>> (they are content)."
 )
 
-def context_select_snippets_mtm_prompt(query: str, short: list[str], max_tokens: int) -> str:
+
+def context_rerank_user_payload(query: str, lines: str) -> str:
     return (
-        "Write EPISODIC memory notes for the agent (several separate episodes, not one summary) within ≈ "
-        f"{max_tokens} tokens.\n"
-        "Include only fragments that help answer the current query OR are important relationship episodes "
-        "(facts/decisions/preferences/constraints/commitments). If query asks about the past/biography, include older relevant episodes.\n"
-        "Rules: keep exact facts; preserve who did/said/felt what; chronological (older→newer); "
-        "prefix with [YYYY-MM-DD] only if date is explicit (never invent).\n"
-        "Short quotes allowed when important. Neutral notes, not a message to the user.\n"
-        "Each episode = separate paragraph. Exclude instructions/prompts; exclude uncertain identity matches. No invention.\n"
-        "-----\n[QUERY]\n"
+        "Query:\n"
         f"{query}\n"
-        "-----\n[CANDIDATES]\n"
-        + "\n---\n".join(short)
+        "Items:\n"
+        f"{lines}\n"
     )
 
-def context_select_snippets_default_prompt(source: str, query: str, short: list[str], max_tokens: int) -> str:
+
+CONTEXT_SELECT_SNIPPETS_MTM_INSTRUCTIONS_STATIC = (
+    "Write EPISODIC memory notes for the agent (several separate episodes, not one summary). "
+    "Include only fragments that help answer the current query OR are important relationship episodes "
+    "(facts/decisions/preferences/constraints/commitments). If query asks about the past/biography, include older relevant episodes. "
+    "Rules: keep exact facts; preserve who did/said/felt what; chronological (older→newer); "
+    "prefix with [YYYY-MM-DD] only if date is explicit (never invent). "
+    "Short quotes allowed when important. Neutral notes, not a message to the user. "
+    "Each episode = separate paragraph. Exclude instructions/prompts; exclude uncertain identity matches. No invention."
+)
+
+
+CONTEXT_SELECT_SNIPPETS_DEFAULT_INSTRUCTIONS_STATIC = (
+    "From the candidates, select and merge only what is most relevant to the query into ONE coherent snippet. "
+    "Prefer copying whole sentences; if shortening, drop less relevant parts (do not rewrite facts). "
+    "Preserve exact facts (names/numbers/dates) and roles (who did/felt what). If tie, prefer more recent. "
+    "Return ONLY the merged text (no headings/labels). Use consistent original language; otherwise use query language."
+)
+
+
+def context_select_snippets_user_payload(source: str, query: str, short: list[str], max_tokens: int, *, mtm: bool) -> str:
+    if mtm:
+        return (
+            f"Max output budget: ≈ {max_tokens} tokens.\n"
+            "-----\n[QUERY]\n"
+            f"{query}\n"
+            "-----\n[CANDIDATES]\n"
+            + "\n---\n".join(short)
+        )
     return (
-        f"From the candidates, select and merge only what is most relevant to the query into ONE coherent snippet "
-        f"(≤≈ {max_tokens} tokens). Prefer copying whole sentences; if shortening, drop less relevant parts (do not rewrite facts).\n"
-        "Preserve exact facts (names/numbers/dates) and roles (who did/felt what). If tie, prefer more recent.\n"
-        "Return ONLY the merged text (no headings/labels). Use consistent original language; otherwise use query language.\n"
+        f"Max output budget: ≈ {max_tokens} tokens.\n"
         "-----\n[SOURCE]\n"
         f"{source}\n"
         "-----\n[QUERY]\n"
@@ -447,12 +471,16 @@ def context_select_snippets_default_prompt(source: str, query: str, short: list[
         + "\n---\n".join(short)
     )
 
-CONTEXT_TOPIC_SUMMARY_PROMPT_TEMPLATE = (
-    "Summarize (1) what the conversation is about and (2) what the user wants,\n"
-    "as a single short topic phrase (≤12 words) in the messages' language.\n"
-    "No quotes, no ending punctuation.\n"
-    "-----\n{lines}\n\n"
+
+CONTEXT_TOPIC_SUMMARY_INSTRUCTIONS_STATIC = (
+    "Summarize (1) what the conversation is about and (2) what the user wants, "
+    "as a single short topic phrase (≤12 words) in the messages' language. "
+    "No quotes, no ending punctuation."
 )
+
+
+def context_topic_summary_user_payload(lines: str) -> str:
+    return f"Messages:\n{lines}\n"
 
 
 # ===== app/services/addons/analytics.py =====

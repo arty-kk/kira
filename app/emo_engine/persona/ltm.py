@@ -1443,6 +1443,7 @@ class LongTermMemory:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.emo_engine.persona.ltm",
                     model=settings.REASONING_MODEL,
                     model_role="regular",
                     instructions=system_prompt,

@@ -150,6 +150,75 @@ def classify_openai_error(exc: Exception) -> str:
     return "other"
 
 
+def _normalize_response_input(input_value: Any) -> list[dict[str, Any]]:
+    def _normalize_message_part(part: Any, *, role: str) -> dict[str, Any]:
+        if isinstance(part, dict):
+            ptype = str(part.get("type") or "").strip()
+            if ptype:
+                out = dict(part)
+                if ptype == "text":
+                    out["type"] = "output_text" if role == "assistant" else "input_text"
+                return out
+            if "text" in part:
+                return {
+                    "type": "output_text" if role == "assistant" else "input_text",
+                    "text": str(part.get("text") or ""),
+                }
+            return dict(part)
+        if isinstance(part, str):
+            return {"type": "output_text" if role == "assistant" else "input_text", "text": part}
+        return {"type": "output_text" if role == "assistant" else "input_text", "text": str(part)}
+
+    def _normalize_message(msg: Any) -> dict[str, Any]:
+        if isinstance(msg, dict):
+            role = str(msg.get("role") or "user").strip().lower() or "user"
+            content = msg.get("content")
+            if isinstance(content, list):
+                norm_content = [_normalize_message_part(c, role=role) for c in content]
+            else:
+                norm_content = [_normalize_message_part(content if content is not None else "", role=role)]
+            return {"role": role, "content": norm_content}
+        return {
+            "role": "user",
+            "content": [{"type": "input_text", "text": str(msg)}],
+        }
+
+    if isinstance(input_value, list):
+        return [_normalize_message(m) for m in input_value]
+    if isinstance(input_value, dict):
+        return [_normalize_message(input_value)]
+    if isinstance(input_value, str):
+        return [{"role": "user", "content": [{"type": "input_text", "text": input_value}]}]
+    return [{"role": "user", "content": [{"type": "input_text", "text": str(input_value or "")}] }]
+
+
+def _prepare_responses_payload(
+    *,
+    prompt_profile: str,
+    static_prefix: Optional[str] = None,
+    dynamic_suffix: Optional[str] = None,
+    instructions: Optional[str] = None,
+    input: Any = None,
+    messages: Any = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = dict(kwargs)
+
+    effective_static_prefix = static_prefix if static_prefix is not None else instructions
+    effective_dynamic_suffix = dynamic_suffix if dynamic_suffix is not None else payload.pop("prompt_dynamic_suffix", None)
+
+    if effective_static_prefix is not None or effective_dynamic_suffix:
+        payload["instructions"] = f"{effective_static_prefix or ''}{effective_dynamic_suffix or ''}"
+
+    canonical_input = input if input is not None else messages
+    if canonical_input is None:
+        canonical_input = ""
+    payload["input"] = _normalize_response_input(canonical_input)
+    payload.pop("messages", None)
+
+    return payload
+
+
 async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
     total_timeout_override: Optional[float] = None
@@ -176,6 +245,25 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                 params = dict(base_kwargs)
                 endpoint = params.pop("endpoint", None) or "responses.create"
 
+                if endpoint == "responses.create":
+                    prompt_profile = str(params.pop("prompt_profile", "default") or "default")
+                    static_prefix = params.pop("static_prefix", None)
+                    dynamic_suffix = params.pop("dynamic_suffix", None)
+                    instructions = params.pop("instructions", None)
+                    input_value = params.pop("input", None)
+                    messages = params.pop("messages", None)
+                    params = _prepare_responses_payload(
+                        prompt_profile=prompt_profile,
+                        static_prefix=static_prefix,
+                        dynamic_suffix=dynamic_suffix,
+                        instructions=instructions,
+                        input=input_value,
+                        messages=messages,
+                        **params,
+                    )
+                else:
+                    prompt_profile = str(params.pop("prompt_profile", "") or "")
+
                 def _normalize_params(ep: str, p: dict) -> dict:
                     model = str(p.get("model") or "")
                     model_role = str(p.pop("model_role", "") or "").strip().lower()
@@ -192,14 +280,23 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                         if isinstance(mot, int) and mot < 16:
                             p["max_output_tokens"] = 16
 
-                        if model.startswith(("gpt-5-nano", "gpt-5-mini", "gpt-5")):
-                            for k in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                        is_gpt5_family = model.startswith("gpt-5")
+                        is_gpt_52 = model.startswith("gpt-5.2")
+
+                        if is_gpt5_family:
+                            for k in ("presence_penalty", "frequency_penalty"):
                                 p.pop(k, None)
+
+                            if not is_gpt_52:
+                                for k in ("temperature", "top_p"):
+                                    p.pop(k, None)
 
                             rnode = p.get("reasoning") or {}
                             if not isinstance(rnode, dict):
                                 rnode = {}
-                            if model_role == "reasoning":
+                            if is_gpt_52:
+                                default_effort = getattr(settings, "RESPONSE_REASONING_EFFORT", "none") or "none"
+                            elif model_role == "reasoning":
                                 default_effort = "medium"
                             elif model_role == "regular":
                                 default_effort = "low"
@@ -214,7 +311,8 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                             if not isinstance(tnode, dict):
                                 tnode = {}
                             if not _is_structured_json_schema(p):
-                                tnode.setdefault("verbosity", getattr(settings, "RESPONSE_VERBOSITY", "medium"))
+                                verbosity_fallback = "low" if is_gpt_52 else "medium"
+                                tnode.setdefault("verbosity", getattr(settings, "RESPONSE_VERBOSITY", verbosity_fallback))
                             p["text"] = tnode
 
                     if "timeout" not in p:
@@ -247,6 +345,8 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
                         "timeout",
                     )
                 }
+                if prompt_profile:
+                    safe_params["prompt_profile"] = prompt_profile
                 logger.info(
                     "OpenAI request: endpoint=%s meta=%r attempt=%d",
                     endpoint,
