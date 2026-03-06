@@ -598,10 +598,10 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     system_prompt = (
         "Ты — модератор фото профиля. Верни строго JSON.\n"
         "Поставь sexy_pic=true, если на изображении есть человек или реалистичная часть тела и фото выглядит сексуализированным.\n"
-        "Поставь sexy_pic=true, если есть хотя бы один сильный признак: явная нагота; главный акцент кадра на груди, ягодицах, паховой зоне или губах; откровенно провокационная или эротизированная подача фото.\n"
+        "Поставь sexy_pic=true, если есть хотя бы один сильный признак: явная нагота; главный акцент кадра на груди, ягодицах, паховой зоне или губах; явно провокационная или эротизированная подача фото.\n"
         "Поставь sexy_pic=true, если одновременно есть два и более умеренных признака: бельё или очень открытая одежда; сексуализированная поза; сексуализированная мимика или жест; ракурс или кадрирование, подчёркивающие сексуализированные части тела.\n"
         "Поставь sexy_pic=false только если фото выглядит нейтральным: обычный портрет, обычное селфи, нейтральная фигура, нейтральный купальник или бельё без сексуализированной подачи.\n"
-        "Не требуй явной наготы для sexy_pic=true. Не ставь false только потому, что человек одет. Оценивай позу, мимику, одежду, ракурс, кадрирование и общее впечатление от фото."
+        "Не требуй явной наготы для sexy_pic=true. Не ставь sexy_pic=false только потому, что человек одет. Оценивай позу, мимику, одежду, ракурс, кадрирование и общее впечатление от фото."
     )
 
     try:
@@ -638,7 +638,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                             "properties": {
                                 "sexy_pic": {
                                     "type": "boolean",
-                                    "description": "Интимный/эротический контент."
+                                    "description": "Интимный или эротизированный контент."
                                 }
                             },
                             "required": ["sexy_pic"],
@@ -646,7 +646,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                         },
                     }
                 },
-                max_output_tokens=64,
+                max_output_tokens=32,
             ),
             timeout=20.0,
         )
@@ -654,9 +654,11 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         logger.exception("classify_profile_nsfw_fast: responses API error")
         return False
 
+    raw = _get_output_text(resp) or ""
     try:
-        result = json.loads(_get_output_text(resp) or "{}")
+        result = json.loads(raw)
     except Exception:
+        logger.warning("classify_profile_nsfw_fast: invalid json raw=%r", raw)
         return False
 
     return isinstance(result, dict) and bool(result.get("sexy_pic", False))
