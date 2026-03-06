@@ -596,10 +596,11 @@ async def _send_chatty_reply(
                 await asyncio.sleep(_jitter(delay, 0.25))
         
         try:
+            followup_reply_to = effective_thread_id if (is_group and effective_thread_id) else None
             await _send_reply(
                 chat_id=chat_id,
                 text=chunk,
-                reply_to=None,
+                reply_to=followup_reply_to,
                 msg_id=msg_id,
                 merged_ids=merged_ids,
                 user_id=user_id,

@@ -62,6 +62,49 @@ class ModerationInlineBanTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(sorted(keys), sorted(k for k, _ in fake_redis.expire_calls))
 
+    async def test_inline_unban_success_edits_message_and_answers(self) -> None:
+        callback_message = types.SimpleNamespace(
+            html_text="Alert",
+            text="Alert",
+            caption=None,
+            edit_text=AsyncMock(),
+            edit_reply_markup=AsyncMock(),
+        )
+        callback = types.SimpleNamespace(
+            data="mod:unban:-100500:777",
+            from_user=types.SimpleNamespace(id=42),
+            message=callback_message,
+            answer=AsyncMock(),
+        )
+
+        with (
+            patch.object(moderation, "_is_admin", AsyncMock(return_value=True)),
+            patch.object(moderation, "_unban_user_safe", AsyncMock(return_value=True)) as unban_mock,
+        ):
+            await moderation.moderation_inline_unban(callback)
+
+        unban_mock.assert_awaited_once_with(-100500, 777)
+        callback_message.edit_text.assert_awaited_once()
+        callback.answer.assert_awaited_with("User unbanned.", show_alert=False)
+
+    async def test_auto_ban_notification_formats_reason_without_context_suffix(self) -> None:
+        send_mock = AsyncMock(return_value=types.SimpleNamespace(message=object()))
+
+        with (
+            patch.object(moderation, "send_message_safe_with_reason", send_mock),
+            patch.object(moderation, "get_bot", return_value=object()),
+        ):
+            await moderation._notify_auto_ban_with_actions(
+                [1001],
+                chat_id=-100500,
+                offender_id=777,
+                reason_text="first_link_after_join|context=comment",
+            )
+
+        sent_text = send_mock.await_args.args[2]
+        self.assertIn("Reason: <b>first_link_after_join</b>.", sent_text)
+        self.assertNotIn("|context=comment", sent_text)
+
 
 if __name__ == "__main__":
     unittest.main()
