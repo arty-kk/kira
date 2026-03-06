@@ -588,9 +588,9 @@ def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
         "regular_promo": _coerce_ai_bool(payload.get("regular_promo", False)),
         "income_promo": _coerce_ai_bool(payload.get("income_promo", False)),
         "promo_war": _coerce_ai_bool(payload.get("promo_war", False)),
+        "sex_abuse": _coerce_ai_bool(payload.get("sex_abuse", False)),
         "insult_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("insult_abuse", False))),
-        "threat_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("threat_abuse", False))),
-        "sex_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("sex_abuse", False))),
+        "threat_abuse": (False if disable_insult_threat else _coerce_ai_bool(payload.get("threat_abuse", False)))
     }
 
 
@@ -629,13 +629,14 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                     "format": {
                         "type": "json_schema",
                         "name": "profile_nsfw_moderation",
+                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {
                                 "label": {
                                     "type": "string",
                                     "enum": ["NSFW", "SFW"],
-                                    "description": "Строгая NSFW-классификация профиля.",
+                                    "description": "Строковый ярлык классификации профиля: только 'NSFW' или 'SFW'.",
                                 },
                             },
                             "required": ["label"],
@@ -693,10 +694,11 @@ async def moderate_with_openai(
         "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n",
         "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества, какие-то группировки, меньшинства, или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 70% → установи regular_promo=false.\n",
         "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 70% → установи income_promo=false.\n",
+        "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 70% → установи sex_abuse=false.\n"
         "- НЕ ставь income_promo для жалоб в поддержку о возврате денег, недоставке, ожидании возврата или нерабочем коде/товаре без предложения заработать.\n",
         "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу войны, военного контента, участия в боевых действиях, службы, вербовки, призывов вступить в ряды бойцов, продвижение связанных с войной каналов/чатов/профилей, либо призыв перейти во внешние источники за военными материалами, кадрами насилия, крови, боёв или «правдой о войне» → поставь promo_war=true. Если уровень уверенности ниже 70% → установи promo_war=false.\n",
-        "- Ставь promo_war и в случаях, когда военная тематика подаётся как личный опыт участника боевых действий, как приглашение смотреть контент с фронта, подписаться, зайти в профиль, канал, чат, сообщество или перейти по ссылке.\n",
-        "- НЕ ставь promo_war для нейтрального обсуждения новостей, истории, политики, осуждения войны, сообщений о личных переживаниях без продвижения, а также для упоминания армии, фронта или боевых действий без рекламы, вербовки или призыва перейти во внешние источники.\n",
+        "- Ставь promo_war=true в случаях, когда военная тематика подаётся как личный опыт участника боевых действий, как приглашение смотреть контент с фронта, подписаться, зайти в профиль, канал, чат, сообщество или перейти по ссылке.\n",
+        "- Cтавь promo_war=false для нейтрального обсуждения новостей, истории, политики, осуждения войны, сообщений о личных переживаниях без продвижения, а также для упоминания армии, фронта или боевых действий без рекламы, вербовки или призыва перейти во внешние источники.\n",
     ]
     if not disable_insult_threat:
         moderation_prompt_parts.insert(
@@ -707,9 +709,6 @@ async def moderate_with_openai(
             4,
             "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 70% → установи threat_abuse=false.\n",
         )
-        moderation_prompt_parts.append(
-            "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 70% → установи sex_abuse=false. Будь максимально строгим: при сомнении ставь sex_abuse=true.\n"
-        )
     moderation_prompt = "".join(moderation_prompt_parts)
 
     user_content: list[dict[str, Any]] = []
@@ -719,17 +718,35 @@ async def moderate_with_openai(
         user_content.append({"type": "input_image", "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"})
 
     moderation_schema_properties: dict[str, dict[str, str]] = {
-        "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=70%."},
-        "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=70%."},
-        "promo_war": {"type": "boolean", "description": "Реклама войны/военного контента/вербовки и перехода во внешние источники с уверенностью >=70%."},
-    }
-    moderation_schema_required = ["regular_promo", "income_promo", "promo_war"]
-    if not disable_insult_threat:
-        moderation_schema_properties["sex_abuse"] = {
+        "regular_promo": {
             "type": "boolean",
-            "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=70%; при сомнении true.",
+            "description": "Реклама/CTA во внешние источники с уверенностью >=70%.",
+        },
+        "income_promo": {
+            "type": "boolean",
+            "description": "Предложения заработка/инвестиций/работы с уверенностью >=70%.",
+        },
+        "promo_war": {
+            "type": "boolean",
+            "description": "Реклама войны/военного контента/вербовки и перехода во внешние источники с уверенностью >=70%.",
+        },
+        "sex_abuse": {
+            "type": "boolean",
+            "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=70%.",
+        },
+    }
+
+    if not disable_insult_threat:
+        moderation_schema_properties["insult_abuse"] = {
+            "type": "boolean",
+            "description": "Оскорбление конкретных лиц с уверенностью >=70%.",
         }
-        moderation_schema_required.append("sex_abuse")
+        moderation_schema_properties["threat_abuse"] = {
+            "type": "boolean",
+            "description": "Угроза причинения вреда конкретным лицам с уверенностью >=70%.",
+        }
+
+    moderation_schema_required = list(moderation_schema_properties.keys())
 
     async with _LIGHT_SEMAPHORE:
         try:
@@ -747,6 +764,7 @@ async def moderate_with_openai(
                         "format": {
                             "type": "json_schema",
                             "name": "chat_moderation",
+                            "strict": True,
                             "schema": {
                                 "type": "object",
                                 "properties": moderation_schema_properties,
@@ -767,7 +785,16 @@ async def moderate_with_openai(
     if _should_suppress_income_promo(text=trimmed, parsed=parsed):
         parsed["income_promo"] = False
 
-    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "promo_war", "insult_abuse", "threat_abuse", "sex_abuse") if parsed.get(k, False)))
+    flag_order = (
+        "regular_promo",
+        "income_promo",
+        "promo_war",
+        "sex_abuse",
+        "insult_abuse",
+        "threat_abuse"
+    )
+
+    triggered_flags = tuple(flag for flag in flag_order if parsed.get(flag, False))
     primary_category = triggered_flags[0] if triggered_flags else ""
     flagged = bool(triggered_flags)
 
