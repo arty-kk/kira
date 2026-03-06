@@ -115,7 +115,7 @@ async def _ask_gender(name: str, *, message: Optional[str], timeout: float) -> s
                     }
                 },
                 temperature=0,
-                max_output_tokens=32,
+                max_output_tokens=100,
             ),
             timeout=timeout,
         )
