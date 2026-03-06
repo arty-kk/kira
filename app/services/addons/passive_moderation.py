@@ -600,11 +600,11 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         return False
 
     system_prompt = (
-        "Ты — строгий модератор визуального контента. Классифицируй изображение.\n\n"
+        "Ты — строгий модератор контента.\n\n"
         "Установи sexy_pic=true, если:\n"
         "- на изображении есть голая женщина/мужчина (виды голая грудь, попа, генеталии), или\n"
         "- женщина/мужчина в купальнике/нижнем белье демонстрирует интимные зоны (грудь, попа, генеталии)\n\n"
-        "Если условия для sexy_pic=true не выполняются - установи sexy_pic=false."
+        "Если условия не выполняются - установи sexy_pic=false."
     )
 
     try:
@@ -633,7 +633,6 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                     "format": {
                         "type": "json_schema",
                         "name": "profile_nsfw_moderation",
-                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {
@@ -646,7 +645,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                         },
                     }
                 },
-                max_output_tokens=16,
+                max_output_tokens=32,
             ),
             timeout=10.0,
         )
@@ -768,7 +767,6 @@ async def moderate_with_openai(
                         "format": {
                             "type": "json_schema",
                             "name": "chat_moderation",
-                            "strict": True,
                             "schema": {
                                 "type": "object",
                                 "properties": moderation_schema_properties,
