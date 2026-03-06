@@ -637,7 +637,6 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                     "format": {
                         "type": "json_schema",
                         "name": "profile_nsfw_moderation",
-                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {
