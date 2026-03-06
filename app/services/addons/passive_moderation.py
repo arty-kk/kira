@@ -602,9 +602,9 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     system_prompt = (
         "Ты — строгий модератор контента.\n\n"
         "Установи sexy_pic=true, если:\n"
-        "- на изображении есть голая женщина/мужчина (виды голая грудь, попа, генеталии), или\n"
-        "- женщина/мужчина в купальнике/нижнем белье демонстрирует интимные зоны (грудь, попа, генеталии)\n\n"
-        "Если условия не выполняются - установи sexy_pic=false."
+        "- на изображении есть голая женщина/мужчина (виды голая грудь, попа, гениталии), или\n"
+        "- женщина/мужчина в купальнике/нижнем белье демонстрирует интимные зоны (грудь, попа, гениталии)\n\n"
+        "Если условия не выполняются — установи sexy_pic=false."
     )
 
     try:
@@ -612,12 +612,15 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
             _call_openai_with_retry(
                 endpoint="responses.create",
                 prompt_profile="app.services.addons.passive_moderation",
-                model=settings.BASE_MODEL,
+                model="gpt-5-nano",
                 model_role="base",
+                reasoning={"effort": "minimal"},
                 input=[
                     {
                         "role": "system",
-                        "content": [{"type": "input_text", "text": system_prompt}],
+                        "content": [
+                            {"type": "input_text", "text": system_prompt}
+                        ],
                     },
                     {
                         "role": "user",
@@ -625,6 +628,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                             {
                                 "type": "input_image",
                                 "image_url": f"data:{image_mime};base64,{payload}",
+                                "detail": "low",
                             }
                         ],
                     },
@@ -633,12 +637,11 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                     "format": {
                         "type": "json_schema",
                         "name": "profile_nsfw_moderation",
+                        "strict": True,
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "sexy_pic": {
-                                    "type": "boolean"
-                                }
+                                "sexy_pic": {"type": "boolean"}
                             },
                             "required": ["sexy_pic"],
                             "additionalProperties": False,
@@ -647,7 +650,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                 },
                 max_output_tokens=32,
             ),
-            timeout=10.0,
+            timeout=20.0,
         )
     except Exception:
         logger.exception("classify_profile_nsfw_fast: responses API error")
@@ -658,10 +661,7 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
     except Exception:
         return False
 
-    if not isinstance(result, dict):
-        return False
-
-    return bool(result.get("sexy_pic", False))
+    return isinstance(result, dict) and bool(result.get("sexy_pic", False))
 
 
 async def moderate_with_openai(
