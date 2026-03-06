@@ -217,6 +217,9 @@ class _Pipeline:
     def lpush(self, key, value):
         self.ops.append(("lpush", key, value))
 
+    def set(self, key, value, ex=None, nx=False):
+        self.ops.append(("set", key, value, ex, nx))
+
     async def execute(self):
         if self.owner.pipeline_execute_error is not None:
             raise self.owner.pipeline_execute_error
@@ -225,6 +228,8 @@ class _Pipeline:
                 await self.owner.lrem(op[1], op[2], op[3])
             elif op[0] == "lpush":
                 await self.owner.lpush(op[1], op[2])
+            elif op[0] == "set":
+                await self.owner.set(op[1], op[2], ex=op[3], nx=op[4])
 
 
 class _FakeQueueRedis:
@@ -707,10 +712,39 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(send_calls), 1)
         self.assertEqual(send_calls[0].get("message_thread_id"), 777001)
 
+    async def test_send_reply_marks_merged_ids_and_returns_sent_message(self):
+        fake_queue = _FakeQueueRedis()
+        queue_worker.REDIS_QUEUE = fake_queue
+
+        sent = types.SimpleNamespace(message_id=9010)
+        queue_worker.BOT = types.SimpleNamespace(send_message=AsyncMock(return_value=sent))
+
+        with patch.object(queue_worker, "_tg_acquire_permit", AsyncMock()),              patch.object(queue_worker, "_tg_acquire_chat_permit", AsyncMock()):
+            result = await queue_worker._send_reply(
+                chat_id=-100777,
+                text="hello",
+                reply_to=42,
+                msg_id=700,
+                merged_ids=[700, 701, 702],
+                user_id=123,
+                is_group=True,
+                message_thread_id=777001,
+            )
+
+        self.assertIs(result, sent)
+        self.assertEqual(fake_queue.kv.get("sent_reply:-100777:700"), 1)
+        self.assertEqual(fake_queue.kv.get("sent_reply:-100777:701"), 1)
+        self.assertEqual(fake_queue.kv.get("sent_reply:-100777:702"), 1)
+
     async def test_send_chatty_reply_keeps_message_thread_id_for_all_chunks(self):
         send_reply_mock = AsyncMock(return_value=None)
 
-        with patch.object(queue_worker, "_send_reply", send_reply_mock),              patch.object(queue_worker, "compute_typing_delay", return_value=0.0):
+        with (
+            patch.object(queue_worker, "_send_reply", send_reply_mock),
+            patch.object(queue_worker, "compute_typing_delay", return_value=0.0),
+            patch.object(queue_worker, "_split_reply_into_messages", return_value=["Первая фраза.", "Вторая фраза."]),
+            patch.object(queue_worker, "_group_chatty_chunks", side_effect=lambda chunks: chunks),
+        ):
             await queue_worker._send_chatty_reply(
                 chat_id=-100777,
                 text="Первая фраза. Вторая фраза.",
@@ -725,6 +759,53 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(send_reply_mock.await_count, 1)
         for call_item in send_reply_mock.await_args_list:
             self.assertEqual(call_item.kwargs.get("message_thread_id"), 777002)
+
+    async def test_send_chatty_reply_infers_thread_id_from_first_chunk_when_missing(self):
+        sent_first = types.SimpleNamespace(message_id=5001, message_thread_id=888003)
+        send_reply_mock = AsyncMock(side_effect=[sent_first, None])
+
+        with (
+            patch.object(queue_worker, "_send_reply", send_reply_mock),
+            patch.object(queue_worker, "compute_typing_delay", return_value=0.0),
+            patch.object(queue_worker, "_split_reply_into_messages", return_value=["Первая фраза.", "Вторая фраза."]),
+            patch.object(queue_worker, "_group_chatty_chunks", side_effect=lambda chunks: chunks),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=-100777,
+                text="Первая фраза. Вторая фраза.",
+                reply_to=42,
+                msg_id=301,
+                user_id=123,
+                is_group=True,
+                enable_typing=False,
+                message_thread_id=None,
+            )
+
+        self.assertGreaterEqual(send_reply_mock.await_count, 2)
+        self.assertIsNone(send_reply_mock.await_args_list[0].kwargs.get("message_thread_id"))
+        self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("message_thread_id"), 888003)
+
+    async def test_send_chatty_reply_stops_when_first_chunk_is_deduped(self):
+        send_reply_mock = AsyncMock(side_effect=[None, types.SimpleNamespace(message_id=5002)])
+
+        with (
+            patch.object(queue_worker, "_send_reply", send_reply_mock),
+            patch.object(queue_worker, "compute_typing_delay", return_value=0.0),
+            patch.object(queue_worker, "_split_reply_into_messages", return_value=["Первая фраза.", "Вторая фраза."]),
+            patch.object(queue_worker, "_group_chatty_chunks", side_effect=lambda chunks: chunks),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=-100777,
+                text="Первая фраза. Вторая фраза.",
+                reply_to=42,
+                msg_id=302,
+                user_id=123,
+                is_group=True,
+                enable_typing=False,
+                message_thread_id=None,
+            )
+
+        self.assertEqual(send_reply_mock.await_count, 1)
 
     async def test_blocked_moderation_status_skips_response_and_refunds(self):
         fake_queue = _FakeQueueRedis()

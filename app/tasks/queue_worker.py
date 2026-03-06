@@ -546,6 +546,7 @@ async def _send_chatty_reply(
     long_single = (len(text) >= CHATTY_LONG_TEXT_THRESHOLD and not multi_chunk)
 
     first_reply_target: Optional[int] = reply_to
+    effective_thread_id: Optional[int] = message_thread_id
     for idx, chunk in enumerate(chunks):
         chunk = (chunk or "").strip()
         if not chunk:
@@ -560,7 +561,7 @@ async def _send_chatty_reply(
                     else:
                         await asyncio.sleep(_jitter(delay, 0.25))
 
-            await _send_reply(
+            first_sent = await _send_reply(
                 chat_id=chat_id,
                 text=chunk,
                 reply_to=first_reply_target,
@@ -569,8 +570,20 @@ async def _send_chatty_reply(
                 user_id=user_id,
                 is_group=is_group,
                 skip_dedupe=False,
-                message_thread_id=message_thread_id,
+                message_thread_id=effective_thread_id,
             )
+            if first_sent is None:
+                logger.info("Skip chatty follow-up chunks due to deduped first chunk chat=%s msg_id=%s", chat_id, msg_id)
+                return
+
+            if effective_thread_id is None:
+                raw_thread_id = getattr(first_sent, "message_thread_id", None)
+                try:
+                    inferred_thread_id = int(raw_thread_id) if raw_thread_id is not None else None
+                except (TypeError, ValueError):
+                    inferred_thread_id = None
+                if inferred_thread_id and inferred_thread_id > 0:
+                    effective_thread_id = inferred_thread_id
             delivered_first = True
             first_reply_target = None
             continue
@@ -592,7 +605,7 @@ async def _send_chatty_reply(
                 user_id=user_id,
                 is_group=is_group,
                 skip_dedupe=True,
-                message_thread_id=message_thread_id,
+                message_thread_id=effective_thread_id,
             )
         except ReplyTerminalError:
             if delivered_first:
@@ -905,7 +918,7 @@ async def _send_reply(
     is_group: bool = False,
     skip_dedupe: bool = False,
     message_thread_id: Optional[int] = None,
-) -> None:
+) -> TgMessage | None:
    
     dedupe_set = False
     try:
@@ -915,7 +928,7 @@ async def _send_reply(
             )
             if not sent:
                 logger.info("Skip duplicate reply chat=%s msg_id=%s", chat_id, msg_id)
-                return
+                return None
             dedupe_set = True
 
         if len(text) > TG_TEXT_LIMIT - 10:
@@ -1043,6 +1056,8 @@ async def _send_reply(
                     await p.execute()
         except Exception as e:
             logger.warning("failed to mark merged sent_reply keys: %s", e)
+
+        return sent_msg
     except ReplyTerminalError:
         raise
     except Exception as e:
