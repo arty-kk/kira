@@ -1253,7 +1253,7 @@ async def respond_to_user(
             req_tier = "none"
 
     if group_mode or is_channel_post:
-        eff_response_model = str(getattr(settings, "RESPONSE_GROUP_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini")
+        eff_response_model = str(getattr(settings, "RESPONSE_GROUP_MODEL", "gpt-5.2") or "gpt-5.2")
 
     logger.info("   ↳ model selection: %s (tier=%s, free=%s, paid=%s)",
                 eff_response_model, req_tier, free_left, paid_left)
@@ -2175,6 +2175,7 @@ async def respond_to_user(
                 plan_resp = await asyncio.wait_for(
                     _call_openai_with_retry(
                         endpoint="responses.create",
+                        prompt_profile="app.services.responder.core",
                         model=reasoning_model,
                         model_role=reasoning_model_role,
                         input=[
@@ -2216,6 +2217,7 @@ async def respond_to_user(
                     model=eff_response_model,
                     model_role=("regular" if eff_response_model in (settings.BASE_MODEL, settings.REASONING_MODEL) else ""),
                     endpoint="responses.create",
+                    prompt_profile="app.services.responder.core",
                     input=messages,
                     max_output_tokens=max_tokens,
                     temperature=temperature,
@@ -2248,6 +2250,7 @@ async def respond_to_user(
                     model=eff_response_model,
                     model_role=("regular" if eff_response_model in (settings.BASE_MODEL, settings.REASONING_MODEL) else ""),
                     endpoint="responses.create",
+                    prompt_profile="app.services.responder.core",
                     input=messages,
                     max_output_tokens=max_tokens,
                     temperature=temperature,

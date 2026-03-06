@@ -50,6 +50,7 @@ async def _rewrite_with_prompt(query: str, snippet: List[Dict[str, str]]) -> str
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.responder.coref.resolve_coref",
                 model=settings.BASE_MODEL,
                 model_role="base",
                 input=msgs,

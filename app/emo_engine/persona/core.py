@@ -1105,6 +1105,7 @@ class Persona:
             resp = await asyncio.wait_for(
                 _call_openai_with_retry(
                     endpoint="responses.create",
+                    prompt_profile="app.emo_engine.persona.core",
                     model=settings.BASE_MODEL,
                     model_role="base",
                     instructions=system_prompt,

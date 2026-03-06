@@ -311,6 +311,7 @@ async def classify_emotion_context_llm(personal_msgs: list[dict], summary: Optio
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.personal_ping",
                 model=settings.PING_MODEL,
                 model_role="regular",
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
@@ -579,6 +580,7 @@ async def classify_signals_llm(personal_msgs: list[dict], summary: Optional[str]
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.personal_ping",
                 model=settings.PING_MODEL,
                 model_role="regular",
                 input=[_msg("system", system_msg), _msg("user", user_msg)],
@@ -1476,6 +1478,7 @@ async def send_contextual_ping(chat_id: int, user_id: int) -> bool:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.personal_ping",
                 model=settings.PING_MODEL,
                 model_role="regular",
                 input=[_msg("system", time_sys), _msg("system", system_msg), _msg("user", prompt)],

@@ -101,6 +101,7 @@ async def _ask_gender(name: str, *, message: Optional[str], timeout: float) -> s
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.responder.gender.gender_detector",
                 model=settings.BASE_MODEL,
                 model_role="base",
                 instructions=_build_system_prompt(),

@@ -14,7 +14,13 @@ from app.core.models import User
 from app.core.memory import get_cached_gender, push_message, get_redis
 from app.clients.openai_client import _call_openai_with_retry, _msg, _get_output_text
 from app.services.responder.prompt_builder import build_system_prompt
-from app.prompts_base import WELCOME_PRIVATE_PROMPT_TEMPLATE, WELCOME_PROMPT_NO_TEXT_TEMPLATE, WELCOME_PROMPT_WITH_TEXT_TEMPLATE
+from app.prompts_base import (
+    WELCOME_INSTRUCTIONS_STATIC,
+    WELCOME_PRIVATE_INSTRUCTIONS_STATIC,
+    WELCOME_PRIVATE_PROMPT_TEMPLATE,
+    WELCOME_PROMPT_NO_TEXT_TEMPLATE,
+    WELCOME_PROMPT_WITH_TEXT_TEMPLATE,
+)
 from app.emo_engine import get_persona 
 from app.config import settings
 
@@ -170,21 +176,23 @@ async def generate_welcome(chat_id: int, user, text: str) -> str:
         pass
 
     if text:
-        prompt = WELCOME_PROMPT_WITH_TEXT_TEMPLATE.format(text=text, lang_code=lang_code)
+        runtime_user_block = WELCOME_PROMPT_WITH_TEXT_TEMPLATE.format(text=text, lang_code=lang_code)
         asyncio.create_task(persona.process_interaction(user.id, text))
     else:
-        prompt = WELCOME_PROMPT_NO_TEXT_TEMPLATE.format(lang_code=lang_code)
+        runtime_user_block = WELCOME_PROMPT_NO_TEXT_TEMPLATE.format(lang_code=lang_code)
 
     generated: Optional[str] = None
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.welcome_manager",
                 model=settings.WELCOME_MODEL,
                 model_role="regular",
                 input=[
+                    _msg("system", WELCOME_INSTRUCTIONS_STATIC),
                     _msg("system", system_msg),
-                    _msg("user", prompt)
+                    _msg("user", runtime_user_block)
                 ],
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,
@@ -307,18 +315,20 @@ async def generate_private_welcome(chat_id: int, user: Optional[object]) -> str:
     except Exception:
         pass
 
-    prompt = WELCOME_PRIVATE_PROMPT_TEMPLATE.format(lang_code=lang_code)
+    runtime_user_block = WELCOME_PRIVATE_PROMPT_TEMPLATE.format(lang_code=lang_code)
 
     generated = None
     try:
         resp = await asyncio.wait_for(
             _call_openai_with_retry(
                 endpoint="responses.create",
+                prompt_profile="app.services.addons.welcome_manager",
                 model=settings.WELCOME_MODEL,
                 model_role="regular",
                 input=[
+                    _msg("system", WELCOME_PRIVATE_INSTRUCTIONS_STATIC),
                     _msg("system", system_msg),
-                    _msg("user", prompt)
+                    _msg("user", runtime_user_block)
                 ],
                 temperature=dynamic_temperature,
                 top_p=dynamic_top_p,

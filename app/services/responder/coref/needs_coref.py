@@ -42,16 +42,29 @@ def _build_user_prompt(text: str, history: Optional[List[Dict[str, Any]]] = None
     snippet_blob = _json_for_prompt.dumps(snippet, ensure_ascii=False)
     return 'SNIPPET:\n' + snippet_blob + '\n\nQUERY:\n"""' + (text or "") + f'"""\nReply:{suffix}'
 
+
+def _build_user_block(text: str, history: Optional[List[Dict[str, Any]]] = None, *, force_yesno: bool = False) -> dict[str, Any]:
+    return {
+        "role": "user",
+        "content": [
+            {
+                "type": "input_text",
+                "text": _build_user_prompt(text, history=history, force_yesno=force_yesno),
+            }
+        ],
+    }
+
 async def _ask_model(text: str, history: Optional[List[Dict[str, Any]]] = None, *, force_yesno: bool = False) -> str:
-    user_prompt = _build_user_prompt(text, history=history, force_yesno=force_yesno)
+    user_block = _build_user_block(text, history=history, force_yesno=force_yesno)
 
     resp = await asyncio.wait_for(
         _call_openai_with_retry(
             endpoint="responses.create",
+            prompt_profile="app.services.responder.coref.needs_coref",
             model=settings.BASE_MODEL,
             model_role="base",
             instructions=COREF_SYSTEM,
-            input=user_prompt,
+            input=[user_block],
             text={
                 "format": {
                     "type": "json_schema",
