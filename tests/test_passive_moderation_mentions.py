@@ -59,6 +59,40 @@ class _FakeRedisHandler:
         return _FakePipe()
 
 
+class _FakeFloodPipe:
+    def __init__(self, timestamps):
+        self._timestamps = timestamps
+
+    def lpush(self, *args, **kwargs):
+        return None
+
+    def ltrim(self, *args, **kwargs):
+        return None
+
+    def expire(self, *args, **kwargs):
+        return None
+
+    def lrange(self, *args, **kwargs):
+        return None
+
+    async def execute(self):
+        return [True, True, True, self._timestamps]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _FakeFloodRedis:
+    def __init__(self, timestamps):
+        self._timestamps = timestamps
+
+    def pipeline(self, transaction=True):
+        return _FakeFloodPipe(self._timestamps)
+
+
 class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_check_light_flags_emoji_overlimit_for_unicode_emoji(self) -> None:
@@ -941,6 +975,45 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(blocked)
         moderate_mock.assert_not_awaited()
 
+
+    async def test_is_flooding_triggers_on_threshold_count(self) -> None:
+        timestamps = ["1000.0", "1001.0", "1002.0"]
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(MOD_MAX_MESSAGES=3, MOD_PERIOD_SECONDS=60)),
+            patch.object(passive_moderation, "get_redis", return_value=_FakeFloodRedis(timestamps)),
+            patch.object(passive_moderation.time, "time", return_value=1002.5),
+        ):
+            flooded = await passive_moderation.is_flooding(1, 2)
+
+        self.assertTrue(flooded)
+
+    async def test_sanitize_for_context_replaces_plain_domains(self) -> None:
+        sanitized = passive_moderation.sanitize_for_context("переходи на example.com/path")
+
+        self.assertIn(passive_moderation.SANITIZE_REPLACE_ANY_LINK, sanitized)
+        self.assertNotIn("example.com", sanitized)
+
+    async def test_sanitize_for_context_marks_telegram_domains(self) -> None:
+        sanitized = passive_moderation.sanitize_for_context("пиши в telegram.me/MyChannel")
+
+        self.assertIn(passive_moderation.SANITIZE_REPLACE_TG_LINK, sanitized)
+        self.assertNotIn("telegram.me", sanitized.lower())
+
+    async def test_check_light_flags_obfuscated_telegram_without_urls(self) -> None:
+        text = "переходи в t (.) me / abc"
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_MODERATION=True, MODERATION_SPAM_MENTION_THRESHOLD=5)),
+            patch.object(passive_moderation, "is_flooding", AsyncMock(return_value=False)),
+            patch.object(passive_moderation, "extract_urls", return_value=[]),
+            patch.object(passive_moderation, "extract_external_mentions", AsyncMock(return_value=([], False))),
+            patch.object(passive_moderation, "contains_telegram_obfuscated", return_value=True),
+            patch.object(passive_moderation, "url_is_unwanted", return_value=False),
+            patch.object(passive_moderation, "moderate_with_openai", AsyncMock(return_value=False)),
+        ):
+            status = await passive_moderation.check_light(1, 2, text, [], source="user")
+
+        self.assertEqual(status, "link_violation")
 
 
 if __name__ == "__main__":
