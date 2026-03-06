@@ -576,14 +576,6 @@ async def _send_chatty_reply(
                 logger.info("Skip chatty follow-up chunks due to deduped first chunk chat=%s msg_id=%s", chat_id, msg_id)
                 return
 
-            if effective_thread_id is None:
-                raw_thread_id = getattr(first_sent, "message_thread_id", None)
-                try:
-                    inferred_thread_id = int(raw_thread_id) if raw_thread_id is not None else None
-                except (TypeError, ValueError):
-                    inferred_thread_id = None
-                if inferred_thread_id and inferred_thread_id > 0:
-                    effective_thread_id = inferred_thread_id
             delivered_first = True
             first_reply_target = None
             continue
@@ -1506,6 +1498,28 @@ async def handle_job(raw, processing_key: str) -> None:
 
             mod_status = ""
             if moderation_enabled and is_group and trigger in ("mention", "check_on_topic", "channel_post"):
+                try:
+                    prefilter_raw = await redis.get(f"mod:prefilter_blocked:{chat_id}:{msg_id}")
+                except Exception as exc:
+                    logger.warning(
+                        "PREFILTER_BLOCKED_READ_ERROR: chat_id=%s msg_id=%s error=%s",
+                        chat_id,
+                        msg_id,
+                        exc,
+                    )
+                    prefilter_raw = None
+                prefilter_marked = str(prefilter_raw or "").strip().lower() in {"1", "true", "yes", "blocked"}
+                if prefilter_marked:
+                    logger.info(
+                        "PREFILTER_BLOCKED_SKIP: chat_id=%s msg_id=%s",
+                        chat_id,
+                        msg_id,
+                    )
+                    with suppress(Exception):
+                        await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                    await _refund_reservation()
+                    return
+
                 known_statuses = {"clean", "blocked", "flagged", "error"}
                 read_failed = False
                 deadline = time.monotonic() + max(0.0, float(MODERATION_STATUS_WAIT_SEC))

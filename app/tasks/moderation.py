@@ -142,6 +142,16 @@ def _moderation_inflight_key(chat_id: int, message_id: int) -> str:
     return f"mod:inflight:{chat_id}:{message_id}"
 
 
+async def _is_prefilter_blocked(chat_id: int, message_id: int) -> bool:
+    key = f"mod:prefilter_blocked:{int(chat_id)}:{int(message_id)}"
+    try:
+        raw = await consts.redis_client.get(key)
+    except Exception:
+        logger.debug("prefilter blocked marker read failed key=%s", key, exc_info=True)
+        return False
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "blocked"}
+
+
 def _is_closed_transport_runtime_error(exc: Exception) -> bool:
     if not isinstance(exc, RuntimeError):
         return False
@@ -234,6 +244,18 @@ def passive_moderate(self, payload: dict) -> str:
             _safe_payload_context(payload),
         )
         return "invalid_payload"
+
+    try:
+        if run_coro_sync(_is_prefilter_blocked(chat_id, message_id)):
+            logger.info(
+                "PASSIVE_MODERATION_PREFILTER_BLOCKED_SKIP: chat_id=%s msg_id=%s user_id=%s",
+                chat_id,
+                message_id,
+                user_id,
+            )
+            return "blocked"
+    except Exception:
+        logger.debug("prefilter blocked check failed", exc_info=True)
 
     async def _do() -> str:
         return await asyncio.wait_for(

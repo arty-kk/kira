@@ -45,6 +45,7 @@ from app.bot.handlers.moderation_context import (
     resolve_message_moderation_context_async,
 )
 from app.bot.utils.trusted_scope import (
+    extract_source_scope_ids,
     is_trusted_actor,
     is_trusted_destination as trusted_destination_check,
     is_trusted_repost as trusted_repost_check,
@@ -645,11 +646,17 @@ async def handle_passive_moderation(
                 finalize_early = True
 
             if not finalize_early and await _is_profile_nsfw(_uid):
+                banned = await _cleanup_user_history_and_mute(chat_id, _uid)
                 if _mid:
-                    await _flag(chat_id, _mid, action="restrict", reason="profile_nsfw|context=group", user_id=_uid)
+                    await _flag(
+                        chat_id,
+                        _mid,
+                        action=("ban" if banned else "restrict"),
+                        reason="profile_nsfw|context=group",
+                        user_id=_uid,
+                    )
                     await _delete_message_safe(chat_id, _mid)
                 await redis_client.set(blocked_key, 1)
-                banned = await _cleanup_user_history_and_mute(chat_id, _uid)
                 if banned:
                     asyncio.create_task(
                         _notify_auto_ban_with_actions(
@@ -1262,9 +1269,14 @@ async def moderation_on_reaction(event: types.MessageReactionUpdated) -> None:
         linked_chat_id = None
         with contextlib.suppress(Exception):
             linked_chat_id = int(getattr(event.chat, "linked_chat_id", 0) or 0)
+        if not linked_chat_id:
+            linked_chat_id = await _get_linked_channel_id(chat_id)
+        event_message = getattr(event, "message", None)
+        source_scope_ids = extract_source_scope_ids(event_message) if event_message is not None else set()
         is_trusted_destination = bool(
             chat_id in comment_target_chat_ids
             or (linked_chat_id and linked_chat_id in comment_source_channel_ids)
+            or (source_scope_ids & comment_source_channel_ids)
         )
 
     if not is_trusted_destination:
@@ -1306,13 +1318,24 @@ async def moderation_on_reaction(event: types.MessageReactionUpdated) -> None:
     except Exception:
         logger.debug("reaction blocked-key write failed", exc_info=True)
 
+    banned = await _cleanup_user_history_and_mute(chat_id, uid)
     await _flag_inline_without_message(
         chat_id,
-        action="restrict",
+        action=("ban" if banned else "restrict"),
         reason="profile_nsfw_reaction|context=group",
         user_id=uid,
     )
-    await _cleanup_user_history_and_mute(chat_id, uid)
+    if banned:
+        asyncio.create_task(
+            _notify_auto_ban_with_actions(
+                get_targets(),
+                chat_id=chat_id,
+                offender_id=uid,
+                reason_text="profile_nsfw_reaction",
+                msg_id=int(getattr(event, "message_id", 0) or 0),
+                chat_title=getattr(getattr(event, "chat", None), "title", None),
+            )
+        )
 
 @dp.message(F.chat.type.in_([ChatType.GROUP, ChatType.SUPERGROUP]), F.left_chat_member)
 async def moderation_on_left(message: types.Message) -> None:
@@ -1415,6 +1438,10 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         ok = await _delete_message_safe(chat_id, message.message_id)
         if not ok:
             logger.warning("Moderation: failed to delete (%s) chat=%s msg=%s", reason, chat_id, message.message_id)
+        try:
+            await redis_client.set(f"mod:prefilter_blocked:{chat_id}:{message.message_id}", 1, ex=60)
+        except Exception:
+            logger.debug("prefilter blocked marker write failed", exc_info=True)
         return True
 
     logger.debug(

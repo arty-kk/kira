@@ -95,6 +95,38 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         handle_mock.assert_not_called()
         self.assertTrue(any("payload must be dict" in entry for entry in logs.output))
 
+    def test_passive_moderate_skips_when_prefilter_marker_exists(self) -> None:
+        payload = {
+            "chat_id": 100,
+            "user_id": 200,
+            "message_id": 300,
+            "text": "hi",
+            "entities": [],
+            "source": "user",
+        }
+
+        redis_stub = type(
+            "RedisStub",
+            (),
+            {
+                "get": unittest.mock.AsyncMock(return_value="1"),
+                "set": unittest.mock.AsyncMock(return_value=True),
+                "eval": unittest.mock.AsyncMock(return_value=1),
+                "incrby": unittest.mock.AsyncMock(return_value=1),
+                "incr": unittest.mock.AsyncMock(return_value=1),
+            },
+        )()
+
+        with (
+            patch("app.bot.handlers.moderation.handle_passive_moderation") as handle_mock,
+            patch("app.tasks.moderation.consts.redis_client", redis_stub),
+        ):
+            result = passive_moderate.run(payload)
+
+        self.assertEqual(result, "blocked")
+        handle_mock.assert_not_called()
+        redis_stub.get.assert_awaited_once_with("mod:prefilter_blocked:100:300")
+
     def test_passive_moderate_valid_payload_keeps_contract(self) -> None:
         payload = {
             "chat_id": "100",

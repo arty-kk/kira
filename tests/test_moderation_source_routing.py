@@ -297,7 +297,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(flagged)
         system_prompt = call_mock.await_args.kwargs["input"][0]["content"][0]["text"]
         schema = call_mock.await_args.kwargs["text"]["format"]["schema"]
-        self.assertIn("Установи sexy_pic=true", system_prompt)
+        self.assertIn("sexy_pic=true", system_prompt)
         self.assertEqual(schema["required"], ["sexy_pic"])
         self.assertEqual(schema["properties"]["sexy_pic"]["type"], "boolean")
 
@@ -588,7 +588,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
-            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock(return_value=True)) as cleanup_mock,
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
             patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=False)) as nsfw_mock,
@@ -623,7 +623,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400, ALLOWED_GROUP_IDS=[-1001], COMMENT_SOURCE_CHANNEL_IDS=[])),
             patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
-            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock(return_value=True)) as cleanup_mock,
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
             patch.object(moderation, "check_light", check_light_mock),
@@ -651,6 +651,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         delete_mock.assert_awaited_once_with(-1001, 77)
         cleanup_mock.assert_awaited_once_with(-1001, 42)
         fake_redis.set.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
+        self.assertEqual(flag_mock.await_args.kwargs["action"], "ban")
         self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
         fake_redis.hset.assert_awaited_once()
         self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-1001:77")
@@ -665,7 +666,7 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", fake_redis),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
             patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)) as nsfw_mock,
-            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock()) as cleanup_mock,
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock(return_value=True)) as cleanup_mock,
             patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
             patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
             patch.object(moderation, "check_light", check_light_mock),
@@ -686,7 +687,39 @@ class ModerationHandlerSourceRoutingTests(unittest.IsolatedAsyncioTestCase):
         delete_mock.assert_awaited_once_with(-1001, 77)
         cleanup_mock.assert_awaited_once_with(-1001, 42)
         fake_redis.set.assert_any_await("mod:profile_nsfw_blocked:-1001:42", 1)
+        self.assertEqual(flag_mock.await_args.kwargs["action"], "ban")
         self.assertIn("profile_nsfw", flag_mock.await_args.kwargs["reason"])
+
+    async def test_handle_passive_moderation_profile_nsfw_uses_restrict_when_ban_fails(self) -> None:
+        fake_redis = _FakeRedis()
+        fake_redis.exists = AsyncMock(return_value=False)
+        check_light_mock = AsyncMock(return_value="clean")
+
+        with (
+            patch.object(moderation, "redis_client", fake_redis),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_ADMIN_EXEMPT=False, MODERATION_PROFILE_NSFW_ENFORCE=True, MOD_ALERT_THROTTLE_SECONDS=60, MOD_LIGHT_TIMEOUT=2.0, MOD_DEEP_TIMEOUT=5.0, MOD_DEEP_TEXT_THRESHOLD=400)),
+            patch.object(moderation, "_is_profile_nsfw", AsyncMock(return_value=True)),
+            patch.object(moderation, "_cleanup_user_history_and_mute", AsyncMock(return_value=False)) as cleanup_mock,
+            patch.object(moderation, "_delete_message_safe", AsyncMock(return_value=True)) as delete_mock,
+            patch.object(moderation, "_flag", AsyncMock()) as flag_mock,
+            patch.object(moderation, "check_light", check_light_mock),
+        ):
+            status = await moderation.handle_passive_moderation(
+                chat_id=-1001,
+                message=None,
+                text="hello",
+                entities=[],
+                source="user",
+                user_id=42,
+                message_id=77,
+            )
+
+        self.assertEqual(status, "blocked")
+        check_light_mock.assert_not_awaited()
+        delete_mock.assert_awaited_once_with(-1001, 77)
+        cleanup_mock.assert_awaited_once_with(-1001, 42)
+        self.assertEqual(flag_mock.await_args.kwargs["action"], "restrict")
+
 
     async def test_handle_passive_moderation_passes_channel_source_as_is(self) -> None:
         fake_redis = _FakeRedis()
