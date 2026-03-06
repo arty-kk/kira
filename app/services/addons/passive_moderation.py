@@ -600,16 +600,14 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         return False
 
     system_prompt = (
-        "Ты — строгий модератор визуального контента. Классифицируй изображение для NSFW-поиска.\n\n"
-        "Верни только один ярлык:\n"
-        "- NSFW — любая нагота, купальники, бельё, прозрачная или откровенная одежда, акцент на интимных зонах, эротические позы, сексуальный контент.\n"
-        "- SFW — только полностью неоткровенный, неэротичный контент.\n\n"
-        "Правила:\n"
-        "1. Будь максимально строгим.\n"
-        "2. При сомнении выбирай NSFW.\n"
-        "3. Не объясняй решение. Верни только ярлык."
+        "Ты — строгий модератор визуального контента. Классифицируй изображение.\n\n"
+        "Установи sexy_pic=true, если:\n"
+        "- на изображении есть обнажённая женщина или мужчина, или\n"
+        "- человек в купальнике/нижнем белье демонстрирует интимные зоны, или\n"
+        "- человек в купальнике/нижнем белье принимает эротическую позу, или\n"
+        "- изображение носит откровенно сексуализированный характер.\n\n"
+        "Во всех остальных случаях установи sexy_pic=false."
     )
-
 
     try:
         resp = await asyncio.wait_for(
@@ -619,10 +617,18 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                 model=settings.BASE_MODEL,
                 model_role="base",
                 input=[
-                    {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                    {
+                        "role": "system",
+                        "content": [{"type": "input_text", "text": system_prompt}],
+                    },
                     {
                         "role": "user",
-                        "content": [{"type": "input_image", "image_url": f"data:{image_mime};base64,{payload}"}],
+                        "content": [
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:{image_mime};base64,{payload}",
+                            }
+                        ],
                     },
                 ],
                 text={
@@ -633,18 +639,16 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "label": {
-                                    "type": "string",
-                                    "enum": ["NSFW", "SFW"],
-                                    "description": "Строковый ярлык классификации профиля: только 'NSFW' или 'SFW'.",
-                                },
+                                "sexy_pic": {
+                                    "type": "boolean"
+                                }
                             },
-                            "required": ["label"],
+                            "required": ["sexy_pic"],
                             "additionalProperties": False,
                         },
                     }
                 },
-                max_output_tokens=32,
+                max_output_tokens=16,
             ),
             timeout=10.0,
         )
@@ -653,12 +657,14 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
         return False
 
     try:
-        payload = json.loads(_get_output_text(resp) or "{}")
+        result = json.loads(_get_output_text(resp) or "{}")
     except Exception:
         return False
-    if not isinstance(payload, dict):
+
+    if not isinstance(result, dict):
         return False
-    return str(payload.get("label", "")).strip().upper() == "NSFW"
+
+    return bool(result.get("sexy_pic", False))
 
 
 async def moderate_with_openai(
