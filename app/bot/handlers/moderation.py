@@ -374,6 +374,8 @@ async def _notify_auto_ban_with_actions(
     chat_id: int,
     offender_id: int,
     reason_text: str,
+    msg_id: int | None = None,
+    chat_title: str | None = None,
 ) -> None:
     if not targets:
         return
@@ -384,12 +386,17 @@ async def _notify_auto_ban_with_actions(
     if normalized_reason.startswith("context="):
         normalized_reason = ""
     safe_reason = html.escape(normalized_reason or "automatic moderation")
+    safe_chat_name = html.escape(chat_title.strip()) if chat_title and chat_title.strip() else ""
+    chat_scope = f"{safe_chat_name} | " if safe_chat_name else ""
     text = (
-        "🚫 <b>User banned by bot</b>\n"
-        f"Chat ID: <code>{int(chat_id)}</code>\n"
+        f"🚫 <b>User banned by bot ({chat_scope}chat ID: <code>{int(chat_id)}</code>)</b>\n"
         f"User: <a href=\"tg://user?id={int(offender_id)}\">Open profile</a> (<code>{int(offender_id)}</code>)\n"
-        f"Reason: <b>{safe_reason}</b>."
+        + (f"Message ID: <code>{int(msg_id)}</code>\n" if msg_id else "")
+        + f"Reason: <b>{safe_reason}</b>."
     )
+    if msg_id and str(chat_id).startswith("-100"):
+        public_chat_id = str(chat_id)[4:]
+        text += f"\n<a href=\"https://t.me/c/{public_chat_id}/{int(msg_id)}\">Link to message</a>"
 
     local_bot = get_bot()
     await asyncio.gather(
@@ -625,6 +632,8 @@ async def handle_passive_moderation(
                             chat_id=chat_id,
                             offender_id=_uid,
                             reason_text="profile_nsfw_blocked",
+                            msg_id=_mid,
+                            chat_title=chat_title or getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 logger.info(
@@ -650,6 +659,8 @@ async def handle_passive_moderation(
                             chat_id=chat_id,
                             offender_id=_uid,
                             reason_text="profile_nsfw",
+                            msg_id=_mid,
+                            chat_title=chat_title or getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 logger.info(
@@ -1072,9 +1083,28 @@ def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
     return f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"
 
 
+def _profile_nsfw_scan_cache_key(user_id: int) -> str:
+    return f"mod:profile_nsfw_scan:{int(user_id)}"
+
+
 async def _is_profile_nsfw(user_id: int) -> bool:
     if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
         return False
+
+    cache_ttl = int(max(60, int(getattr(settings, "MODERATION_PROFILE_NSFW_CACHE_SECONDS", 172800))))
+    cache_key = _profile_nsfw_scan_cache_key(user_id)
+
+    try:
+        cached = await redis_client.get(cache_key)
+        if isinstance(cached, (bytes, bytearray)):
+            cached = cached.decode("utf-8", "ignore")
+        cached_norm = str(cached or "").strip().lower()
+        if cached_norm in {"1", "true", "nsfw"}:
+            return True
+        if cached_norm in {"0", "false", "sfw"}:
+            return False
+    except Exception:
+        logger.debug("profile nsfw cache read failed for user_id=%s", user_id, exc_info=True)
 
     flagged = False
     try:
@@ -1093,6 +1123,11 @@ async def _is_profile_nsfw(user_id: int) -> bool:
     except Exception:
         logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
         flagged = False
+
+    try:
+        await redis_client.set(cache_key, ("1" if flagged else "0"), ex=cache_ttl)
+    except Exception:
+        logger.debug("profile nsfw cache write failed for user_id=%s", user_id, exc_info=True)
 
     return flagged
 
@@ -1762,6 +1797,8 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
                             chat_id=chat_id,
                             offender_id=int(u.id),
                             reason_text=_ctx_reason("first_link_after_join"),
+                            msg_id=message.message_id,
+                            chat_title=getattr(getattr(message, "chat", None), "title", None),
                         )
                     )
                 return True

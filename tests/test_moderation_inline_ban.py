@@ -99,11 +99,20 @@ class ModerationInlineBanTests(unittest.IsolatedAsyncioTestCase):
                 chat_id=-100500,
                 offender_id=777,
                 reason_text="first_link_after_join|context=comment",
+                msg_id=42,
+                chat_title="Main Chat",
             )
 
         sent_text = send_mock.await_args.args[2]
+        self.assertIn("User banned by bot (Main Chat | chat ID: <code>-100500</code>)", sent_text)
+        self.assertIn("Message ID: <code>42</code>", sent_text)
+        self.assertIn('https://t.me/c/500/42', sent_text)
         self.assertIn("Reason: <b>first_link_after_join</b>.", sent_text)
         self.assertNotIn("|context=comment", sent_text)
+
+        reply_markup = send_mock.await_args.kwargs["reply_markup"]
+        button = reply_markup.inline_keyboard[0][0]
+        self.assertEqual("mod:unban:-100500:777", button.callback_data)
 
 
 if __name__ == "__main__":
