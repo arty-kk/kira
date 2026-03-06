@@ -95,6 +95,21 @@ _BRACKETED_DOT_RE = re.compile(r"\[\s*\.\s*\]|\(\s*\.\s*\)|\{\s*\.\s*\}", re.IGN
 _DOT_WORD_RE = re.compile(r"\b(dot|точка|дот)\b", re.IGNORECASE)
 _DOT_LIKE = "•·∙⋅∘｡。・●○◦"
 _ORDER_UUID_RE = re.compile(r"\b([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})\b")
+_TG_SANITIZE_RE = re.compile(
+    r"(?i)(?:tg[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*:"
+    r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*//|"
+    r"t[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*\."
+    r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*me|"
+    r"telegram[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*\."
+    r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*(?:me|dog))"
+)
+_URL_SANITIZE_RE = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>'\"]+")
+_PUBLIC_DOMAIN_RE = re.compile(r"(?<!@)\b(?:[a-z][a-z0-9-]{0,62}\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,60})(?:/[^\s<>'\"]*)?", re.IGNORECASE)
+_TG_OBFUSCATED_RE = re.compile(
+    r"(?<![a-z0-9])(?:"
+    r"(?:t[\s_\-\(\)\[\]\{\}]*\.[\s_\-\(\)\[\]\{\}]*me|telegram[\s_\-\(\)\[\]\{\}]*\.[\s_\-\(\)\[\]\{\}]*me|telegram[\s_\-\(\)\[\]\{\}]*\.[\s_\-\(\)\[\]\{\}]*dog)"
+    r"|(?:tg[\s_\-\(\)\[\]\{\}]*:[\s_\-\(\)\[\]\{\}]*//))(?![a-z0-9])", re.IGNORECASE
+)
 
 
 def extract_order_uuid(text: str) -> str | None:
@@ -134,12 +149,15 @@ def _normalize_for_url_detection(s: str) -> str:
 def contains_telegram_obfuscated(text: str) -> bool:
     if not text:
         return False
+        
     s = _normalize_for_url_detection(text)
-    sep = r"[\s_\-\(\)\[\]\{\}]*"
-    tg_domain = rf"(?:t{sep}\.{sep}me|telegram{sep}\.{sep}me|telegram{sep}\.{sep}dog)"
-    tg_proto  = rf"(?:tg{sep}:{sep}//)"
-    pat = re.compile(rf"(?<![a-z0-9])(?:{tg_domain}|{tg_proto})(?![a-z0-9])", re.IGNORECASE)
-    return bool(pat.search(s))
+    return bool(_TG_OBFUSCATED_RE.search(s))
+
+
+def _sanitize_public_domain_match(m: re.Match[str]) -> str:
+    value = m.group(0)
+    return SANITIZE_REPLACE_TG_LINK if is_telegram_link(value) else SANITIZE_REPLACE_ANY_LINK
+
 
 _EMOJI_FLOOD_RE = re.compile(
     "["
@@ -253,22 +271,12 @@ def sanitize_for_context(
 
     s = _strip_zero_width(s)
 
-    if replace_links:
-        sep = r"[\s_\-\(\)\[\]\{\}\u200B\u200C\u200D\u2060\u180E\uFEFF]*"
-        tg_pat = re.compile(rf"(?i)(?:tg{sep}:{sep}//|t{sep}\.{sep}me|telegram{sep}\.{sep}(?:me|dog))")
-        s = tg_pat.sub(SANITIZE_REPLACE_TG_LINK, s)
+    if not replace_links:
+        return s
 
-        url_pat = re.compile(r"(?i)\b(?:https?://|www\.)[^\s<>'\"]+")
-        s = url_pat.sub(SANITIZE_REPLACE_ANY_LINK, s)
-
-    try:
-        if replace_links:
-            found = extract_urls(text, entities)
-            for u in found:
-                repl = SANITIZE_REPLACE_TG_LINK if is_telegram_link(u) else SANITIZE_REPLACE_ANY_LINK
-                s = s.replace(u, repl)
-    except Exception:
-        pass
+    s = _TG_SANITIZE_RE.sub(SANITIZE_REPLACE_TG_LINK, s)
+    s = _URL_SANITIZE_RE.sub(SANITIZE_REPLACE_ANY_LINK, s)
+    s = _PUBLIC_DOMAIN_RE.sub(_sanitize_public_domain_match, s)
 
     return s
 
@@ -322,7 +330,7 @@ async def is_flooding(chat_id: int, user_id: int) -> bool:
         except Exception:
             continue
 
-    return len(valid) > max_msgs
+    return len(valid) >= max_msgs
 
 
 def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
@@ -348,13 +356,8 @@ def extract_urls(text: str, entities: List[dict] | None = None) -> List[str]:
         if u not in urls:
             urls.append(u)
 
-    domain_re = re.compile(
-        r"(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,60})"
-        r"(?:/[^\s<>'\"]*)?",
-        re.IGNORECASE,
-    )
-    for m in domain_re.finditer(norm):
-        candidate = m.group(0).rstrip(strip_trail)
+    for m in _PUBLIC_DOMAIN_RE.finditer(norm):
+        candidate = m.group(0).rstrip(strip_trail).lower()
 
         if len(candidate) < 4:
             continue
@@ -411,21 +414,15 @@ async def extract_external_mentions(
     semaphore = asyncio.Semaphore(resolve_concurrency)
 
     async def _resolve_outcome(uname: str) -> str:
-        cache_key = f"mod:mention_resolve:{uname}"
         try:
-            cached = await redis.hget(f"user_map:{chat_id}", uname)
-        except RedisError:
-            logger.warning("extract_external_mentions: Redis error for chat %s", chat_id)
-            cached = None
-        if cached:
-            return "ok_user"
-
-        try:
+            cache_key = f"mod:mention_resolve:{chat_id}:{uname}"
             cached_outcome = await redis.get(cache_key)
             if cached_outcome:
                 if isinstance(cached_outcome, (bytes, bytearray)):
                     cached_outcome = cached_outcome.decode("utf-8", "ignore")
                 cached_outcome = str(cached_outcome).strip().lower()
+                if cached_outcome == "ok_user_present":
+                    return "ok_user"
                 if cached_outcome in {"ok_user", "channel", "bot", "not_found", "unknown_error"}:
                     return cached_outcome
         except Exception:
@@ -481,21 +478,24 @@ async def extract_external_mentions(
             logger.debug("extract_external_mentions: mention cache write failed", exc_info=True)
         return outcome
 
-    outcomes = await asyncio.gather(*(_resolve_outcome(uname) for uname in usernames), return_exceptions=True)
-    for uname, outcome in zip(usernames, outcomes):
-        if isinstance(outcome, Exception):
-            has_unresolved = True
-            logger.warning(
-                "extract_external_mentions: unknown_error gather exception chat_id=%s uname=%s",
-                chat_id,
-                uname,
-                exc_info=(type(outcome), outcome, outcome.__traceback__),
-            )
-            continue
-        if outcome in {"channel", "bot"}:
-            external.append(uname)
-        elif outcome == "unknown_error":
-            has_unresolved = True
+    batch_size = max(1, resolve_concurrency)
+    for i in range(0, len(usernames), batch_size):
+        batch = usernames[i:i + batch_size]
+        outcomes = await asyncio.gather(*(_resolve_outcome(uname) for uname in batch), return_exceptions=True)
+        for uname, outcome in zip(batch, outcomes):
+            if isinstance(outcome, Exception):
+                has_unresolved = True
+                logger.warning(
+                    "extract_external_mentions: unknown_error gather exception chat_id=%s uname=%s",
+                    chat_id,
+                    uname,
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+                continue
+            if outcome in {"channel", "bot"}:
+                external.append(uname)
+            elif outcome == "unknown_error":
+                has_unresolved = True
 
     return external, has_unresolved
 
@@ -509,11 +509,7 @@ def contains_any_link_obfuscated(text: str) -> bool:
     if contains_telegram_obfuscated(text):
         return True
 
-    domain_re = re.compile(
-        r"(?<!@)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,60})",
-        re.IGNORECASE,
-    )
-    return bool(domain_re.search(norm))
+    return bool(_PUBLIC_DOMAIN_RE.search(norm))
 
 
 def url_is_unwanted(url: str, *, policy: dict[str, Any] | None = None) -> bool:
@@ -710,21 +706,17 @@ async def moderate_with_openai(
         return False
 
     moderation_prompt_parts = [
-        "Ты — модератор Telegram-сообщений. Верни JSON по схеме. "
-        "Ставь флаг true только при явных признаках с уверенностью не ниже 70%; иначе false.\n",
-    
-        "- regular_promo=true: реклама, продвижение, призыв вступить, подписаться, перейти во внешние источники, сторонние сообщества, каналы, чаты, профили или сайты.\n",
-    
-        "- income_promo=true: предложение заработка, инвестиций, вакансии, подработки или работы. "
-        "Не ставь income_promo для жалоб на возврат, недоставку, ожидание возврата, нерабочий товар или код без предложения заработать.\n",
-    
-        "- sex_abuse=true: сексуализированный контент, сексуальные намёки/описания, сексуальное насилие или иные материалы, неприемлемые для чата с детьми.\n",
-    
-        "- promo_war=true: реклама войны, военного контента, службы, вербовки, участия в боевых действиях, "
-        "а также призыв смотреть, читать, подписываться или переходить во внешние источники за военными материалами, кадрами насилия, крови, боёв или 'правдой о войне'.\n",
-    
-        "- promo_war=false: нейтральное обсуждение новостей, истории, политики, осуждение войны, личные переживания без продвижения, "
-        "а также упоминание армии, фронта или боевых действий без рекламы, вербовки и призыва перейти во внешние источники.\n",
+        "Ты — модератор Telegram-сообщений. Верни JSON по схеме.\n\n"
+        "Правила:\n"
+        "- Если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу или продвижение, призыв куда-то вступить или подписаться,"
+        " перейти во внешние источники (сторонние сообщества, каналы, чаты, профили, био или сайты) → поставь regular_promo=true; если уровень уверенности ниже 70% → установи regular_promo=false.\n"
+        "- Если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, денег, инвестиций, вакансии, подработки или работы,"
+        " → поставь income_promo=true; если уровень уверенности ниже 70%, или сообщение содержит жалобу на возврат, недоставку, обсуждение промокода/скидки/скинов, ожидание возврата, нерабочий товар или код без предложения заработать → установи income_promo=false.\n"
+        "- Если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение интимных услуг → поставь sex_abuse=true; если уровень уверенности ниже 70% → установи sex_abuse=false.\n"
+        "- Если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу войны/военного контента/службы/вербовки/участия в боевых действиях,"
+        " а также призыв смотреть, читать, подписываться или переходить во внешние источники за военными материалами, кадрами насилия, крови, боёв или 'правдой о войне' → поставь promo_war=true;"
+        " если уровень уверенности ниже 70%, или в сообщении нейтральное обсуждение новостей/истории/политики/осуждение войны/личные переживания без продвижения,"
+        " а также упоминание армии/фронта/боевых действий без рекламы/вербовки/призыва перейти во внешние источники → установи promo_war=false.\n"
     ]
     if not disable_insult_threat:
         moderation_prompt_parts.insert(
@@ -890,6 +882,9 @@ async def check_light(
     if custom_emoji_threshold > 0 and custom_emoji_count >= custom_emoji_threshold:
         return "custom_emoji_spam"
 
+    if links_blocked and contains_telegram_obfuscated(text or ""):
+        return "link_violation"
+
     if len(urls) > int(getattr(settings, "MODERATION_SPAM_LINK_THRESHOLD", 5)):
         return "spam_links"
 
@@ -903,9 +898,6 @@ async def check_light(
         if has_unresolved_mentions and bool(getattr(settings, "MODERATION_DELETE_UNRESOLVED_MENTIONS", False)):
             logger.debug("check_light: unresolved_mentions link_violation")
             return "link_violation"
-
-    if links_blocked and contains_telegram_obfuscated(text or ""):
-        return "link_violation"
 
     for u in urls:
         if links_blocked and url_is_unwanted(u, policy=policy):
