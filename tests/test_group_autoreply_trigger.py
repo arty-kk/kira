@@ -137,7 +137,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
         )
 
         reply_message = types.SimpleNamespace(reply_to_message=types.SimpleNamespace(message_id=1))
-        self.assertFalse(
+        self.assertTrue(
             group._is_clean_message_for_on_topic(
                 reply_message,
                 mentioned=False,
@@ -163,7 +163,7 @@ class CleanOnTopicMessageTests(unittest.TestCase):
                 is_comment_context=False,
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             group._is_clean_message_for_on_topic(
                 clean_message,
                 mentioned=False,
@@ -419,7 +419,7 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(payload["skip_responder_enqueue"])
         self.assertEqual(payload["file_id"], "photo-file-id")
 
-    async def test_mentions_other_still_dispatches_passive_moderation(self) -> None:
+    async def test_mentions_other_allows_check_on_topic_generation(self) -> None:
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=123),
             message_id=77,
@@ -496,7 +496,8 @@ class GroupHandlerTriggerContractTests(unittest.IsolatedAsyncioTestCase):
 
             await group.on_group_message(message)
 
-        buffer_mock.assert_not_called()
+        buffer_mock.assert_called_once()
+        self.assertEqual(buffer_mock.call_args.args[0]["trigger"], "check_on_topic")
         dispatch_mock.assert_called_once()
 
     async def _trigger_from_text(
