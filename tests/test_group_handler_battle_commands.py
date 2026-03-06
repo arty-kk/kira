@@ -21,6 +21,7 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
                     set=AsyncMock(return_value=True),
                     sismember=AsyncMock(return_value=False),
                     hget=AsyncMock(return_value=None),
+                    exists=AsyncMock(return_value=False),
                 )
                 delay_mock = Mock()
                 delete_mock = AsyncMock()
@@ -44,6 +45,7 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(group.battle_launch_task, "delay", delay_mock),
                     patch.object(group, "delete_message_safe", delete_mock),
                     patch.object(group, "send_message_safe", send_mock),
+                    patch.object(group.bot, "get_chat_member", AsyncMock(return_value=types.SimpleNamespace(status="member"))),
                 ):
                     handled = await group._maybe_handle_battle(
                         message,
@@ -68,16 +70,11 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
                     send_mock.assert_not_called()
 
 
-    async def test_battle_blocks_moderation_flagged_challenger(self) -> None:
-        async def _sismember(key: str, _value) -> bool:
-            if key == "mod_flagged_users:101":
-                return True
-            return False
-
+    async def test_battle_blocks_banned_opponent(self) -> None:
         redis_mock = types.SimpleNamespace(
             set=AsyncMock(return_value=True),
-            sismember=AsyncMock(side_effect=_sismember),
-            hget=AsyncMock(return_value=None),
+            sismember=AsyncMock(return_value=False),
+            hget=AsyncMock(return_value="303"),
             exists=AsyncMock(return_value=False),
         )
         delay_mock = Mock()
@@ -86,9 +83,12 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
         message = types.SimpleNamespace(
             chat=types.SimpleNamespace(id=101),
             from_user=types.SimpleNamespace(id=202, is_bot=False),
-            text="/battle",
+            text="/battle @target",
             caption=None,
-            entities=[types.SimpleNamespace(type=MessageEntityType.BOT_COMMAND, offset=0, length=7)],
+            entities=[
+                types.SimpleNamespace(type=MessageEntityType.BOT_COMMAND, offset=0, length=7),
+                types.SimpleNamespace(type=MessageEntityType.MENTION, offset=8, length=7),
+            ],
             caption_entities=[],
             reply_to_message=None,
             message_id=303,
@@ -101,6 +101,7 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group.battle_launch_task, "delay", delay_mock),
             patch.object(group, "delete_message_safe", AsyncMock()),
             patch.object(group, "send_message_safe", send_mock),
+            patch.object(group.bot, "get_chat_member", AsyncMock(return_value=types.SimpleNamespace(status="kicked"))),
         ):
             handled = await group._maybe_handle_battle(message, trigger="mention")
 
@@ -114,6 +115,7 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
             set=AsyncMock(side_effect=[True, False]),
             sismember=AsyncMock(return_value=False),
             hget=AsyncMock(return_value=None),
+            exists=AsyncMock(return_value=False),
         )
         delay_mock = Mock()
 
@@ -124,6 +126,7 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
             patch.object(group.battle_launch_task, "delay", delay_mock),
             patch.object(group, "delete_message_safe", AsyncMock()),
             patch.object(group, "send_message_safe", AsyncMock()),
+            patch.object(group.bot, "get_chat_member", AsyncMock(return_value=types.SimpleNamespace(status="member"))),
         ):
             for msg_id in (1, 2):
                 message = types.SimpleNamespace(

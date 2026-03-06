@@ -825,10 +825,12 @@ async def _is_battle_clean_user(chat_id: int, user_id: int) -> bool:
         logger.debug("battle eligibility: profile nsfw lookup failed", exc_info=True)
 
     try:
-        if await redis_client.sismember(f"mod_flagged_users:{int(chat_id)}", int(user_id)):
+        member = await bot.get_chat_member(int(chat_id), int(user_id))
+        status = str(getattr(member, "status", "") or "").strip().lower()
+        if status == "kicked":
             return False
     except Exception:
-        logger.debug("battle eligibility: flagged-users lookup failed", exc_info=True)
+        logger.debug("battle eligibility: chat member status lookup failed", exc_info=True)
 
     return True
 
