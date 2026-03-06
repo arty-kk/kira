@@ -51,6 +51,7 @@ def should_delete_ai_flagged_message(flags: tuple[str, ...]) -> bool:
     delete_policy = {
         "regular_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_REGULAR_PROMO", True)),
         "income_promo": bool(getattr(settings, "MODERATION_DELETE_FLAG_INCOME_PROMO", True)),
+        "promo_war": bool(getattr(settings, "MODERATION_DELETE_FLAG_PROMO_WAR", True)),
         "insult_abuse": (False if disable_insult_threat else bool(getattr(settings, "MODERATION_DELETE_FLAG_INSULT_ABUSE", True))),
         "threat_abuse": (False if disable_insult_threat else bool(getattr(settings, "MODERATION_DELETE_FLAG_THREAT_ABUSE", True))),
         "sex_abuse": bool(getattr(settings, "MODERATION_DELETE_FLAG_SEX_ABUSE", True)),
@@ -572,6 +573,7 @@ def _parse_ai_moderation_json(raw: str) -> dict[str, bool]:
     return {
         "regular_promo": bool(payload.get("regular_promo", False)),
         "income_promo": bool(payload.get("income_promo", False)),
+        "promo_war": bool(payload.get("promo_war", False)),
         "insult_abuse": (False if disable_insult_threat else bool(payload.get("insult_abuse", False))),
         "threat_abuse": (False if disable_insult_threat else bool(payload.get("threat_abuse", False))),
         "sex_abuse": (False if disable_insult_threat else bool(payload.get("sex_abuse", False))),
@@ -680,21 +682,24 @@ async def moderate_with_openai(
     moderation_prompt_parts = [
         "Ты — профессиональный модератор чатов и комментариев Telegram-сообществ компании kupikod.com. "
         "Заполни поля, если найдёшь явные и недвусмысленные признаки, опасные для сообщества, в котором в том числе присутствуют дети:\n",
-        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества, ряды бойцов фронта, какие-то группировки, меньшинства, или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 80% → установи regular_promo=false.\n",
-        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 80% → установи income_promo=false.\n",
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу, призыв вступить в сторонние сообщества, какие-то группировки, меньшинства, или перейти во внешние источники с целью продвижения → поставь regular_promo=true. Если уровень уверенности ниже 60% → установи regular_promo=false.\n",
+        "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) предложение заработка, инвестиций или работы → поставь income_promo=true. Если уровень уверенности ниже 60% → установи income_promo=false.\n",
         "- НЕ ставь income_promo для жалоб в поддержку о возврате денег, недоставке, ожидании возврата или нерабочем коде/товаре без предложения заработать.\n",
+        "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) рекламу войны, военного контента, участия в боевых действиях, службы, вербовки, призывов вступить в ряды бойцов, продвижение связанных с войной каналов/чатов/профилей, либо призыв перейти во внешние источники за военными материалами, кадрами насилия, крови, боёв или «правдой о войне» → поставь promo_war=true. Если уровень уверенности ниже 60% → установи promo_war=false.\n",
+        "- Ставь promo_war и в случаях, когда военная тематика подаётся как личный опыт участника боевых действий, как приглашение смотреть контент с фронта, подписаться, зайти в профиль, канал, чат, сообщество или перейти по ссылке.\n",
+        "- НЕ ставь promo_war для нейтрального обсуждения новостей, истории, политики, осуждения войны, сообщений о личных переживаниях без продвижения, а также для упоминания армии, фронта или боевых действий без рекламы, вербовки или призыва перейти во внешние источники.\n",
     ]
     if not disable_insult_threat:
         moderation_prompt_parts.insert(
             3,
-            "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 80% → установи insult_abuse=false.\n",
+            "- если сообщение содержит прямое или намеренно завуалированное (обфускацию) оскорбление конкретных лиц или участников обсуждения с использованием уничижительной или ненормативной лексики → поставь insult_abuse=true. Если уровень уверенности ниже 60% → установи insult_abuse=false.\n",
         )
         moderation_prompt_parts.insert(
             4,
-            "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 80% → установи threat_abuse=false.\n",
+            "- если сообщение содержит прямую или намеренно завуалированную (обфускацию) угрозу причинения вреда жизни, здоровью или репутации конкретных лиц → поставь threat_abuse=true. Если уровень уверенности ниже 60% → установи threat_abuse=false.\n",
         )
         moderation_prompt_parts.append(
-            "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 80% → установи sex_abuse=false.",
+            "- если сообщение содержит сексуализированный контент или сексуальное насилие (в т.ч. намёки/описания, неприемлемые для чатов с детьми) → поставь sex_abuse=true. Если уровень уверенности ниже 60% → установи sex_abuse=false.",
         )
     moderation_prompt = "".join(moderation_prompt_parts)
 
@@ -705,14 +710,15 @@ async def moderate_with_openai(
         user_content.append({"type": "input_image", "image_url": f"data:{image_mime or 'image/jpeg'};base64,{(image_b64 or '').strip()}"})
 
     moderation_schema_properties: dict[str, dict[str, str]] = {
-        "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=80%."},
-        "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=80%."},
+        "regular_promo": {"type": "boolean", "description": "Реклама/CTA во внешние источники с уверенностью >=60%."},
+        "income_promo": {"type": "boolean", "description": "Предложения заработка/инвестиций/работы с уверенностью >=60%."},
+        "promo_war": {"type": "boolean", "description": "Реклама войны/военного контента/вербовки и перехода во внешние источники с уверенностью >=60%."},
     }
-    moderation_schema_required = ["regular_promo", "income_promo"]
+    moderation_schema_required = ["regular_promo", "income_promo", "promo_war"]
     if not disable_insult_threat:
         moderation_schema_properties["sex_abuse"] = {
             "type": "boolean",
-            "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=80%.",
+            "description": "Сексуализированный контент или сексуальное насилие с уверенностью >=60%.",
         }
         moderation_schema_required.append("sex_abuse")
 
@@ -752,7 +758,7 @@ async def moderate_with_openai(
     if _should_suppress_income_promo(text=trimmed, parsed=parsed):
         parsed["income_promo"] = False
 
-    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "insult_abuse", "threat_abuse", "sex_abuse") if parsed.get(k, False)))
+    triggered_flags = tuple(sorted(k for k in ("regular_promo", "income_promo", "promo_war", "insult_abuse", "threat_abuse", "sex_abuse") if parsed.get(k, False)))
     primary_category = triggered_flags[0] if triggered_flags else ""
     flagged = bool(triggered_flags)
 

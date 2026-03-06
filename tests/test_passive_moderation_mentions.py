@@ -812,6 +812,19 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(flagged)
         self.assertEqual(passive_moderation.get_last_ai_moderation_flags(), ("sex_abuse",))
 
+
+    async def test_moderate_with_openai_flags_promo_war(self) -> None:
+        response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"promo_war":true,"insult_abuse":false,"threat_abuse":false}')
+
+        with (
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(ENABLE_AI_MODERATION=True, BASE_MODEL="gpt-5-nano")),
+            patch.object(passive_moderation, "_call_openai_with_retry", AsyncMock(return_value=response)),
+        ):
+            flagged = await passive_moderation.moderate_with_openai("Подписывайтесь на канал с кадрами с фронта")
+
+        self.assertTrue(flagged)
+        self.assertEqual(passive_moderation.get_last_ai_moderation_flags(), ("promo_war",))
+
     async def test_moderate_with_openai_flagged_false_with_high_score_stays_false(self) -> None:
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":false,"insult_abuse":false,"threat_abuse":false}')
 
@@ -880,7 +893,7 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         call_mock.assert_not_awaited()
 
     async def test_parse_ai_moderation_json_disables_insult_and_threat_flags(self) -> None:
-        raw = '{"regular_promo": false, "income_promo": false, "insult_abuse": true, "threat_abuse": true, "sex_abuse": false}'
+        raw = '{"regular_promo": false, "income_promo": false, "promo_war": false, "insult_abuse": true, "threat_abuse": true, "sex_abuse": false}'
         with patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_DISABLE_INSULT_THREAT_AI=True)):
             parsed = passive_moderation._parse_ai_moderation_json(raw)
 
@@ -888,6 +901,15 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(parsed.get("threat_abuse"))
         self.assertFalse(parsed.get("sex_abuse"))
 
+
+
+
+    async def test_parse_ai_moderation_json_reads_promo_war_flag(self) -> None:
+        raw = '{"regular_promo": false, "income_promo": false, "promo_war": true}'
+        with patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_DISABLE_INSULT_THREAT_AI=True)):
+            parsed = passive_moderation._parse_ai_moderation_json(raw)
+
+        self.assertTrue(parsed.get("promo_war"))
 
 
     async def test_check_light_keeps_clean_for_order_uuid(self) -> None:
