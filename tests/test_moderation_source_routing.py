@@ -320,12 +320,31 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
         classify_mock.assert_not_awaited()
         redis_mock.set.assert_not_awaited()
 
+    async def test_is_profile_nsfw_uses_legacy_sfw_cache_on_new_key_miss(self) -> None:
+        redis_mock = types.SimpleNamespace(
+            get=AsyncMock(side_effect=[None, "0"]),
+            set=AsyncMock(),
+        )
+        photos = types.SimpleNamespace(photos=[[types.SimpleNamespace(file_id="f1", file_unique_id="u1")]])
+
+        with (
+            patch.object(moderation, "redis_client", redis_mock),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
+            patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(return_value=photos)),
+            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=True)) as classify_mock,
+        ):
+            flagged = await moderation._is_profile_nsfw(42)
+
+        self.assertFalse(flagged)
+        classify_mock.assert_not_awaited()
+        redis_mock.set.assert_not_awaited()
+
     async def test_is_profile_nsfw_caches_sfw_result_when_classifier_returns_false(self) -> None:
         redis_mock = types.SimpleNamespace(
             get=AsyncMock(return_value=None),
             set=AsyncMock(),
         )
-        photos = types.SimpleNamespace(photos=[[types.SimpleNamespace(file_id="f1")]])
+        photos = types.SimpleNamespace(photos=[[types.SimpleNamespace(file_id="f1", file_unique_id="u1")]])
 
         with (
             patch.object(moderation, "redis_client", redis_mock),
@@ -338,7 +357,46 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
             flagged = await moderation._is_profile_nsfw(42)
 
         self.assertFalse(flagged)
-        redis_mock.set.assert_awaited_once_with("mod:profile_nsfw_scan:42", "0", ex=120)
+        redis_mock.set.assert_awaited_once_with("mod:profile_nsfw_scan:42:u1", "0", ex=120)
+
+    async def test_is_profile_nsfw_reclassifies_on_photo_signature_change(self) -> None:
+        cache = {
+            "mod:profile_nsfw_scan:42:old-unique": "0",
+        }
+
+        async def redis_get(key: str):
+            return cache.get(key)
+
+        redis_mock = types.SimpleNamespace(
+            get=AsyncMock(side_effect=redis_get),
+            set=AsyncMock(),
+        )
+        first_photo = types.SimpleNamespace(file_id="f-old", file_unique_id="old-unique")
+        second_photo = types.SimpleNamespace(file_id="f-new", file_unique_id="new-unique")
+
+        with (
+            patch.object(moderation, "redis_client", redis_mock),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
+            patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(side_effect=[types.SimpleNamespace(photos=[[first_photo]]), types.SimpleNamespace(photos=[[second_photo]])])),
+            patch.object(moderation.bot, "get_file", AsyncMock(return_value=types.SimpleNamespace(file_id="f-new"))),
+            patch.object(moderation.bot, "download", AsyncMock(side_effect=lambda _file, dst: dst.write(b"img"))),
+            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=False)) as classify_mock,
+        ):
+            flagged_first = await moderation._is_profile_nsfw(42)
+            flagged_second = await moderation._is_profile_nsfw(42)
+
+        self.assertFalse(flagged_first)
+        self.assertFalse(flagged_second)
+        classify_mock.assert_awaited_once()
+        self.assertEqual(
+            redis_mock.get.await_args_list,
+            [
+                unittest.mock.call("mod:profile_nsfw_scan:42:old-unique"),
+                unittest.mock.call("mod:profile_nsfw_scan:42:new-unique"),
+                unittest.mock.call("mod:profile_nsfw_scan:42"),
+            ],
+        )
+        redis_mock.set.assert_awaited_once_with("mod:profile_nsfw_scan:42:new-unique", "0", ex=120)
 
 
 class ProfileNsfwCleanupTests(unittest.IsolatedAsyncioTestCase):
