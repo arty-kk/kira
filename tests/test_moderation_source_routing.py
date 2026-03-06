@@ -261,8 +261,8 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-100777:17")
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
-    async def test_classify_profile_nsfw_fast_flags_when_label_is_nsfw(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"NSFW"}'))
+    async def test_classify_profile_nsfw_fast_flags_when_sexy_pic_true(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sexy_pic":true}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
@@ -273,8 +273,8 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
         self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
-    async def test_classify_profile_nsfw_fast_returns_false_for_label_sfw(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"SFW"}'))
+    async def test_classify_profile_nsfw_fast_returns_false_for_sexy_pic_false(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sexy_pic":false}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
@@ -286,8 +286,8 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
 
-    async def test_classify_profile_nsfw_fast_uses_strict_prompt_and_label_schema(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"SFW"}'))
+    async def test_classify_profile_nsfw_fast_uses_strict_prompt_and_boolean_schema(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sexy_pic":false}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
@@ -297,9 +297,48 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(flagged)
         system_prompt = call_mock.await_args.kwargs["input"][0]["content"][0]["text"]
         schema = call_mock.await_args.kwargs["text"]["format"]["schema"]
-        self.assertIn("При сомнении выбирай NSFW", system_prompt)
-        self.assertEqual(schema["required"], ["label"])
-        self.assertEqual(schema["properties"]["label"]["enum"], ["NSFW", "SFW"])
+        self.assertIn("Установи sexy_pic=true", system_prompt)
+        self.assertEqual(schema["required"], ["sexy_pic"])
+        self.assertEqual(schema["properties"]["sexy_pic"]["type"], "boolean")
+
+
+class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_is_profile_nsfw_uses_cached_sfw_and_skips_classifier(self) -> None:
+        redis_mock = types.SimpleNamespace(
+            get=AsyncMock(return_value="0"),
+            set=AsyncMock(),
+        )
+
+        with (
+            patch.object(moderation, "redis_client", redis_mock),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
+            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=True)) as classify_mock,
+        ):
+            flagged = await moderation._is_profile_nsfw(42)
+
+        self.assertFalse(flagged)
+        classify_mock.assert_not_awaited()
+        redis_mock.set.assert_not_awaited()
+
+    async def test_is_profile_nsfw_caches_sfw_result_when_classifier_returns_false(self) -> None:
+        redis_mock = types.SimpleNamespace(
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )
+        photos = types.SimpleNamespace(photos=[[types.SimpleNamespace(file_id="f1")]])
+
+        with (
+            patch.object(moderation, "redis_client", redis_mock),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
+            patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(return_value=photos)),
+            patch.object(moderation.bot, "get_file", AsyncMock(return_value=types.SimpleNamespace(file_id="f1"))),
+            patch.object(moderation.bot, "download", AsyncMock(side_effect=lambda _file, dst: dst.write(b"img"))),
+            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=False)),
+        ):
+            flagged = await moderation._is_profile_nsfw(42)
+
+        self.assertFalse(flagged)
+        redis_mock.set.assert_awaited_once_with("mod:profile_nsfw_scan:42", "0", ex=120)
 
 
 class ProfileNsfwCleanupTests(unittest.IsolatedAsyncioTestCase):
