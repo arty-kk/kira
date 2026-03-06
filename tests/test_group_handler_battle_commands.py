@@ -67,6 +67,48 @@ class GroupBattleCommandRoutingTests(unittest.IsolatedAsyncioTestCase):
                     delete_mock.assert_not_awaited()
                     send_mock.assert_not_called()
 
+
+    async def test_battle_blocks_moderation_flagged_challenger(self) -> None:
+        async def _sismember(key: str, _value) -> bool:
+            if key == "mod_flagged_users:101":
+                return True
+            return False
+
+        redis_mock = types.SimpleNamespace(
+            set=AsyncMock(return_value=True),
+            sismember=AsyncMock(side_effect=_sismember),
+            hget=AsyncMock(return_value=None),
+            exists=AsyncMock(return_value=False),
+        )
+        delay_mock = Mock()
+        send_mock = AsyncMock()
+
+        message = types.SimpleNamespace(
+            chat=types.SimpleNamespace(id=101),
+            from_user=types.SimpleNamespace(id=202, is_bot=False),
+            text="/battle",
+            caption=None,
+            entities=[types.SimpleNamespace(type=MessageEntityType.BOT_COMMAND, offset=0, length=7)],
+            caption_entities=[],
+            reply_to_message=None,
+            message_id=303,
+        )
+
+        with (
+            patch.object(group, "redis_client", redis_mock),
+            patch.object(group.consts, "BOT_ID", 999),
+            patch.object(group.consts, "BOT_USERNAME", "MyBot"),
+            patch.object(group.battle_launch_task, "delay", delay_mock),
+            patch.object(group, "delete_message_safe", AsyncMock()),
+            patch.object(group, "send_message_safe", send_mock),
+        ):
+            handled = await group._maybe_handle_battle(message, trigger="mention")
+
+        self.assertTrue(handled)
+        redis_mock.set.assert_not_awaited()
+        delay_mock.assert_not_called()
+        send_mock.assert_awaited_once()
+
     async def test_battle_dedup_blocks_double_enqueue(self) -> None:
         redis_mock = types.SimpleNamespace(
             set=AsyncMock(side_effect=[True, False]),

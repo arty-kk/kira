@@ -815,6 +815,23 @@ async def _resolve_battle_opponent_id(message: types.Message) -> int | None:
     return None
 
 
+
+
+async def _is_battle_clean_user(chat_id: int, user_id: int) -> bool:
+    try:
+        if await redis_client.exists(f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"):
+            return False
+    except Exception:
+        logger.debug("battle eligibility: profile nsfw lookup failed", exc_info=True)
+
+    try:
+        if await redis_client.sismember(f"mod_flagged_users:{int(chat_id)}", int(user_id)):
+            return False
+    except Exception:
+        logger.debug("battle eligibility: flagged-users lookup failed", exc_info=True)
+
+    return True
+
 async def _maybe_handle_battle(message: Message, *, trigger: str) -> bool:
     # returns True if handled (and handler should return)
     if trigger != "mention":
@@ -837,6 +854,32 @@ async def _maybe_handle_battle(message: Message, *, trigger: str) -> bool:
             bot,
             cid,
             await tr(cid, "group.battle.self", "🤔 You can't challenge yourself."),
+            reply_to_message_id=message.message_id,
+        )
+        return True
+
+    if not await _is_battle_clean_user(cid, int(challenger_id)):
+        await send_message_safe(
+            bot,
+            cid,
+            await tr(
+                cid,
+                "group.battle.challenger_moderation_blocked",
+                "🚫 Battles are available only to users without moderation bans.",
+            ),
+            reply_to_message_id=message.message_id,
+        )
+        return True
+
+    if int(opponent_id) != consts.BOT_ID and not await _is_battle_clean_user(cid, int(opponent_id)):
+        await send_message_safe(
+            bot,
+            cid,
+            await tr(
+                cid,
+                "group.battle.opponent_moderation_blocked",
+                "🚫 This user cannot be challenged right now due to moderation restrictions.",
+            ),
             reply_to_message_id=message.message_id,
         )
         return True
