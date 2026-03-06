@@ -1439,7 +1439,7 @@ async def apply_moderation_filters(chat_id: int, message: types.Message) -> bool
         if not ok:
             logger.warning("Moderation: failed to delete (%s) chat=%s msg=%s", reason, chat_id, message.message_id)
         try:
-            await redis_client.set(f"mod:prefilter_blocked:{chat_id}:{message.message_id}", 1, ex=86400)
+            await redis_client.set(f"mod:prefilter_blocked:{chat_id}:{message.message_id}", 1, ex=60)
         except Exception:
             logger.debug("prefilter blocked marker write failed", exc_info=True)
         return True
