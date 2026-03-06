@@ -261,8 +261,8 @@ class PassiveModerationSourceBehaviorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fake_redis.hset.await_args.args[0], "mod:msg:-100777:17")
 
 class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
-    async def test_classify_profile_nsfw_fast_flags_when_sex_abuse_true(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":true}'))
+    async def test_classify_profile_nsfw_fast_flags_when_label_is_nsfw(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"NSFW"}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
@@ -273,8 +273,8 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_mock.await_args.kwargs["model"], "gpt-5-nano")
         self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
-    async def test_classify_profile_nsfw_fast_returns_false_for_sex_abuse_false(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))
+    async def test_classify_profile_nsfw_fast_returns_false_for_label_sfw(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"SFW"}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
             patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
@@ -286,22 +286,20 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call_mock.await_args.kwargs["model_role"], "base")
 
 
-    async def test_classify_profile_nsfw_fast_uses_stricter_default_threshold_and_erotic_pose_rule(self) -> None:
-        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"sex_abuse":false}'))
+    async def test_classify_profile_nsfw_fast_uses_strict_prompt_and_label_schema(self) -> None:
+        call_mock = AsyncMock(return_value=types.SimpleNamespace(output_text='{"label":"SFW"}'))
         with (
             patch.object(passive_moderation, "_call_openai_with_retry", call_mock),
-            patch.object(
-                passive_moderation,
-                "settings",
-                types.SimpleNamespace(BASE_MODEL="gpt-5-nano", MODERATION_PROFILE_NSFW_MIN_CONFIDENCE=65),
-            ),
+            patch.object(passive_moderation, "settings", types.SimpleNamespace(BASE_MODEL="gpt-5-nano")),
         ):
             flagged = await passive_moderation.classify_profile_nsfw_fast(image_b64="abcd", image_mime="image/jpeg")
 
         self.assertFalse(flagged)
         system_prompt = call_mock.await_args.kwargs["input"][0]["content"][0]["text"]
-        self.assertIn("уверенности >= 65%", system_prompt)
-        self.assertIn("купальник/бельё с явным сексуальным акцентом на интимных местах", system_prompt)
+        schema = call_mock.await_args.kwargs["text"]["format"]["schema"]
+        self.assertIn("При сомнении выбирай NSFW", system_prompt)
+        self.assertEqual(schema["required"], ["label"])
+        self.assertEqual(schema["properties"]["label"]["enum"], ["NSFW", "SFW"])
 
 
 class ProfileNsfwCleanupTests(unittest.IsolatedAsyncioTestCase):
