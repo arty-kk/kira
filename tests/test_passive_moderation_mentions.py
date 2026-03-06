@@ -912,6 +912,19 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(parsed.get("promo_war"))
 
 
+    async def test_parse_ai_moderation_json_coerces_string_booleans(self) -> None:
+        raw = '{"regular_promo": "false", "income_promo": "true", "promo_war": "0", "insult_abuse": "1", "threat_abuse": "no", "sex_abuse": "off"}'
+        with patch.object(passive_moderation, "settings", types.SimpleNamespace(MODERATION_DISABLE_INSULT_THREAT_AI=False)):
+            parsed = passive_moderation._parse_ai_moderation_json(raw)
+
+        self.assertFalse(parsed.get("regular_promo"))
+        self.assertTrue(parsed.get("income_promo"))
+        self.assertFalse(parsed.get("promo_war"))
+        self.assertTrue(parsed.get("insult_abuse"))
+        self.assertFalse(parsed.get("threat_abuse"))
+        self.assertFalse(parsed.get("sex_abuse"))
+
+
     async def test_check_light_keeps_clean_for_order_uuid(self) -> None:
         status = await passive_moderation.check_light(1, 2, "мой заказ 1e494f7c-4491-4803-8eea-66fcb53ae7a7", [], source="user")
         self.assertEqual(status, "clean")
