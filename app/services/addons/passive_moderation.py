@@ -636,7 +636,10 @@ async def classify_profile_nsfw_fast(*, image_b64: str, image_mime: str = "image
                         "schema": {
                             "type": "object",
                             "properties": {
-                                "sexy_pic": {"type": "boolean"}
+                                "sexy_pic": {
+                                    "type": "boolean",
+                                    "description": "Интимный/эротический контент."
+                                }
                             },
                             "required": ["sexy_pic"],
                             "additionalProperties": False,
