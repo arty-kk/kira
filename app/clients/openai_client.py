@@ -195,8 +195,6 @@ def _normalize_response_input(input_value: Any) -> list[dict[str, Any]]:
 def _prepare_responses_payload(
     *,
     prompt_profile: str,
-    static_prefix: Optional[str] = None,
-    dynamic_suffix: Optional[str] = None,
     instructions: Optional[str] = None,
     input: Any = None,
     messages: Any = None,
@@ -204,11 +202,8 @@ def _prepare_responses_payload(
 ) -> dict[str, Any]:
     payload: dict[str, Any] = dict(kwargs)
 
-    effective_static_prefix = static_prefix if static_prefix is not None else instructions
-    effective_dynamic_suffix = dynamic_suffix if dynamic_suffix is not None else payload.pop("prompt_dynamic_suffix", None)
-
-    if effective_static_prefix is not None or effective_dynamic_suffix:
-        payload["instructions"] = f"{effective_static_prefix or ''}{effective_dynamic_suffix or ''}"
+    if instructions is not None:
+        payload["instructions"] = instructions
 
     canonical_input = input if input is not None else messages
     if canonical_input is None:
@@ -247,15 +242,18 @@ async def _call_openai_with_retry(**kwargs: Any) -> Any:
 
                 if endpoint == "responses.create":
                     prompt_profile = str(params.pop("prompt_profile", "default") or "default")
-                    static_prefix = params.pop("static_prefix", None)
-                    dynamic_suffix = params.pop("dynamic_suffix", None)
+                    legacy_prompt_args = [k for k in ("static_prefix", "dynamic_suffix", "prompt_dynamic_suffix") if k in params]
+                    if legacy_prompt_args:
+                        raise ValueError(
+                            "Legacy prompt arguments are no longer supported in responses.create: "
+                            + ", ".join(legacy_prompt_args)
+                            + ". Pass final prompt text via 'instructions'."
+                        )
                     instructions = params.pop("instructions", None)
                     input_value = params.pop("input", None)
                     messages = params.pop("messages", None)
                     params = _prepare_responses_payload(
                         prompt_profile=prompt_profile,
-                        static_prefix=static_prefix,
-                        dynamic_suffix=dynamic_suffix,
                         instructions=instructions,
                         input=input_value,
                         messages=messages,
