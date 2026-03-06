@@ -576,14 +576,6 @@ async def _send_chatty_reply(
                 logger.info("Skip chatty follow-up chunks due to deduped first chunk chat=%s msg_id=%s", chat_id, msg_id)
                 return
 
-            if effective_thread_id is None:
-                raw_thread_id = getattr(first_sent, "message_thread_id", None)
-                try:
-                    inferred_thread_id = int(raw_thread_id) if raw_thread_id is not None else None
-                except (TypeError, ValueError):
-                    inferred_thread_id = None
-                if inferred_thread_id and inferred_thread_id > 0:
-                    effective_thread_id = inferred_thread_id
             delivered_first = True
             first_reply_target = None
             continue
