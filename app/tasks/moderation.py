@@ -208,6 +208,52 @@ async def _clear_moderation_inflight(key: str, token: str) -> None:
         logger.warning("failed to clear moderation inflight key=%s", key, exc_info=True)
 
 
+
+
+@shared_task(
+    name="moderation.profile_nsfw_scan",
+    bind=True,
+    acks_late=True,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+    retry_kwargs={"max_retries": 2},
+    soft_time_limit=MODERATION_TIMEOUT,
+    time_limit=MODERATION_TIMEOUT + 5,
+)
+def profile_nsfw_scan(self, payload: dict[str, Any]) -> str:
+    from app.services.addons.passive_moderation import classify_profile_nsfw_fast
+
+    if not isinstance(payload, dict):
+        logger.warning("profile_nsfw_scan invalid payload type=%s", type(payload).__name__)
+        return "invalid_payload"
+
+    result_key = str(payload.get("result_key") or "").strip()
+    if not result_key:
+        logger.warning("profile_nsfw_scan missing result_key")
+        return "invalid_payload"
+
+    image_b64 = str(payload.get("image_b64") or "").strip()
+    image_mime = str(payload.get("image_mime") or "image/jpeg").strip() or "image/jpeg"
+    result_ttl = max(5, int(payload.get("result_ttl") or 60))
+
+    if not image_b64:
+        run_coro_sync(consts.redis_client.set(result_key, "0", ex=result_ttl))
+        return "ok"
+
+    flagged = False
+    try:
+        flagged = bool(run_coro_sync(classify_profile_nsfw_fast(image_b64=image_b64, image_mime=image_mime)))
+        run_coro_sync(consts.redis_client.set(result_key, ("1" if flagged else "0"), ex=result_ttl))
+    except Exception:
+        logger.exception("profile_nsfw_scan failed")
+        with contextlib.suppress(Exception):
+            run_coro_sync(consts.redis_client.set(result_key, "error", ex=result_ttl))
+        raise
+
+    return "flagged" if flagged else "clean"
+
+
 @shared_task(
     name="moderation.passive_moderate",
     bind=True,

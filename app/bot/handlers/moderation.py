@@ -30,7 +30,6 @@ from app.services.addons.passive_moderation import (
     contains_any_link_obfuscated,
     check_light,
     check_deep,
-    classify_profile_nsfw_fast,
     get_last_ai_moderation_category,
     get_last_ai_moderation_flags,
     should_delete_ai_flagged_message,
@@ -52,6 +51,8 @@ from app.bot.utils.trusted_scope import (
     trusted_scope_ids as build_trusted_scope_ids,
 )
 from app.bot.utils.telegram_safe import send_message_safe_with_reason
+
+from app.tasks.moderation import profile_nsfw_scan
 
 logger = logging.getLogger(__name__)
 
@@ -1096,6 +1097,52 @@ def _profile_nsfw_scan_legacy_cache_key(user_id: int) -> str:
     return f"mod:profile_nsfw_scan:{int(user_id)}"
 
 
+
+
+async def _classify_profile_nsfw_via_queue(*, image_b64: str, image_mime: str) -> bool | None:
+    request_token = secrets.token_urlsafe(12)
+    result_key = f"mod:profile_nsfw:result:{request_token}"
+    wait_sec = float(getattr(settings, "MODERATION_PROFILE_NSFW_QUEUE_WAIT_SEC", getattr(settings, "MODERATION_STATUS_WAIT_SEC", 10.5)))
+    poll_sec = float(getattr(settings, "MODERATION_STATUS_POLL_SEC", 0.1))
+    result_ttl = int(max(5, int(wait_sec) + 30))
+
+    try:
+        profile_nsfw_scan.delay(
+            {
+                "result_key": result_key,
+                "result_ttl": result_ttl,
+                "image_b64": image_b64,
+                "image_mime": image_mime,
+            }
+        )
+    except Exception:
+        logger.exception("profile nsfw scan enqueue failed")
+        return None
+
+    deadline = time.monotonic() + max(0.5, wait_sec)
+    try:
+        while time.monotonic() < deadline:
+            try:
+                raw = await redis_client.get(result_key)
+            except Exception:
+                logger.debug("profile nsfw scan result read failed", exc_info=True)
+                raw = None
+            val = str(raw.decode("utf-8", "ignore") if isinstance(raw, (bytes, bytearray)) else (raw or "")).strip().lower()
+            if val in {"1", "true", "nsfw"}:
+                return True
+            if val in {"0", "false", "sfw"}:
+                return False
+            if val in {"error"}:
+                return None
+            await asyncio.sleep(max(0.02, poll_sec))
+    finally:
+        with contextlib.suppress(Exception):
+            await redis_client.delete(result_key)
+
+    logger.warning("profile nsfw scan result timeout key=%s wait_sec=%.2f", result_key, wait_sec)
+    return None
+
+
 async def _is_profile_nsfw(user_id: int) -> bool:
     if not bool(getattr(settings, "MODERATION_PROFILE_NSFW_ENFORCE", True)):
         return False
@@ -1144,25 +1191,32 @@ async def _is_profile_nsfw(user_id: int) -> bool:
         logger.debug("profile nsfw cache read failed for user_id=%s", user_id, exc_info=True)
 
     flagged = False
+    should_cache_result = True
     if has_profile_photo:
         try:
             tg_file = await bot.get_file(best_photo.file_id)
             raw = io.BytesIO()
             await bot.download(tg_file, raw)
             image_b64 = base64.b64encode(raw.getvalue()).decode("utf-8")
-            flagged = await classify_profile_nsfw_fast(
+            verdict = await _classify_profile_nsfw_via_queue(
                 image_b64=image_b64,
                 image_mime="image/jpeg",
             )
+            if verdict is None:
+                should_cache_result = False
+                flagged = False
+            else:
+                flagged = bool(verdict)
         except Exception:
             logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
             flagged = False
 
-    try:
-        ttl = no_photo_cache_ttl if photo_sig == "no_photo" else cache_ttl
-        await redis_client.set(cache_key, ("1" if flagged else "0"), ex=ttl)
-    except Exception:
-        logger.debug("profile nsfw cache write failed for user_id=%s", user_id, exc_info=True)
+    if should_cache_result:
+        try:
+            ttl = no_photo_cache_ttl if photo_sig == "no_photo" else cache_ttl
+            await redis_client.set(cache_key, ("1" if flagged else "0"), ex=ttl)
+        except Exception:
+            logger.debug("profile nsfw cache write failed for user_id=%s", user_id, exc_info=True)
 
     return flagged
 
