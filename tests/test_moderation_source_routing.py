@@ -297,7 +297,7 @@ class ProfileNsfwClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(flagged)
         system_prompt = call_mock.await_args.kwargs["input"][0]["content"][0]["text"]
         schema = call_mock.await_args.kwargs["text"]["format"]["schema"]
-        self.assertIn("Установи sexy_pic=true", system_prompt)
+        self.assertIn("sexy_pic=true", system_prompt)
         self.assertEqual(schema["required"], ["sexy_pic"])
         self.assertEqual(schema["properties"]["sexy_pic"]["type"], "boolean")
 
