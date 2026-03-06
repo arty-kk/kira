@@ -37,7 +37,6 @@ from app.services.addons.passive_moderation import (
     is_emoji_flood_text,
     is_symbol_noise_text,
     count_message_emojis,
-    contains_order_uuid,
     extract_order_uuid,
 )
 from app.services.addons.analytics import record_moderation as analytics_record_moderation
@@ -46,7 +45,6 @@ from app.bot.handlers.moderation_context import (
     resolve_message_moderation_context_async,
 )
 from app.bot.utils.trusted_scope import (
-    extract_source_scope_ids,
     is_trusted_actor,
     is_trusted_destination as trusted_destination_check,
     is_trusted_repost as trusted_repost_check,
@@ -1083,7 +1081,11 @@ def _profile_nsfw_blocked_chat_key(chat_id: int, user_id: int) -> str:
     return f"mod:profile_nsfw_blocked:{int(chat_id)}:{int(user_id)}"
 
 
-def _profile_nsfw_scan_cache_key(user_id: int) -> str:
+def _profile_nsfw_scan_cache_key(user_id: int, photo_sig: str) -> str:
+    return f"mod:profile_nsfw_scan:{int(user_id)}:{photo_sig}"
+
+
+def _profile_nsfw_scan_legacy_cache_key(user_id: int) -> str:
     return f"mod:profile_nsfw_scan:{int(user_id)}"
 
 
@@ -1092,7 +1094,26 @@ async def _is_profile_nsfw(user_id: int) -> bool:
         return False
 
     cache_ttl = int(max(60, int(getattr(settings, "MODERATION_PROFILE_NSFW_CACHE_SECONDS", 172800))))
-    cache_key = _profile_nsfw_scan_cache_key(user_id)
+    no_photo_cache_ttl = int(max(15, min(cache_ttl - 1, cache_ttl // 6)))
+    photo_sig = "no_photo"
+    has_profile_photo = False
+
+    try:
+        photos = await bot.get_user_profile_photos(user_id=int(user_id), limit=1)
+        photo_set = getattr(photos, "photos", None) or []
+        if photo_set and photo_set[0]:
+            best_photo = photo_set[0][-1]
+            photo_sig = (
+                getattr(best_photo, "file_unique_id", None)
+                or getattr(best_photo, "file_id", None)
+                or "no_photo"
+            )
+            has_profile_photo = bool(getattr(best_photo, "file_id", None))
+    except Exception:
+        logger.debug("profile photo signature check failed for user_id=%s", user_id, exc_info=True)
+
+    cache_key = _profile_nsfw_scan_cache_key(user_id, photo_sig)
+    legacy_cache_key = _profile_nsfw_scan_legacy_cache_key(user_id)
 
     try:
         cached = await redis_client.get(cache_key)
@@ -1103,15 +1124,21 @@ async def _is_profile_nsfw(user_id: int) -> bool:
             return True
         if cached_norm in {"0", "false", "sfw"}:
             return False
+
+        legacy_cached = await redis_client.get(legacy_cache_key)
+        if isinstance(legacy_cached, (bytes, bytearray)):
+            legacy_cached = legacy_cached.decode("utf-8", "ignore")
+        legacy_norm = str(legacy_cached or "").strip().lower()
+        if legacy_norm in {"1", "true", "nsfw"}:
+            return True
+        if legacy_norm in {"0", "false", "sfw"}:
+            return False
     except Exception:
         logger.debug("profile nsfw cache read failed for user_id=%s", user_id, exc_info=True)
 
     flagged = False
-    try:
-        photos = await bot.get_user_profile_photos(user_id=int(user_id), limit=1)
-        photo_set = getattr(photos, "photos", None) or []
-        if photo_set and photo_set[0]:
-            best_photo = photo_set[0][-1]
+    if has_profile_photo:
+        try:
             tg_file = await bot.get_file(best_photo.file_id)
             raw = io.BytesIO()
             await bot.download(tg_file, raw)
@@ -1120,12 +1147,13 @@ async def _is_profile_nsfw(user_id: int) -> bool:
                 image_b64=image_b64,
                 image_mime="image/jpeg",
             )
-    except Exception:
-        logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
-        flagged = False
+        except Exception:
+            logger.debug("profile nsfw check failed for user_id=%s", user_id, exc_info=True)
+            flagged = False
 
     try:
-        await redis_client.set(cache_key, ("1" if flagged else "0"), ex=cache_ttl)
+        ttl = no_photo_cache_ttl if photo_sig == "no_photo" else cache_ttl
+        await redis_client.set(cache_key, ("1" if flagged else "0"), ex=ttl)
     except Exception:
         logger.debug("profile nsfw cache write failed for user_id=%s", user_id, exc_info=True)
 
