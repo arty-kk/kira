@@ -133,7 +133,7 @@ Manual retry/escalation:
 
 - If `DEPLOY_COMMIT_SHA` is set, deployment is pinned to that exact commit (`git checkout --detach <sha>`).
 - If `DEPLOY_COMMIT_SHA` is empty (for example, manual `workflow_dispatch`), the script falls back to branch deployment via `DEPLOY_BRANCH`.
-- In automatic CD (`workflow_run` after successful CI), the workflow passes `github.event.workflow_run.head_sha`, so production deploys the exact commit that passed CI checks.
+- In automatic CD (`push` to `main`/`master`), the workflow passes `github.sha`, so production deploys the exact pushed commit.
 
 
 ## Alembic migrations: minimal env
