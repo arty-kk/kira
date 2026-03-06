@@ -23,16 +23,20 @@ class OpenAIResponsesPayloadTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(p1, p2)
 
-    def test_static_prefix_and_dynamic_suffix_are_separated(self) -> None:
-        payload = openai_client._prepare_responses_payload(
-            prompt_profile="test.profile",
-            static_prefix="STATIC:",
-            dynamic_suffix=" DYNAMIC",
-            instructions="legacy",
-            input="hello",
-            model="gpt-5-mini",
-        )
-        self.assertEqual(payload["instructions"], "STATIC: DYNAMIC")
+    async def test_rejects_legacy_prompt_dynamic_suffix_field(self) -> None:
+        client = SimpleNamespace(responses=SimpleNamespace(create=lambda **_kwargs: None))
+        with patch.object(openai_client, "get_openai", return_value=client), patch.object(
+            openai_client, "OPENAI_MAX_ATTEMPTS", 1
+        ), patch.object(openai_client, "wait_exponential", return_value=wait_fixed(0)):
+            with self.assertRaises(ValueError):
+                await openai_client._call_openai_with_retry(
+                    endpoint="responses.create",
+                    model="gpt-5-mini",
+                    prompt_profile="test.profile",
+                    instructions="STATIC",
+                    prompt_dynamic_suffix=" DYNAMIC",
+                    input="hello",
+                )
 
     async def test_logs_prompt_profile_without_prompt_content(self) -> None:
         captured = {}
