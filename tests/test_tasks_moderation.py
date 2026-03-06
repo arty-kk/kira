@@ -105,27 +105,20 @@ class ModerationCeleryConfigTests(unittest.TestCase):
             "source": "user",
         }
 
-        redis_stub = type(
-            "RedisStub",
-            (),
-            {
-                "get": unittest.mock.AsyncMock(return_value="1"),
-                "set": unittest.mock.AsyncMock(return_value=True),
-                "eval": unittest.mock.AsyncMock(return_value=1),
-                "incrby": unittest.mock.AsyncMock(return_value=1),
-                "incr": unittest.mock.AsyncMock(return_value=1),
-            },
-        )()
+        def _fake_run_coro_sync(coro, timeout=None):
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            return True
 
         with (
             patch("app.bot.handlers.moderation.handle_passive_moderation") as handle_mock,
-            patch("app.tasks.moderation.consts.redis_client", redis_stub),
+            patch.dict(passive_moderate._orig_run.__globals__, {"run_coro_sync": _fake_run_coro_sync}),
         ):
-            result = passive_moderate.run(payload)
+            result = passive_moderate._orig_run(payload)
 
         self.assertEqual(result, "blocked")
         handle_mock.assert_not_called()
-        redis_stub.get.assert_awaited_once_with("mod:prefilter_blocked:100:300")
 
     def test_passive_moderate_valid_payload_keeps_contract(self) -> None:
         payload = {

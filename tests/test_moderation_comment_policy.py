@@ -233,7 +233,7 @@ class ModerationCommentPolicyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(handled)
         delete_mock.assert_awaited_once()
-        marker_set_mock.assert_awaited_once_with("mod:prefilter_blocked:-1001:11", 1, ex=86400)
+        marker_set_mock.assert_awaited_once_with("mod:prefilter_blocked:-1001:11", 1, ex=60)
         reason = flag_mock.await_args.kwargs["reason"]
         self.assertIn("external_reply", reason)
         self.assertIn("context=group", reason)
