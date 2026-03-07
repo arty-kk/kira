@@ -786,6 +786,8 @@ class PassiveModerationMentionTests(unittest.IsolatedAsyncioTestCase):
         content = sent_input[1]["content"]
         self.assertEqual(len(content), 1)
         self.assertEqual(content[0]["type"], "input_image")
+        system_prompt = sent_input[0]["content"][0]["text"]
+        self.assertIn("явной наготой", system_prompt)
 
     async def test_moderate_with_openai_honors_enabled_category_boolean_flag(self) -> None:
         response = types.SimpleNamespace(output_text='{"regular_promo":false,"income_promo":true,"insult_abuse":false,"threat_abuse":false}')

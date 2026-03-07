@@ -22,6 +22,7 @@ from app.tasks.moderation import (
     _clear_moderation_inflight,
     _set_moderation_inflight,
     passive_moderate,
+    profile_nsfw_scan,
     prepare_moderation_payload,
 )
 
@@ -41,6 +42,31 @@ class ModerationCeleryConfigTests(unittest.TestCase):
         self.assertTrue(passive_moderate.retry_backoff)
         self.assertTrue(passive_moderate.retry_jitter)
 
+
+    def test_profile_nsfw_scan_writes_flagged_result(self) -> None:
+        payload = {
+            "result_key": "mod:profile_nsfw:result:test",
+            "result_ttl": 42,
+            "image_b64": "Zm9v",
+            "image_mime": "image/jpeg",
+        }
+
+        with (
+            patch("app.services.addons.passive_moderation.classify_profile_nsfw_fast", unittest.mock.AsyncMock(return_value=True)),
+            patch.object(profile_nsfw_scan.__wrapped__.__globals__["consts"], "redis_client", type("RedisStub", (), {
+                "set": unittest.mock.AsyncMock(return_value=True),
+            })()),
+        ):
+            result = profile_nsfw_scan.run(payload)
+
+        self.assertEqual(result, "flagged")
+
+    def test_profile_nsfw_scan_invalid_payload_without_key(self) -> None:
+        with self.assertLogs("app.tasks.moderation", level="WARNING") as logs:
+            result = profile_nsfw_scan.run({"image_b64": "Zm9v"})
+
+        self.assertEqual(result, "invalid_payload")
+        self.assertTrue(any("missing result_key" in entry for entry in logs.output))
 
     def test_passive_moderate_forwards_comment_context_only(self) -> None:
         payload = {

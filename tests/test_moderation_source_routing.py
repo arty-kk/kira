@@ -312,7 +312,7 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(moderation, "redis_client", redis_mock),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
-            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=True)) as classify_mock,
+            patch.object(moderation, "_classify_profile_nsfw_via_queue", AsyncMock(return_value=True)) as classify_mock,
         ):
             flagged = await moderation._is_profile_nsfw(42)
 
@@ -331,7 +331,7 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation, "redis_client", redis_mock),
             patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
             patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(return_value=photos)),
-            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=True)) as classify_mock,
+            patch.object(moderation, "_classify_profile_nsfw_via_queue", AsyncMock(return_value=True)) as classify_mock,
         ):
             flagged = await moderation._is_profile_nsfw(42)
 
@@ -352,12 +352,32 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(return_value=photos)),
             patch.object(moderation.bot, "get_file", AsyncMock(return_value=types.SimpleNamespace(file_id="f1"))),
             patch.object(moderation.bot, "download", AsyncMock(side_effect=lambda _file, dst: dst.write(b"img"))),
-            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=False)),
+            patch.object(moderation, "_classify_profile_nsfw_via_queue", AsyncMock(return_value=False)),
         ):
             flagged = await moderation._is_profile_nsfw(42)
 
         self.assertFalse(flagged)
         redis_mock.set.assert_awaited_once_with("mod:profile_nsfw_scan:42:u1", "0", ex=120)
+
+    async def test_is_profile_nsfw_does_not_cache_on_queue_timeout(self) -> None:
+        redis_mock = types.SimpleNamespace(
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )
+        photos = types.SimpleNamespace(photos=[[types.SimpleNamespace(file_id="f1", file_unique_id="u1")]])
+
+        with (
+            patch.object(moderation, "redis_client", redis_mock),
+            patch.object(moderation, "settings", types.SimpleNamespace(MODERATION_PROFILE_NSFW_ENFORCE=True, MODERATION_PROFILE_NSFW_CACHE_SECONDS=120)),
+            patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(return_value=photos)),
+            patch.object(moderation.bot, "get_file", AsyncMock(return_value=types.SimpleNamespace(file_id="f1"))),
+            patch.object(moderation.bot, "download", AsyncMock(side_effect=lambda _file, dst: dst.write(b"img"))),
+            patch.object(moderation, "_classify_profile_nsfw_via_queue", AsyncMock(return_value=None)),
+        ):
+            flagged = await moderation._is_profile_nsfw(42)
+
+        self.assertFalse(flagged)
+        redis_mock.set.assert_not_awaited()
 
     async def test_is_profile_nsfw_reclassifies_on_photo_signature_change(self) -> None:
         cache = {
@@ -380,7 +400,7 @@ class ProfileNsfwResultCacheTests(unittest.IsolatedAsyncioTestCase):
             patch.object(moderation.bot, "get_user_profile_photos", AsyncMock(side_effect=[types.SimpleNamespace(photos=[[first_photo]]), types.SimpleNamespace(photos=[[second_photo]])])),
             patch.object(moderation.bot, "get_file", AsyncMock(return_value=types.SimpleNamespace(file_id="f-new"))),
             patch.object(moderation.bot, "download", AsyncMock(side_effect=lambda _file, dst: dst.write(b"img"))),
-            patch.object(moderation, "classify_profile_nsfw_fast", AsyncMock(return_value=False)) as classify_mock,
+            patch.object(moderation, "_classify_profile_nsfw_via_queue", AsyncMock(return_value=False)) as classify_mock,
         ):
             flagged_first = await moderation._is_profile_nsfw(42)
             flagged_second = await moderation._is_profile_nsfw(42)

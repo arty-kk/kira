@@ -413,6 +413,7 @@ class Settings:
     MOD_DEEP_TIMEOUT: float = field(default_factory=lambda: _get_env("MOD_DEEP_TIMEOUT", "10.0", conv=float))
     MOD_PROMPT_TEXT_LIMIT: int = field(default_factory=lambda: _get_env("MOD_PROMPT_TEXT_LIMIT", "6000", conv=int))
     MODERATION_STATUS_WAIT_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_WAIT_SEC", "10.5", conv=float))
+    MODERATION_PROFILE_NSFW_QUEUE_WAIT_SEC: float = field(default_factory=lambda: _get_env("MODERATION_PROFILE_NSFW_QUEUE_WAIT_SEC", _get_env("MODERATION_STATUS_WAIT_SEC", "10.5"), conv=float))
     MODERATION_STATUS_POLL_SEC: float = field(default_factory=lambda: _get_env("MODERATION_STATUS_POLL_SEC", "0.1", conv=float))
     MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS: int = field(default_factory=lambda: _get_env("MODERATION_SIGNAL_REQUEUE_MAX_ATTEMPTS", "3", conv=int))
     MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC: int = field(default_factory=lambda: _get_env("MODERATION_SIGNAL_REQUEUE_MAX_WAIT_SEC", "60", conv=int))

@@ -522,6 +522,7 @@ async def _send_chatty_reply(
     is_group: bool = False,
     enable_typing: bool = True,
     message_thread_id: Optional[int] = None,
+    is_comment_context: bool = False,
 ) -> None:
 
     text = (text or "").strip()
@@ -588,7 +589,11 @@ async def _send_chatty_reply(
                 await asyncio.sleep(_jitter(delay, 0.25))
         
         try:
-            followup_reply_to = effective_thread_id if (is_group and effective_thread_id) else None
+            followup_reply_to = (
+                effective_thread_id
+                if (is_group and is_comment_context and effective_thread_id)
+                else None
+            )
             await _send_reply(
                 chat_id=chat_id,
                 text=chunk,
@@ -1825,6 +1830,7 @@ async def handle_job(raw, processing_key: str) -> None:
                             is_group=is_group,
                             enable_typing=allow_typing_before_send,
                             message_thread_id=message_thread_id,
+                            is_comment_context=bool(job.get("is_comment_context")),
                         )
                     else:
                         if len(reply_text) >= CHATTY_LONG_TEXT_THRESHOLD and allow_typing_before_send:
