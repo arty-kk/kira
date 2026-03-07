@@ -754,6 +754,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
                 is_group=True,
                 enable_typing=False,
                 message_thread_id=777002,
+                is_comment_context=True,
             )
 
         self.assertGreaterEqual(send_reply_mock.await_count, 1)
@@ -789,6 +790,33 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(send_reply_mock.await_args_list[0].kwargs.get("message_thread_id"))
         self.assertIsNone(send_reply_mock.await_args_list[1].kwargs.get("message_thread_id"))
         self.assertIsNone(send_reply_mock.await_args_list[1].kwargs.get("reply_to"))
+
+    async def test_send_chatty_reply_does_not_reply_to_thread_for_non_comment_context(self):
+        send_reply_mock = AsyncMock(side_effect=[types.SimpleNamespace(message_id=6001), None])
+
+        with (
+            patch.object(queue_worker, "_send_reply", send_reply_mock),
+            patch.object(queue_worker, "compute_typing_delay", return_value=0.0),
+            patch.object(queue_worker, "_split_reply_into_messages", return_value=["Первая фраза.", "Вторая фраза."]),
+            patch.object(queue_worker, "_group_chatty_chunks", side_effect=lambda chunks: chunks),
+        ):
+            await queue_worker._send_chatty_reply(
+                chat_id=-100777,
+                text="Первая фраза. Вторая фраза.",
+                reply_to=42,
+                msg_id=303,
+                user_id=123,
+                is_group=True,
+                enable_typing=False,
+                message_thread_id=777005,
+                is_comment_context=False,
+            )
+
+        self.assertEqual(send_reply_mock.await_count, 2)
+        self.assertEqual(send_reply_mock.await_args_list[0].kwargs.get("reply_to"), 42)
+        self.assertEqual(send_reply_mock.await_args_list[0].kwargs.get("message_thread_id"), 777005)
+        self.assertIsNone(send_reply_mock.await_args_list[1].kwargs.get("reply_to"))
+        self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("message_thread_id"), 777005)
 
     async def test_send_chatty_reply_stops_when_first_chunk_is_deduped(self):
         send_reply_mock = AsyncMock(side_effect=[None, types.SimpleNamespace(message_id=5002)])
