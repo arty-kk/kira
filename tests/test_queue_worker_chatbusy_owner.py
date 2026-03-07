@@ -208,6 +208,29 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
         ):
             self.assertIn(anchor, source)
 
+
+    def test_should_skip_empty_group_trigger_without_image(self) -> None:
+        self.assertTrue(
+            queue_worker._should_skip_empty_group_trigger(
+                is_group=True,
+                is_channel=False,
+                trigger="mention",
+                text="   @bot   ",
+                image_b64=None,
+            )
+        )
+
+    def test_should_not_skip_empty_group_trigger_with_image(self) -> None:
+        self.assertFalse(
+            queue_worker._should_skip_empty_group_trigger(
+                is_group=True,
+                is_channel=False,
+                trigger="mention",
+                text="   @bot   ",
+                image_b64="abc",
+            )
+        )
+
     async def test_release_does_not_delete_lock_of_new_owner(self) -> None:
         redis = _FakeRedis({"chatbusy:42": "busy:A"})
         redis.store["chatbusy:42"] = "busy:B"
