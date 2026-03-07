@@ -305,6 +305,14 @@ def _is_effectively_empty(s: str) -> bool:
     return t == ''
 
 
+def _should_skip_empty_group_trigger(*, is_group: bool, is_channel: bool, trigger: str | None, text: str, image_b64: str | None) -> bool:
+    if not is_group or is_channel:
+        return False
+    if trigger not in ("mention", "check_on_topic"):
+        return False
+    return _is_effectively_empty(text or "") and not image_b64
+
+
 def _is_bullet_list_text(text: str) -> bool:
     lines = [(ln or "").strip() for ln in (text or "").splitlines() if (ln or "").strip()]
     if len(lines) < 2:
@@ -1633,10 +1641,15 @@ async def handle_job(raw, processing_key: str) -> None:
                         mod_status,
                     )
 
-            if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
-                if _is_effectively_empty(text or "") and not image_b64:
-                    await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
-                    return
+            if _should_skip_empty_group_trigger(
+                is_group=bool(is_group),
+                is_channel=bool(is_channel),
+                trigger=trigger,
+                text=(text or ""),
+                image_b64=image_b64,
+            ):
+                await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
+                return
 
             if allow_typing_before_send:
                 typing_task = asyncio.create_task(
