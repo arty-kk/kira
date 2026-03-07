@@ -761,7 +761,7 @@ class QueueWorkerForbiddenTerminalTests(unittest.IsolatedAsyncioTestCase):
         for call_item in send_reply_mock.await_args_list:
             self.assertEqual(call_item.kwargs.get("message_thread_id"), 777002)
         if send_reply_mock.await_count >= 2:
-            self.assertEqual(send_reply_mock.await_args_list[1].kwargs.get("reply_to"), 777002)
+            self.assertIsNone(send_reply_mock.await_args_list[1].kwargs.get("reply_to"))
 
     async def test_send_chatty_reply_does_not_infer_thread_id_for_plain_group(self):
         sent_first = types.SimpleNamespace(message_id=5001, message_thread_id=888003)
