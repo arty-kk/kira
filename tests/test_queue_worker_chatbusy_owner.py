@@ -205,6 +205,7 @@ class QueueWorkerChatBusyOwnerTests(unittest.IsolatedAsyncioTestCase):
             "async def handle_job",
             "async def _heartbeat_key",
             "async def _delete_if_chatbusy_owner",
+            "if _is_effectively_empty(text or \"\") and not image_b64:",
         ):
             self.assertIn(anchor, source)
 

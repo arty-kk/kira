@@ -1634,7 +1634,7 @@ async def handle_job(raw, processing_key: str) -> None:
                     )
 
             if is_group and (not is_channel) and (trigger in ("mention", "check_on_topic")):
-                if _is_effectively_empty(text or ""):
+                if _is_effectively_empty(text or "") and not image_b64:
                     await _mark_done_if_inflight(REDIS_QUEUE, job_key, value, JOB_DONE_TTL)
                     return
 
